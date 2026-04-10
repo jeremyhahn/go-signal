@@ -1,0 +1,42 @@
+// Signal WebSocket sub-protocol definition.
+// Mirrors the Java Signal-Server's WebSocketProtocol.proto.
+syntax = "proto2";
+
+package signalservice;
+
+option go_package = "github.com/jeremyhahn/go-signal/pkg/websocket/wsproto";
+
+message WebSocketRequestMessage {
+  optional string verb = 1;
+  optional string path = 2;
+  optional bytes body = 3;
+  repeated string headers = 5;
+  optional uint64 id = 4;
+}
+
+message WebSocketResponseMessage {
+  optional uint64 id = 1;
+  optional uint32 status = 2;
+  optional string message = 3;
+  repeated string headers = 5;
+  optional bytes body = 4;
+}
+
+// ProvisioningAddress is sent from the server to a newly-connected
+// provisioning WebSocket client. It carries the temporary address that the
+// primary device uses to deliver the provisioning message.
+message ProvisioningAddress {
+  optional string address = 1;
+}
+
+message WebSocketMessage {
+  enum Type {
+    UNKNOWN = 0;
+    REQUEST = 1;
+    RESPONSE = 2;
+  }
+
+  optional Type type = 1;
+  optional WebSocketRequestMessage request = 2;
+  optional WebSocketResponseMessage response = 3;
+}

@@ -1,0 +1,167 @@
+# Signal Server Configuration
+# See pkg/config/config.go for all available options.
+
+server:
+  host: "0.0.0.0"
+  httpPort: 8081
+  grpcPort: 8443
+  tlsCertFile: ""
+  tlsKeyFile: ""
+  maxDevices: 6
+  # allowedOrigins controls which Origin headers are accepted for WebSocket
+  # upgrades. Use ["*"] for development. Leave empty for same-origin only.
+  allowedOrigins: []
+
+storage:
+  backend: "memory"  # "dynamodb", "postgres", "memory"
+  dynamodb:
+    region: "us-east-1"
+    endpoint: ""
+    accountsTable: "signal_accounts"
+    messagesTable: "signal_messages"
+    keysTable: "signal_keys"
+    profilesTable: "signal_profiles"
+    pendingAccountsTable: "signal_pending_accounts"
+  postgres:
+    host: "localhost"
+    port: 5432
+    database: "signal"
+    user: "signal"
+    password: ""
+    sslMode: "disable"
+
+cache:
+  backend: "memory"  # "redis", "memory"
+  redis:
+    url: "redis://localhost:6379"
+    password: ""
+    db: 0
+
+push:
+  apn:
+    teamId: ""
+    keyId: ""
+    bundleId: ""
+    privateKey: ""
+    sandbox: true
+  fcm:
+    credentials: ""
+
+cdn:
+  bucket: ""
+  region: "us-east-1"
+  accessKey: ""
+  secretKey: ""
+
+limits:
+  # Integration-test-friendly limits: all buckets are large enough to
+  # accommodate 200+ rapid-fire requests without returning 429. In production,
+  # reduce these values to match the Signal-Server defaults documented in
+  # pkg/limits/config.go.
+  registration:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  messages:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  preKeys:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  profiles:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  attachments:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  verification:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  pin:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  usernames:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  authentication:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  accountCheck:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  captchaAttempt:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  captchaSuccess:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  deviceAllocate:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  deviceVerify:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  inboundMessageBytes:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+
+fraud:
+  # Integration-test-friendly fraud limits: allow many registrations per IP
+  # to accommodate the test suite creating 100+ accounts. In production,
+  # use lower values (e.g., maxRegistrationsPerIP: 10).
+  maxRegistrationsPerIP: 10000
+  maxRegistrationsPerPrefix: 10000
+  windowMinutes: 60
+
+turn:
+  cloudflare:
+    apiToken: ""
+    endpoint: "https://rtc.live.cloudflare.com/v1/turn/keys/<key-id>/credentials/generate"
+    urls:
+      - "turn:turn.example.com:3478"
+      - "turns:turn.example.com:443"
+    urlsWithIps:
+      - "turn:%s:3478"
+      - "turns:%s:443"
+    hostname: "turn.example.com"
+    requestedCredentialTtl: "86400s"
+    clientCredentialTtl: "43200s"
+    numHttpClients: 2
+
+zkConfig:
+  serverSecret: ""
+  enabled: false
+
+callingZkConfig:
+  serverSecret: "test-calling-zk-secret-32bytes!!"
+
+callQualitySurvey:
+  backend: "log"
+  pubSub:
+    projectId: ""
+    topicId: ""
+
+payments:
+  stripe:
+    apiKey: ""
+    webhookSecret: ""
+
+directory:
+  enabled: false
+
+verification:
+  transport: "stub"
+  # fixedCode overrides the randomly generated verification code with a static
+  # value for integration testing. The stub transport will always send this code.
+  # MUST be left empty in production deployments.
+  fixedCode: "123456"
+
+captcha:
+  # provider: "hcaptcha" | "recaptcha" | "test"
+  # Use "test" for local development (accepts any token with the "test-captcha-" prefix).
+  # Use "hcaptcha" or "recaptcha" for production deployments.
+  provider: "test"
+  secretKey: ""
+  siteKey: ""
+  # scoreThreshold is only applicable to reCAPTCHA v3. Tokens with a score
+  # below this value are rejected. Defaults to 0.5 when zero.
+  scoreThreshold: 0.5

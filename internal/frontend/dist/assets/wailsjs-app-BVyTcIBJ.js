@@ -1,0 +1,2 @@
+async function i(){return!1}async function s(e){return{id:""}}async function t(e){}async function r(e,n){return{id:"",verified:!1}}async function u(e,n){return{number:"",uuid:"",deviceId:0}}async function c(){return{number:"",uuid:"",deviceId:0}}async function o(e,n){return{timestamp:0,needsSync:!1}}async function a(){return[]}export{s as CreateVerificationSession,a as GetConversations,i as IsRegistered,u as Register,t as RequestVerificationCode,o as SendMessage,r as SubmitVerificationCode,c as WhoAmI};
+//# sourceMappingURL=wailsjs-app-BVyTcIBJ.js.map

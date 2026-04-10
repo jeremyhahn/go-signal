@@ -1,0 +1,98 @@
+services:
+  devcontainer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ..:/workspace:cached
+      - ../../go-libsignal:/go-libsignal:cached
+      - ../../go-xkms:/go-xkms:cached
+      - ../../go-qrdb:/go-qrdb:cached
+      - ../../go-quicraft:/go-quicraft:cached
+      - go-mod-cache:/go/pkg/mod
+    working_dir: /workspace
+    command: sleep infinity
+    depends_on:
+      - redis
+      - postgres
+
+  signal-server:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      additional_contexts:
+        go-libsignal: ../../go-libsignal
+        go-xkms: ../../go-xkms
+        go-qrdb: ../../go-qrdb
+        go-quicraft: ../../go-quicraft
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD", "wget", "--no-check-certificate", "--spider", "-q", "https://localhost:8081/v1/keepalive"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  signal-cli:
+    build:
+      context: ../test/signal-cli
+      dockerfile: Dockerfile
+      args:
+        SIGNAL_SERVER_URL: https://signal-server:8081
+    volumes:
+      - signal-cli-data:/var/lib/signal-cli
+      - signal-cli-bin:/opt/signal-cli
+    depends_on:
+      signal-server:
+        condition: service_healthy
+    entrypoint: ["sleep", "infinity"]
+
+  integration:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ..:/workspace:cached
+      - ../../go-libsignal:/go-libsignal:cached
+      - ../../go-xkms:/go-xkms:cached
+      - ../../go-qrdb:/go-qrdb:cached
+      - ../../go-quicraft:/go-quicraft:cached
+      - go-mod-cache:/go/pkg/mod
+      - signal-cli-bin:/opt/signal-cli:ro
+      - signal-cli-data:/var/lib/signal-cli
+    working_dir: /workspace
+    depends_on:
+      signal-server:
+        condition: service_healthy
+      signal-cli:
+        condition: service_started
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_started
+    environment:
+      SIGNAL_SERVER_URL: https://signal-server:8081
+      SIGNAL_CLI_BIN: /opt/signal-cli/bin/signal-cli
+      SIGNAL_CLI_DATA: /var/lib/signal-cli
+      REDIS_URL: redis://redis:6379
+      POSTGRES_URL: postgres://signal:signal@postgres:5432/signal?sslmode=disable
+    command: make integration-test
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: signal
+      POSTGRES_USER: signal
+      POSTGRES_PASSWORD: signal
+    ports:
+      - "5432:5432"
+
+volumes:
+  go-mod-cache:
+  signal-cli-data:
+  signal-cli-bin:

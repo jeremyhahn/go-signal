@@ -1,0 +1,149 @@
+# Development configuration for testing with Signal Desktop
+# Enables TLS (required by Signal Desktop) and FIDO2.
+# Usage: ./build/bin/signald start --config configs/signal-server-dev.yml
+
+server:
+  host: "0.0.0.0"
+  httpPort: 8081
+  grpcPort: 8443
+  tlsCertFile: "test/tls/server-cert.pem"
+  tlsKeyFile: "test/tls/server-key.pem"
+  maxDevices: 6
+  allowedOrigins:
+    - "*"
+
+storage:
+  backend: "file"
+  file:
+    dataDir: "./data"
+
+cache:
+  backend: "memory"
+
+push:
+  apn:
+    teamId: ""
+    keyId: ""
+    bundleId: ""
+    privateKey: ""
+    sandbox: true
+  fcm:
+    credentials: ""
+
+cdn:
+  bucket: ""
+  region: "us-east-1"
+  accessKey: ""
+  secretKey: ""
+
+limits:
+  registration:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  messages:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  preKeys:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  profiles:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  attachments:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  verification:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  pin:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  usernames:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  authentication:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  accountCheck:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  captchaAttempt:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  captchaSuccess:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  deviceAllocate:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  deviceVerify:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+  inboundMessageBytes:
+    bucketSize: 10000
+    leakRatePerMin: 6000
+
+fraud:
+  maxRegistrationsPerIP: 10000
+  maxRegistrationsPerPrefix: 10000
+  windowMinutes: 60
+
+turn:
+  cloudflare:
+    apiToken: ""
+    endpoint: "https://rtc.live.cloudflare.com/v1/turn/keys/<key-id>/credentials/generate"
+    urls:
+      - "turn:turn.example.com:3478"
+    urlsWithIps:
+      - "turn:%s:3478"
+    hostname: "turn.example.com"
+    requestedCredentialTtl: "86400s"
+    clientCredentialTtl: "43200s"
+    numHttpClients: 2
+
+zkConfig:
+  serverSecret: ""
+  enabled: false
+
+callingZkConfig:
+  serverSecret: "test-calling-zk-secret-32bytes!!"
+
+callQualitySurvey:
+  backend: "log"
+
+payments:
+  stripe:
+    apiKey: ""
+    webhookSecret: ""
+
+directory:
+  enabled: false
+
+verification:
+  transport: "stub"
+  fixedCode: "123456"
+
+captcha:
+  provider: "test"
+  secretKey: ""
+  siteKey: ""
+  scoreThreshold: 0.5
+
+attachments:
+  storageDir: "./data/attachments"
+
+staticResources:
+  resourcesDir: "./data/resources"
+
+fido2:
+  enabled: true
+  rpId: "localhost"
+  rpName: "Signal Dev Server"
+  rpOrigins:
+    - "signal-dev://localhost"
+    - "https://localhost:8081"
+  attestation: "none"
+  userVerification: "preferred"
+  timeoutSeconds: 60
+  requireMfa: false
+  allowFido2Only: false

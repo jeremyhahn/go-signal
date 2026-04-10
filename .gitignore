@@ -1,0 +1,36 @@
+# Build artifacts
+build/
+bin/
+coverage/
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prof
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config (secrets)
+configs/secrets*.yml
+configs/local*.yml
+*.env
+.env.*
+
+# Dependencies
+vendor/
+go.work
+go.work.sum
