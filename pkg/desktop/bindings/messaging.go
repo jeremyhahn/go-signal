@@ -6,9 +6,9 @@ import (
 	"context"
 	"time"
 
-	signal "github.com/jeremyhahn/go-signal/sdk/go"
 	"github.com/jeremyhahn/go-signal/pkg/daostore"
 	"github.com/jeremyhahn/go-signal/pkg/daostore/entities"
+	signal "github.com/jeremyhahn/go-signal/sdk/go"
 )
 
 // MessagingBindings provides message sending and receiving operations.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -410,7 +410,7 @@ func (e *erroringChecker) Check(_ context.Context, _ *spam.CheckContext) (spam.S
 	return spam.SpamCheckAllow, errSpamCheckerFailed
 }
 
-var errSpamCheckerFailed = fmt.Errorf("internal checker failure")
+var errSpamCheckerFailed = errors.New("internal checker failure")
 
 func TestHandleSendMessage_SpamBlock_Returns403(t *testing.T) {
 	s := newTestServerWithSpamChecker(t, &blockingChecker{})

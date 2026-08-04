@@ -102,6 +102,11 @@ func (s *mockAccountStore) GetByNumber(_ context.Context, _ string) (*accounts.A
 	return nil, &accounts.AccountNotFoundError{Identifier: "not implemented"}
 }
 
+// GetByPNI is a stub; PNI routing is not exercised by the devices tests.
+func (s *mockAccountStore) GetByPNI(_ context.Context, pni string) (*accounts.Account, error) {
+	return nil, &accounts.AccountNotFoundError{Identifier: pni}
+}
+
 func (s *mockAccountStore) Update(_ context.Context, acct *accounts.Account) error {
 	if s.updErr != nil {
 		return s.updErr
@@ -114,6 +119,10 @@ func (s *mockAccountStore) Update(_ context.Context, acct *accounts.Account) err
 }
 
 func (s *mockAccountStore) Delete(_ context.Context, _ string) error {
+	return nil
+}
+
+func (s *mockAccountStore) ListAll(_ context.Context, _ func(*accounts.Account) error) error {
 	return nil
 }
 
@@ -178,6 +187,10 @@ func (s *mockPreKeyStore) DeleteAllForAccount(_ context.Context, _ string) error
 	return nil
 }
 
+func (s *mockPreKeyStore) ListAccountUUIDs(_ context.Context) ([]string, error) {
+	return nil, nil
+}
+
 func testLogger() *slog.Logger {
 	return slog.Default()
 }
@@ -216,6 +229,7 @@ func TestNewDevicesManager(t *testing.T) {
 	mgr := NewDevicesManager(store, acctMgr, keysMgr, testLogger())
 	if mgr == nil {
 		t.Fatal("expected non-nil DevicesManager")
+		return
 	}
 	if mgr.store != store {
 		t.Fatal("expected store to be assigned")
@@ -256,6 +270,7 @@ func TestCreateProvisioningCode_Success(t *testing.T) {
 	}
 	if code == nil {
 		t.Fatal("expected non-nil provisioning code")
+		return
 	}
 	if code.VerificationCode == "" {
 		t.Fatal("expected non-empty verification code")
@@ -324,6 +339,7 @@ func TestCreateProvisioningCode_SessionExpiresInFuture(t *testing.T) {
 	}
 	if session == nil {
 		t.Fatal("expected session to be stored")
+		return
 	}
 	if session.UUID != "test-uuid" {
 		t.Fatalf("expected UUID %q, got %q", "test-uuid", session.UUID)
@@ -387,6 +403,7 @@ func TestLinkDevice_Success(t *testing.T) {
 	}
 	if resp == nil {
 		t.Fatal("expected non-nil response")
+		return
 	}
 	if resp.DeviceId == 0 {
 		t.Fatal("expected non-zero device ID")
@@ -686,6 +703,7 @@ func TestSetCapabilities_Success(t *testing.T) {
 	device := acct.GetDevice(1)
 	if device == nil {
 		t.Fatal("expected device to exist")
+		return
 	}
 	if !device.Capabilities.Storage {
 		t.Fatal("expected Storage capability to be true")

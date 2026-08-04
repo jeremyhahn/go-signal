@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
 // MemoryVerificationSessionStore is a thread-safe in-memory implementation
@@ -21,10 +23,14 @@ func NewMemoryVerificationSessionStore() *MemoryVerificationSessionStore {
 	}
 }
 
-// Create stores a new verification session.
+// Create stores a new verification session. Returns an error if a session
+// already exists with the same ID, matching qrdb and postgres semantics.
 func (s *MemoryVerificationSessionStore) Create(_ context.Context, session *VerificationSession) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, exists := s.sessions[session.ID]; exists {
+		return signalerrors.New(signalerrors.ErrAlreadyExists, "memory verification: session already exists: "+session.ID)
+	}
 	s.sessions[session.ID] = copySession(session)
 	return nil
 }

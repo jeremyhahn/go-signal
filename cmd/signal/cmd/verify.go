@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 
@@ -32,48 +31,48 @@ it creates a new session and performs the full registration flow.`,
 		if err != nil {
 			return err
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
-		ctx := context.Background()
+		ctx := cmd.Context()
 
 		if verifySessionID != "" {
 			// Submit code to existing session, then register.
 			verified, err := client.SubmitVerificationCode(ctx, verifySessionID, code)
 			if err != nil {
-				return fmt.Errorf("verification failed: %w", err)
+				return &CLIError{Op: "verification", Cause: err}
 			}
 			if !verified.Verified {
-				return fmt.Errorf("verification failed: invalid code")
+				return &UsageError{Message: "verification failed: invalid code"}
 			}
 
 			result, err := client.Register(ctx, number, verifySessionID)
 			if err != nil {
-				return fmt.Errorf("registration failed: %w", err)
+				return &CLIError{Op: "registration", Cause: err}
 			}
 
 			if outputFmt == "json" {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Account registered successfully.\n")
-			fmt.Fprintf(cmd.OutOrStdout(), "UUID: %s\n", result.UUID)
-			fmt.Fprintf(cmd.OutOrStdout(), "PNI:  %s\n", result.PNI)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Account registered successfully.\n")
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "UUID: %s\n", result.UUID)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "PNI:  %s\n", result.PNI)
 			return nil
 		}
 
 		// Full flow: create session + request code + verify + register.
 		result, err := client.Verify(ctx, number, code)
 		if err != nil {
-			return fmt.Errorf("registration failed: %w", err)
+			return &CLIError{Op: "registration", Cause: err}
 		}
 
 		if outputFmt == "json" {
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "Account registered successfully.\n")
-		fmt.Fprintf(cmd.OutOrStdout(), "UUID: %s\n", result.UUID)
-		fmt.Fprintf(cmd.OutOrStdout(), "PNI:  %s\n", result.PNI)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Account registered successfully.\n")
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "UUID: %s\n", result.UUID)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "PNI:  %s\n", result.PNI)
 		return nil
 	},
 }

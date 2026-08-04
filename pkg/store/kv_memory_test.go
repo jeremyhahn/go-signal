@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -396,4 +397,68 @@ func TestKeyExistsError_ErrorsAs(t *testing.T) {
 	var target *KeyExistsError
 	require.True(t, errors.As(err, &target))
 	assert.Equal(t, "k", target.Key)
+}
+
+// --- DeleteIfPresent tests ---
+
+func TestDeleteIfPresent_KeyExists(t *testing.T) {
+	kv := NewMemoryKVClient()
+	ctx := context.Background()
+
+	require.NoError(t, kv.Put(ctx, "k", []byte("v")))
+
+	deleted, err := kv.DeleteIfPresent(ctx, "k")
+	require.NoError(t, err)
+	assert.True(t, deleted)
+
+	_, err = kv.Get(ctx, "k")
+	var knf *KeyNotFoundError
+	require.True(t, errors.As(err, &knf))
+}
+
+func TestDeleteIfPresent_KeyAbsent(t *testing.T) {
+	kv := NewMemoryKVClient()
+	ctx := context.Background()
+
+	deleted, err := kv.DeleteIfPresent(ctx, "nonexistent")
+	require.NoError(t, err)
+	assert.False(t, deleted)
+}
+
+func TestDeleteIfPresent_AfterDelete(t *testing.T) {
+	kv := NewMemoryKVClient()
+	ctx := context.Background()
+
+	require.NoError(t, kv.Put(ctx, "k", []byte("v")))
+	deleted1, err := kv.DeleteIfPresent(ctx, "k")
+	require.NoError(t, err)
+	assert.True(t, deleted1)
+
+	deleted2, err := kv.DeleteIfPresent(ctx, "k")
+	require.NoError(t, err)
+	assert.False(t, deleted2)
+}
+
+func TestDeleteIfPresent_Concurrent_ExactlyOneTrueObserved(t *testing.T) {
+	kv := NewMemoryKVClient()
+	ctx := context.Background()
+	const workers = 50
+
+	require.NoError(t, kv.Put(ctx, "race-key", []byte("v")))
+
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	var trueCount atomic.Int64
+	for range workers {
+		go func() {
+			defer wg.Done()
+			ok, err := kv.DeleteIfPresent(ctx, "race-key")
+			if err == nil && ok {
+				trueCount.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+
+	assert.Equal(t, int64(1), trueCount.Load(), "exactly one goroutine should observe true")
 }

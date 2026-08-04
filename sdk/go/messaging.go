@@ -4,8 +4,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"time"
+
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 
 	"github.com/jeremyhahn/go-libsignal/pkg/protocol"
 )
@@ -83,7 +84,7 @@ func (c *Client) Send(ctx context.Context, recipient, message string, opts *Send
 
 	path := "/v1/messages/" + recipient
 	if err := c.doRequest(ctx, "PUT", path, body, &result); err != nil {
-		return nil, fmt.Errorf("send message: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "send message", err)
 	}
 
 	msg := &Message{
@@ -103,18 +104,14 @@ func (c *Client) Send(ctx context.Context, recipient, message string, opts *Send
 }
 
 // Receive fetches pending messages from the server and decrypts them.
-func (c *Client) Receive(ctx context.Context, opts *ReceiveOptions) ([]ReceivedMessage, error) {
-	if opts == nil {
-		opts = &ReceiveOptions{}
-	}
-
+func (c *Client) Receive(ctx context.Context, _ *ReceiveOptions) ([]ReceivedMessage, error) {
 	var result struct {
 		Messages []ReceivedMessage `json:"messages"`
 		More     bool              `json:"more"`
 	}
 
 	if err := c.doRequest(ctx, "GET", "/v1/messages", nil, &result); err != nil {
-		return nil, fmt.Errorf("receive messages: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "receive messages", err)
 	}
 
 	_ = c.initCrypto()
@@ -231,6 +228,31 @@ func (c *Client) sendSignalContent(ctx context.Context, recipient string, conten
 	}
 
 	return c.doRequest(ctx, "PUT", "/v1/messages/"+recipient, body, nil)
+}
+
+// SendContacts sends a contacts-sync message to all linked devices. The full
+// contacts list is read from the local store and sent as a sync payload to
+// the account's own UUID so the server can fan it out to every linked device.
+// An error is returned if credentials are not present in the local store.
+func (c *Client) SendContacts(ctx context.Context) error {
+	creds, err := c.store.GetCredentials()
+	if err != nil {
+		return signalerrors.Wrap(signalerrors.ErrInternal, "get credentials", err)
+	}
+	if creds == nil || creds.UUID == "" {
+		return &NotRegisteredError{}
+	}
+
+	contacts, err := c.store.GetContacts()
+	if err != nil {
+		return signalerrors.Wrap(signalerrors.ErrInternal, "get contacts", err)
+	}
+
+	return c.sendSignalContent(ctx, creds.UUID, map[string]any{
+		"syncMessage": map[string]any{
+			"contacts": contacts,
+		},
+	})
 }
 
 func marshalJSON(v any) ([]byte, error) {

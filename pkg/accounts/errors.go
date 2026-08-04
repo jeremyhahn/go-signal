@@ -92,3 +92,23 @@ func (e *RegistrationLockError) Error() string {
 func (e *RegistrationLockError) Unwrap() error {
 	return e.Cause
 }
+
+// NumberChangeRollbackError indicates that a phone-number change failed to
+// commit AND the compensating restore of the displaced account also failed,
+// leaving the displaced account unrecoverable through this operation. It wraps
+// both the original update error and the restore error for diagnosis.
+type NumberChangeRollbackError struct {
+	DisplacedUUID string
+	UpdateErr     error
+	RestoreErr    error
+}
+
+func (e *NumberChangeRollbackError) Error() string {
+	return "number change failed and displaced account " + e.DisplacedUUID +
+		" could not be restored: update error: " + e.UpdateErr.Error() +
+		"; restore error: " + e.RestoreErr.Error()
+}
+
+func (e *NumberChangeRollbackError) Unwrap() error {
+	return e.UpdateErr
+}

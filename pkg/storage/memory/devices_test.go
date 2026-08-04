@@ -15,6 +15,7 @@ func TestNewMemoryProvisioningStore(t *testing.T) {
 	store := NewMemoryProvisioningStore()
 	if store == nil {
 		t.Fatal("expected non-nil store")
+		return
 	}
 	if store.sessions == nil {
 		t.Fatal("expected sessions map to be initialized")

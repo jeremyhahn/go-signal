@@ -15,7 +15,8 @@ var _ accounts.AccountStore = (*MemoryAccountStore)(nil)
 type MemoryAccountStore struct {
 	mu       sync.RWMutex
 	byUUID   map[string]*accounts.Account
-	byNumber map[string]string // number -> UUID
+	byNumber map[string]string // number -> UUID (ACI)
+	byPNI    map[string]string // PNI -> UUID (ACI)
 }
 
 // NewMemoryAccountStore creates a new in-memory account store.
@@ -23,6 +24,7 @@ func NewMemoryAccountStore() *MemoryAccountStore {
 	return &MemoryAccountStore{
 		byUUID:   make(map[string]*accounts.Account),
 		byNumber: make(map[string]string),
+		byPNI:    make(map[string]string),
 	}
 }
 
@@ -41,10 +43,19 @@ func (s *MemoryAccountStore) Create(_ context.Context, account *accounts.Account
 		}
 	}
 
+	if account.PNI != "" {
+		if existingUUID, exists := s.byPNI[account.PNI]; exists {
+			return &accounts.AccountAlreadyExistsError{Identifier: existingUUID}
+		}
+	}
+
 	stored := cloneAccount(account)
 	s.byUUID[stored.UUID] = stored
 	if stored.Number != "" {
 		s.byNumber[stored.Number] = stored.UUID
+	}
+	if stored.PNI != "" {
+		s.byPNI[stored.PNI] = stored.UUID
 	}
 
 	return nil
@@ -78,6 +89,22 @@ func (s *MemoryAccountStore) GetByNumber(_ context.Context, number string) (*acc
 		return nil, &accounts.AccountNotFoundError{Identifier: uuid}
 	}
 
+	return cloneAccount(acct), nil
+}
+
+// GetByPNI retrieves an account by its Phone Number Identity UUID.
+func (s *MemoryAccountStore) GetByPNI(_ context.Context, pni string) (*accounts.Account, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	uuid, exists := s.byPNI[pni]
+	if !exists {
+		return nil, &accounts.AccountNotFoundError{Identifier: pni}
+	}
+	acct, exists := s.byUUID[uuid]
+	if !exists {
+		return nil, &accounts.AccountNotFoundError{Identifier: uuid}
+	}
 	return cloneAccount(acct), nil
 }
 
@@ -117,6 +144,20 @@ func (s *MemoryAccountStore) Update(_ context.Context, account *accounts.Account
 		}
 	}
 
+	// Maintain the PNI index. A PNI change (e.g. number-change flow)
+	// updates the mirror; an unset-then-set PNI is treated as creation.
+	if existing.PNI != account.PNI {
+		if existing.PNI != "" {
+			delete(s.byPNI, existing.PNI)
+		}
+		if account.PNI != "" {
+			if otherUUID, taken := s.byPNI[account.PNI]; taken && otherUUID != account.UUID {
+				return &accounts.AccountAlreadyExistsError{Identifier: otherUUID}
+			}
+			s.byPNI[account.PNI] = account.UUID
+		}
+	}
+
 	s.byUUID[account.UUID] = cloneAccount(account)
 	return nil
 }
@@ -134,8 +175,30 @@ func (s *MemoryAccountStore) Delete(_ context.Context, uuid string) error {
 	if acct.Number != "" {
 		delete(s.byNumber, acct.Number)
 	}
+	if acct.PNI != "" {
+		delete(s.byPNI, acct.PNI)
+	}
 	delete(s.byUUID, uuid)
 
+	return nil
+}
+
+// ListAll streams every stored account to fn.
+func (s *MemoryAccountStore) ListAll(ctx context.Context, fn func(*accounts.Account) error) error {
+	s.mu.RLock()
+	snapshot := make([]*accounts.Account, 0, len(s.byUUID))
+	for _, a := range s.byUUID {
+		snapshot = append(snapshot, cloneAccount(a))
+	}
+	s.mu.RUnlock()
+	for _, a := range snapshot {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := fn(a); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

@@ -11,6 +11,7 @@ type KVClient interface {
     Put(ctx context.Context, key string, value []byte) error
     Get(ctx context.Context, key string) ([]byte, error)
     Delete(ctx context.Context, key string) error
+    DeleteIfPresent(ctx context.Context, key string) (bool, error)
     List(ctx context.Context, prefix string) ([]string, error)
     Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error
     Exists(ctx context.Context, key string) (bool, error)
@@ -22,9 +23,12 @@ type KVClient interface {
 | `Put` | Stores a value at the given key. Overwrites any existing value. |
 | `Get` | Retrieves the value at the given key. Returns `KeyNotFoundError` if absent. |
 | `Delete` | Removes the value at the given key. Returns `KeyNotFoundError` if absent. |
+| `DeleteIfPresent` | Atomically removes the key and reports whether *this* call removed it. Among racing deletes of the same key, exactly one observes `true`. |
 | `List` | Returns all keys matching the given prefix, sorted lexicographically. |
 | `Scan` | Iterates key-value pairs matching the prefix in sorted order. Stops early if `fn` returns an error. |
 | `Exists` | Reports whether a key is present without returning the value. |
+
+`DeleteIfPresent` is the primitive that makes one-time pre-key consumption single-use: `KVPreKeyStore.TakeEC` / `TakeKEM` (`pkg/keys/store_kv.go`) claim a candidate key with `DeleteIfPresent` and only return it when the call observed `true`, so a one-time pre-key is never handed to two concurrent sessions. KEM *last-resort* pre-keys live in a separate `signal/keys/kem_last_resort/` namespace and are read with `GetKEMLastResortPreKey` (never consumed), so a device always has fallback key material.
 
 ### Typed Errors
 
@@ -95,12 +99,16 @@ type AccountStore interface {
     Create(ctx context.Context, account *Account) error
     Get(ctx context.Context, uuid string) (*Account, error)
     GetByNumber(ctx context.Context, number string) (*Account, error)
+    GetByPNI(ctx context.Context, pni string) (*Account, error)
     Update(ctx context.Context, account *Account) error
     Delete(ctx context.Context, uuid string) error
+    ListAll(ctx context.Context, fn func(*Account) error) error
 }
 ```
 
-The in-memory implementation (`MemoryAccountStore`) maintains two maps: `byUUID` for primary lookup and `byNumber` for phone number lookup. Both are indexed at write time. All reads and writes produce deep clones of `Account` structs, including nested `Device` slices and byte slice fields like `IdentityKey`, `PhoneNumberIdentityKey`, `UnidentifiedAccessKey`, and `UsernameHash`.
+The in-memory implementation (`MemoryAccountStore`) maintains three maps: `byUUID` for primary lookup, `byNumber` for phone-number lookup, and a PNI index for `GetByPNI`. All are indexed at write time. Reads and writes produce deep clones of `Account` structs, including nested `Device` slices and byte slice fields like `IdentityKey`, `PhoneNumberIdentityKey`, `UnidentifiedAccessKey`, and `UsernameHash`.
+
+The KV-backed `KVAccountStore` (`pkg/accounts/store_kv.go`) keeps the by-number (`signal/accounts/by-number/`) and by-PNI (`signal/accounts/by-pni/`) secondary indexes as separate keys alongside the primary UUID record. Because a multi-key write is not transactional across an arbitrary `KVClient`, `Create` and `Update` perform **compensating rollback**: if a secondary-index write fails (or, on a number/PNI change, the new index entry cannot be written), the store reverts the primary record and any index entries it had already written, so the account is never left reachable by UUID but missing from — or stale in — the by-number/by-PNI indexes.
 
 Errors: `AccountAlreadyExistsError`, `AccountNotFoundError`
 

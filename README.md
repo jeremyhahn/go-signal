@@ -1,6 +1,6 @@
 # go-signal
 
-A Signal messaging server written in Go. Implements the Signal protocol server API with support for account registration, end-to-end encrypted messaging, pre-key distribution, profile management, multi-device linking, and real-time WebSocket delivery.
+A Signal messaging server written in Go. Implements the Signal protocol server API with support for account registration, end-to-end encrypted messaging, pre-key distribution, profile management (including zkgroup profile-key credentials), multi-device linking with per-device authentication, encrypted contact/settings sync (storage service), and real-time WebSocket delivery.
 
 Built as a Go port of the official [Signal-Server](https://github.com/signalapp/Signal-Server) (Java), using [go-libsignal](https://github.com/jeremyhahn/go-libsignal) for cryptographic protocol operations.
 

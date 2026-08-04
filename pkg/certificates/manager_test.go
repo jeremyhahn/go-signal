@@ -32,6 +32,7 @@ func TestNewCertificatesManager(t *testing.T) {
 		m := newTestManager(key)
 		if m == nil {
 			t.Fatal("expected non-nil manager")
+			return
 		}
 		// Verify the signing key is accessible and non-destroyed.
 		if m.signingKey == nil || m.signingKey.IsDestroyed() {
@@ -84,6 +85,7 @@ func TestGetDeliveryCertificate_WithE164(t *testing.T) {
 	}
 	if cert == nil {
 		t.Fatal("expected non-nil certificate")
+		return
 	}
 	if len(cert.Certificate) == 0 {
 		t.Error("expected non-empty certificate bytes")

@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync"
 
-	"github.com/jeremyhahn/go-signal/pkg/errors"
 	"github.com/jeremyhahn/go-signal/pkg/profiles"
 )
 
@@ -54,12 +53,12 @@ func (s *MemoryProfileStore) Get(_ context.Context, uuid string, version string)
 
 	versions, exists := s.byUUID[uuid]
 	if !exists {
-		return nil, errors.New(errors.ErrProfileNotFound, "profile not found: "+uuid)
+		return nil, &profiles.ProfileNotFoundError{UUID: uuid}
 	}
 
 	profile, exists := versions[version]
 	if !exists {
-		return nil, errors.New(errors.ErrProfileNotFound, "profile version not found: "+uuid+"/"+version)
+		return nil, &profiles.ProfileNotFoundError{UUID: uuid, Version: version}
 	}
 
 	return cloneProfile(profile), nil
@@ -72,26 +71,23 @@ func (s *MemoryProfileStore) GetLatest(_ context.Context, uuid string) (*profile
 
 	version, exists := s.latestVersion[uuid]
 	if !exists {
-		return nil, errors.New(errors.ErrProfileNotFound, "profile not found: "+uuid)
+		return nil, &profiles.ProfileNotFoundError{UUID: uuid}
 	}
 
 	versions := s.byUUID[uuid]
 	profile, exists := versions[version]
 	if !exists {
-		return nil, errors.New(errors.ErrProfileNotFound, "profile version not found: "+uuid+"/"+version)
+		return nil, &profiles.ProfileNotFoundError{UUID: uuid, Version: version}
 	}
 
 	return cloneProfile(profile), nil
 }
 
-// Delete removes all profile versions for a UUID.
+// Delete removes all profile versions for a UUID. It is idempotent: deleting
+// a UUID that does not exist returns nil, matching qrdb/postgres semantics.
 func (s *MemoryProfileStore) Delete(_ context.Context, uuid string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	if _, exists := s.byUUID[uuid]; !exists {
-		return errors.New(errors.ErrProfileNotFound, "profile not found: "+uuid)
-	}
 
 	delete(s.byUUID, uuid)
 	delete(s.latestVersion, uuid)

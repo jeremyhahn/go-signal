@@ -20,11 +20,14 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	"github.com/jeremyhahn/go-signal/pkg/devices"
 	"github.com/jeremyhahn/go-signal/pkg/directory"
+	"github.com/jeremyhahn/go-signal/pkg/extservice/registration/inprocess"
 	"github.com/jeremyhahn/go-signal/pkg/fido2"
 	"github.com/jeremyhahn/go-signal/pkg/keys"
 	"github.com/jeremyhahn/go-signal/pkg/keytransparency"
 	"github.com/jeremyhahn/go-signal/pkg/messages"
 	"github.com/jeremyhahn/go-signal/pkg/profiles"
+	"github.com/jeremyhahn/go-signal/pkg/registration/core"
+	"github.com/jeremyhahn/go-signal/pkg/registration/sessionshim"
 	"github.com/jeremyhahn/go-signal/pkg/securestorage"
 	"github.com/jeremyhahn/go-signal/pkg/securevaluerecovery"
 	"github.com/jeremyhahn/go-signal/pkg/stickers"
@@ -161,7 +164,7 @@ func setupFIDO2TestEnv(t *testing.T) *fido2Env {
 	messagesMgr := messages.NewMessagesManager(messageStore)
 	profilesMgr := profiles.NewProfilesManager(profileStore)
 	usernamesMgr := usernames.NewUsernamesManager(usernameStore, logger)
-	stickersMgr := stickers.NewStickersManager(logger)
+	stickersMgr := stickers.NewStickersManager(stickers.ManagerConfig{Logger: logger})
 	directoryMgr := directory.NewDirectoryManager(logger)
 	secureStorageMgr := securestorage.NewSecureStorageManager(logger)
 	svrMgr := securevaluerecovery.NewSVRManager(logger)
@@ -179,30 +182,35 @@ func setupFIDO2TestEnv(t *testing.T) *fido2Env {
 
 	verificationStore := verification.NewMemoryVerificationSessionStore()
 	verificationTransport := verification.NewStubTransport(logger)
-	verificationMgr := verification.NewManager(verificationStore, verificationTransport, verification.ManagerConfig{
+	coreSvc := core.NewService(verificationStore, verificationTransport, core.Config{
 		FixedCode: "123456",
+	})
+	t.Cleanup(coreSvc.Shutdown)
+	verificationMgr := sessionshim.NewShim(sessionshim.Config{
+		Client:       inprocess.New(coreSvc),
+		CaptchaStore: sessionshim.NewMemoryCaptchaStore(),
 	})
 
 	srv := rest.NewServer(rest.ServerConfig{
-		Host:         "127.0.0.1",
-		Port:         0,
-		Logger:       logger,
-		Accounts:     accountsMgr,
-		Captcha:      captchaMgr,
-		Certificates: certsMgr,
-		Keys:         keysMgr,
-		Messages:     messagesMgr,
-		Profiles:     profilesMgr,
-		Usernames:    usernamesMgr,
-		Stickers:     stickersMgr,
-		Directory:    directoryMgr,
-		SecureStorage: secureStorageMgr,
-		SVR:          svrMgr,
-		Calling:      callingMgr,
+		Host:            "127.0.0.1",
+		Port:            0,
+		Logger:          logger,
+		Accounts:        accountsMgr,
+		Captcha:         captchaMgr,
+		Certificates:    certsMgr,
+		Keys:            keysMgr,
+		Messages:        messagesMgr,
+		Profiles:        profilesMgr,
+		Usernames:       usernamesMgr,
+		Stickers:        stickersMgr,
+		Directory:       directoryMgr,
+		SecureStorage:   secureStorageMgr,
+		SVR:             svrMgr,
+		Calling:         callingMgr,
 		KeyTransparency: ktMgr,
-		Devices:      devicesMgr,
-		WSSessions:   wsSessions,
-		Verification: verificationMgr,
+		Devices:         devicesMgr,
+		WSSessions:      wsSessions,
+		Verification:    verificationMgr,
 	})
 
 	// Build the FIDO2 manager with a mock provider and register routes.

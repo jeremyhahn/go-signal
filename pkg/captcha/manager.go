@@ -24,15 +24,23 @@ var challengeHandlers = map[ChallengeType]func(m *CaptchaManager, ctx context.Co
 // limit mitigation and abuse prevention.
 type CaptchaManager struct {
 	verifier       CaptchaVerifier
+	checker        *Checker
 	scoreThreshold float64
 	logger         *slog.Logger
 }
 
 // CaptchaManagerConfig holds the parameters for constructing a CaptchaManager.
 type CaptchaManagerConfig struct {
-	// Verifier is the CAPTCHA backend used to validate client tokens.
-	// Required.
+	// Verifier is the legacy single-provider backend used when no Checker
+	// is configured. Required when Checker is nil; ignored otherwise.
 	Verifier CaptchaVerifier
+
+	// Checker is the token-format-aware multi-provider dispatcher
+	// (Phase 3.3). When non-nil, handleCaptchaChallenge parses the
+	// captcha solution as `provider.sitekey.action.token`, enforces the
+	// per-action site-key allowlist, and delegates to the resolved
+	// provider. Leave nil to retain the legacy single-verifier flow.
+	Checker *Checker
 
 	// ScoreThreshold is the minimum VerifyResult.Score required to accept a
 	// token. Scores are only emitted by reCAPTCHA v3; for other providers the
@@ -66,6 +74,7 @@ func NewCaptchaManagerWithConfig(cfg CaptchaManagerConfig) *CaptchaManager {
 	}
 	return &CaptchaManager{
 		verifier:       cfg.Verifier,
+		checker:        cfg.Checker,
 		scoreThreshold: threshold,
 		logger:         cfg.Logger,
 	}
@@ -110,7 +119,22 @@ func (m *CaptchaManager) handleCaptchaChallenge(ctx context.Context, accountUUID
 		return &ChallengeFailedError{Message: "missing captcha solution"}
 	}
 
-	result, err := m.verifier.Verify(ctx, resp.Captcha, "", "")
+	var (
+		result *VerifyResult
+		err    error
+	)
+	if m.checker != nil {
+		// Multi-provider path: parse the dotted token format and enforce
+		// the ActionChallenge tag + site-key allowlist before delegating
+		// to the resolved provider.
+		var assess *Assessment
+		assess, err = m.checker.Verify(ctx, ActionChallenge, resp.Captcha, "")
+		if err == nil {
+			result = assess.Result
+		}
+	} else {
+		result, err = m.verifier.Verify(ctx, resp.Captcha, "", "")
+	}
 	if err != nil {
 		m.logger.ErrorContext(ctx, "captcha verifier error",
 			slog.String("uuid", accountUUID),

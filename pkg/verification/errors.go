@@ -2,6 +2,7 @@ package verification
 
 import (
 	"strconv"
+	"time"
 )
 
 // SessionNotFoundError indicates the requested verification session does not exist.
@@ -89,4 +90,54 @@ type SessionLimitExceededError struct {
 
 func (e *SessionLimitExceededError) Error() string {
 	return "verification session limit exceeded: max " + strconv.Itoa(e.Limit)
+}
+
+// RequestCodeRateLimitedError is returned by Manager.SendCode when the
+// caller has already requested a code for this session and the per-session
+// cooldown has not yet elapsed. Handlers surface RetryAfter to the client
+// so it can render the "may_request_sms"/"next_sms_seconds" hint.
+type RequestCodeRateLimitedError struct {
+	SessionID  string
+	RetryAfter time.Duration
+}
+
+func (e *RequestCodeRateLimitedError) Error() string {
+	return "verification code request rate-limited for session " + e.SessionID +
+		"; retry after " + e.RetryAfter.String()
+}
+
+// CaptchaRequiredError indicates the session must satisfy a captcha
+// challenge before the next SendCode will succeed. The REST handler
+// surfaces this as HTTP 409 with `requestedInformation: ["captcha"]`.
+type CaptchaRequiredError struct {
+	SessionID string
+}
+
+func (e *CaptchaRequiredError) Error() string {
+	return "captcha required for session " + e.SessionID
+}
+
+// CaptchaCheckUnavailableError indicates the deployment is not configured
+// with a CAPTCHA checker (no providers registered). Surfaced as HTTP 503
+// so clients can retry against a properly provisioned region.
+type CaptchaCheckUnavailableError struct{}
+
+func (e *CaptchaCheckUnavailableError) Error() string {
+	return "captcha verification not available on this server"
+}
+
+// CaptchaRejectedError indicates the submitted captcha did not verify with
+// the upstream provider (or scored below the configured threshold). The
+// REST handler surfaces this as HTTP 422 so clients distinguish "we
+// couldn't reach the provider" from "you sent an invalid token".
+type CaptchaRejectedError struct {
+	SessionID string
+	Reason    string
+}
+
+func (e *CaptchaRejectedError) Error() string {
+	if e.Reason != "" {
+		return "captcha rejected for session " + e.SessionID + ": " + e.Reason
+	}
+	return "captcha rejected for session " + e.SessionID
 }

@@ -29,7 +29,7 @@ var fido2CapabilitiesCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
 		caps, err := client.FIDO2Capabilities(context.Background())
 		if err != nil {
@@ -47,7 +47,7 @@ var fido2ListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
 		creds, err := client.FIDO2ListCredentials(context.Background())
 		if err != nil {
@@ -58,11 +58,11 @@ var fido2ListCmd = &cobra.Command{
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(creds)
 		}
 		if len(creds) == 0 {
-			fmt.Fprintln(cmd.OutOrStdout(), "No security keys registered.")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No security keys registered.")
 			return nil
 		}
 		for _, c := range creds {
-			fmt.Fprintf(cmd.OutOrStdout(), "%s: %s (%s)\n", c.CredentialID, c.Name, c.Transport)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s (%s)\n", c.CredentialID, c.Name, c.Transport)
 		}
 		return nil
 	},
@@ -77,7 +77,7 @@ var fido2DeleteCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 		return client.FIDO2DeleteCredential(context.Background(), args[0])
 	},
 }
@@ -91,7 +91,7 @@ var fido2RenameCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 		return client.FIDO2RenameCredential(context.Background(), args[0], args[1])
 	},
 }

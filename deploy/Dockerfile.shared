@@ -1,0 +1,33 @@
+# Shared multi-stage Dockerfile blocks for the Phase 4 binaries.
+# Each per-binary Dockerfile (Dockerfile.signald, Dockerfile.svr2,
+# etc.) references this file via `# include deploy/Dockerfile.shared`
+# in comments — Docker doesn't have a native include mechanism, so
+# this file is documentation. Per-binary Dockerfiles are kept small
+# (~20 lines each) and stay in sync via convention.
+#
+# Build pattern:
+#   FROM golang:1.26.3-alpine AS build
+#   WORKDIR /src
+#   COPY go.mod go.sum ./
+#   RUN --mount=type=cache,target=/root/go/pkg/mod \
+#       --mount=type=cache,target=/root/.cache/go-build \
+#       go mod download
+#   COPY . .
+#   ARG BIN
+#   RUN --mount=type=cache,target=/root/.cache/go-build \
+#       CGO_ENABLED=0 GOOS=linux \
+#       go build -trimpath -ldflags="-s -w" \
+#         -o /out/${BIN} ./cmd/${BIN}
+#
+#   FROM gcr.io/distroless/static-debian12:nonroot
+#   COPY --from=build /out/${BIN} /usr/local/bin/${BIN}
+#   USER nonroot:nonroot
+#   ENTRYPOINT ["/usr/local/bin/${BIN}"]
+#   CMD ["start"]
+#
+# Notes:
+#   - distroless/static-debian12 is ~2MB and contains no shell, no
+#     package manager, no libc — minimal attack surface.
+#   - CGO_ENABLED=0 matches the project rule "no cgo, ever".
+#   - The "ARG BIN" pattern lets us share one template but expand
+#     into per-binary Dockerfiles below.

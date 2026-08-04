@@ -137,8 +137,24 @@ func TestWebSocket_ReceiveMessage(t *testing.T) {
 	require.NoError(t, err)
 	defer conn.Close(ws.StatusNormalClosure, "test done")
 
-	// Brief pause to let the session register.
-	time.Sleep(100 * time.Millisecond)
+	// Send a keepalive first. This establishes the frame format: the server's
+	// ReadPump detects the text frame and locks the session into JSON mode.
+	// Without this, the session format defaults to protobuf and any server-
+	// pushed messages sent before the first inbound frame arrive as binary,
+	// which the test's json.Unmarshal cannot handle.
+	kaMsg := &signalws.WebSocketMessage{
+		Type: "request",
+		Request: &signalws.WebSocketRequest{
+			ID:   1,
+			Verb: "GET",
+			Path: "/api/v1/keepalive",
+		},
+	}
+	kaData, err := json.Marshal(kaMsg)
+	require.NoError(t, err)
+	require.NoError(t, conn.Write(ctx, ws.MessageText, kaData))
+	_, _, err = conn.Read(ctx) // consume keepalive response
+	require.NoError(t, err)
 
 	// User B sends a message to user A via REST API.
 	msgContent := base64.StdEncoding.EncodeToString([]byte("hello from user B"))
@@ -159,7 +175,8 @@ func TestWebSocket_ReceiveMessage(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	resp.Body.Close()
 
-	// User A should receive the message via WebSocket.
+	// User A should receive the message via WebSocket. Now that the format is
+	// established (JSON/text), the server sends it as a text frame.
 	readCtx, readCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer readCancel()
 
@@ -287,25 +304,72 @@ func TestWebSocket_KeepaliveMultiple(t *testing.T) {
 	}
 }
 
-func TestWebSocket_ConnectWithoutAuth(t *testing.T) {
+// TestWebSocket_UnauthenticatedKeepalive verifies that the unauthenticated
+// WebSocket endpoint accepts the upgrade and answers a /api/v1/keepalive
+// request — the path clients use for remote-config and other
+// pre-authentication operations. Plugs the integration gap surfaced by the
+// Phase 2.5 audit.
+func TestWebSocket_UnauthenticatedKeepalive(t *testing.T) {
 	env := setupTestEnv(t)
 
-	// Attempt to connect without authentication.
 	wsURL := toWSURL(env.baseURL) + "/v1/websocket/"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, resp, err := ws.Dial(ctx, wsURL, &ws.DialOptions{
+	// Dial with NO Authorization header and no login/password query params.
+	// The server should dispatch to HandleUnauthenticated and accept the
+	// upgrade.
+	conn, _, err := ws.Dial(ctx, wsURL, &ws.DialOptions{
 		HTTPClient: wsHTTPClient(),
 	})
-	// Should fail - either an error or a non-101 status.
-	if err == nil {
-		t.Fatal("expected error when connecting without auth")
+	require.NoError(t, err, "unauthenticated dial must succeed via HandleUnauthenticated")
+	defer conn.Close(ws.StatusNormalClosure, "test done")
+
+	keepalive := &signalws.WebSocketMessage{
+		Type: "request",
+		Request: &signalws.WebSocketRequest{
+			ID:   99,
+			Verb: "GET",
+			Path: "/api/v1/keepalive",
+		},
 	}
-	if resp != nil {
-		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
-	}
+	data, err := json.Marshal(keepalive)
+	require.NoError(t, err)
+	require.NoError(t, conn.Write(ctx, ws.MessageText, data))
+
+	_, respData, err := conn.Read(ctx)
+	require.NoError(t, err)
+
+	var msg signalws.WebSocketMessage
+	require.NoError(t, json.Unmarshal(respData, &msg))
+	assert.Equal(t, "response", msg.Type)
+	require.NotNil(t, msg.Response)
+	assert.Equal(t, uint64(99), msg.Response.ID)
+	assert.Equal(t, http.StatusOK, msg.Response.Status)
+	assert.Equal(t, "OK", msg.Response.Message)
+}
+
+func TestWebSocket_ConnectWithoutAuth(t *testing.T) {
+	env := setupTestEnv(t)
+
+	// The /v1/websocket/ endpoint supports both authenticated and unauthenticated
+	// connections, mirroring the Java Signal-Server's OptionalAccess pattern.
+	// Requests without credentials are routed to HandleUnauthenticated and the
+	// upgrade succeeds — the same behavior verified by TestWebSocket_UnauthenticatedKeepalive.
+	// Unauthenticated clients use this path for pre-registration operations
+	// (e.g. fetching remote config via WebSocket transport).
+	wsURL := toWSURL(env.baseURL) + "/v1/websocket/"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, resp, err := ws.Dial(ctx, wsURL, &ws.DialOptions{
+		HTTPClient: wsHTTPClient(),
+	})
+	require.NoError(t, err, "unauthenticated upgrade must succeed via HandleUnauthenticated")
+	require.Equal(t, http.StatusSwitchingProtocols, resp.StatusCode)
+	defer conn.Close(ws.StatusNormalClosure, "test done")
 }
 
 func TestWebSocket_ConnectWithInvalidAuth(t *testing.T) {

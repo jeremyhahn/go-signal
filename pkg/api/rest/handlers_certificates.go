@@ -1,11 +1,12 @@
 package rest
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
 
-	"github.com/jeremyhahn/go-signal/pkg/accounts"
+	"github.com/jeremyhahn/go-signal/pkg/certificates"
 )
 
 // handleGetDeliveryCertificate processes GET /v1/certificate/delivery and
@@ -29,13 +30,9 @@ func (s *Server) handleGetDeliveryCertificate(w http.ResponseWriter, r *http.Req
 		includeE164 = parsed
 	}
 
-	primary := acct.PrimaryDevice()
-	var deviceID uint32
-	if primary != nil {
-		deviceID = uint32(primary.ID)
-	} else {
-		deviceID = uint32(accounts.PrimaryDeviceID)
-	}
+	// Issue the certificate for the device that actually authenticated, so
+	// sealed-sender delivery certificates carry the correct source device ID.
+	deviceID := uint32(deviceIDFromContext(r.Context()))
 
 	cert, err := s.certificates.GetDeliveryCertificate(
 		r.Context(),
@@ -90,12 +87,10 @@ func (s *Server) handleGetGroupCredentials(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	pni := "PNI:" + acct.UUID
-
 	creds, err := s.certificates.GetGroupCredentials(
 		r.Context(),
 		acct.UUID,
-		pni,
+		acct.PNI,
 		startSeconds,
 		endSeconds,
 	)
@@ -104,7 +99,15 @@ func (s *Server) handleGetGroupCredentials(w http.ResponseWriter, r *http.Reques
 			slog.String("uuid", acct.UUID),
 			slog.String("error", err.Error()),
 		)
-		writeError(w, http.StatusBadRequest, "invalid credential request")
+		// Only genuine client-input errors map to 400; certificate
+		// generation, key, and zkgroup failures are server faults (500).
+		var timeRangeErr *certificates.InvalidTimeRangeError
+		var uuidErr *certificates.InvalidUUIDError
+		if errors.As(err, &timeRangeErr) || errors.As(err, &uuidErr) {
+			writeError(w, http.StatusBadRequest, "invalid credential request")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to generate group credentials")
 		return
 	}
 

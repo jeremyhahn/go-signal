@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strconv"
 	"sync/atomic"
+	"time"
 
 	"github.com/jeremyhahn/go-signal/pkg/store"
 )
@@ -41,6 +42,29 @@ func (s *KVMessageStore) Insert(ctx context.Context, destinationUUID string, des
 	}
 
 	return id, nil
+}
+
+// errStopHasMessagesScan exits the Scan callback after the first
+// hit. KVClient.Scan stops as soon as the callback returns an
+// error, so this is the cheapest way to answer "any?" without
+// materialising every key into a slice.
+var errStopHasMessagesScan = errors.New("kv messages: stop scan")
+
+// HasMessagesForDevice reports whether any pending envelope exists.
+// Uses Scan with an early-exit sentinel so a device with many
+// queued envelopes still pays only one read here.
+func (s *KVMessageStore) HasMessagesForDevice(ctx context.Context, destinationUUID string, destinationDevice uint64) (bool, error) {
+	did := strconv.FormatUint(destinationDevice, 10)
+	prefix := kvMessagePrefix + destinationUUID + "/" + did + "/"
+	found := false
+	err := s.kv.Scan(ctx, prefix, func(_ string, _ []byte) error {
+		found = true
+		return errStopHasMessagesScan
+	})
+	if err != nil && !errors.Is(err, errStopHasMessagesScan) {
+		return false, err
+	}
+	return found, nil
 }
 
 // GetMessagesForDevice retrieves all pending messages for a specific device.
@@ -109,6 +133,13 @@ func (s *KVMessageStore) DeleteForDevice(ctx context.Context, destinationUUID st
 func (s *KVMessageStore) DeleteForAccount(ctx context.Context, uuid string) error {
 	prefix := kvMessagePrefix + uuid + "/"
 	return s.deleteByPrefix(ctx, prefix)
+}
+
+// RemoveExpired is a no-op for the KV-backed store: envelopes serialized
+// here carry no expires_at field, so there is nothing to sweep. The method
+// exists so [MessageStore] is satisfied uniformly across all backends.
+func (s *KVMessageStore) RemoveExpired(_ context.Context, _ time.Time) (int64, error) {
+	return 0, nil
 }
 
 // deleteByPrefix lists and deletes all keys with the given prefix.

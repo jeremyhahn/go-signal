@@ -145,3 +145,37 @@ func TestFailingKVClient_Exists_ReturnsError(t *testing.T) {
 func TestFailingKVClient_ImplementsKVClient(t *testing.T) {
 	var _ KVClient = &FailingKVClient{}
 }
+
+func TestFailingKVClient_DeleteIfPresent_DelegatesToMemory_Exists(t *testing.T) {
+	fkv := NewFailingKVClient()
+	ctx := context.Background()
+
+	require.NoError(t, fkv.Put(ctx, "k", []byte("v")))
+
+	deleted, err := fkv.DeleteIfPresent(ctx, "k")
+	require.NoError(t, err)
+	assert.True(t, deleted)
+
+	exists, err := fkv.Exists(ctx, "k")
+	require.NoError(t, err)
+	assert.False(t, exists)
+}
+
+func TestFailingKVClient_DeleteIfPresent_DelegatesToMemory_Absent(t *testing.T) {
+	fkv := NewFailingKVClient()
+	ctx := context.Background()
+
+	deleted, err := fkv.DeleteIfPresent(ctx, "absent-key")
+	require.NoError(t, err)
+	assert.False(t, deleted)
+}
+
+func TestFailingKVClient_DeleteIfPresent_ReturnsError(t *testing.T) {
+	fkv := NewFailingKVClient()
+	fkv.DeleteErr = errors.New("delete-if-present fail")
+
+	deleted, err := fkv.DeleteIfPresent(context.Background(), "k")
+	require.Error(t, err)
+	assert.False(t, deleted)
+	assert.Equal(t, "delete-if-present fail", err.Error())
+}

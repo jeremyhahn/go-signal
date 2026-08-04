@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
@@ -61,6 +62,15 @@ func (s *mockMessageStore) GetMessagesForDevice(_ context.Context, destinationUU
 	return result, nil
 }
 
+func (s *mockMessageStore) HasMessagesForDevice(_ context.Context, destinationUUID string, destinationDevice uint64) (bool, error) {
+	if s.getErr != nil {
+		return false, s.getErr
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.messages[msgDeviceKey(destinationUUID, destinationDevice)]) > 0, nil
+}
+
 func (s *mockMessageStore) Delete(_ context.Context, destinationUUID string, serverGUID string) error {
 	if s.deleteErr != nil {
 		return s.deleteErr
@@ -100,6 +110,10 @@ func (s *mockMessageStore) DeleteForAccount(_ context.Context, uuid string) erro
 		}
 	}
 	return nil
+}
+
+func (s *mockMessageStore) RemoveExpired(_ context.Context, _ time.Time) (int64, error) {
+	return 0, nil
 }
 
 // --- NewMessagesManager tests ---
@@ -177,6 +191,26 @@ func TestInsert_Success(t *testing.T) {
 	}
 	if env.DestinationUUID != "dst-uuid" {
 		t.Errorf("expected DestinationUUID 'dst-uuid', got %q", env.DestinationUUID)
+	}
+}
+
+// TestInsert_PreservesCallerProvidedGUID covers the loop-detector send-path
+// invariant: when the handler pre-assigns a ServerGUID so the loop detector
+// can Check the same value it later Records, the manager must NOT overwrite
+// it during Insert.
+func TestInsert_PreservesCallerProvidedGUID(t *testing.T) {
+	mgr := NewMessagesManager(newMockMessageStore())
+	const preassigned = "11111111-2222-3333-4444-555555555555"
+	env := &Envelope{
+		Type:       EnvelopeTypeCiphertext,
+		Content:    []byte{0x01},
+		ServerGUID: preassigned,
+	}
+	if err := mgr.Insert(context.Background(), "dst-uuid", 1, env); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if env.ServerGUID != preassigned {
+		t.Errorf("ServerGUID = %q; want preserved %q", env.ServerGUID, preassigned)
 	}
 }
 
@@ -571,4 +605,84 @@ func TestDeleteForAccount_DoesNotAffectOtherAccounts(t *testing.T) {
 	if len(msgsB) != 1 {
 		t.Errorf("expected 1 message for acct-B, got %d", len(msgsB))
 	}
+}
+
+// --- HasMessagesForDevice ---
+
+func TestHasMessagesForDevice_NoMessages(t *testing.T) {
+	mgr := NewMessagesManager(newMockMessageStore())
+	has, err := mgr.HasMessagesForDevice(context.Background(), "uuid-empty", 1)
+	if err != nil {
+		t.Fatalf("HasMessagesForDevice: %v", err)
+	}
+	if has {
+		t.Error("expected false for device with no messages")
+	}
+}
+
+func TestHasMessagesForDevice_WithMessages(t *testing.T) {
+	store := newMockMessageStore()
+	mgr := NewMessagesManager(store)
+	ctx := context.Background()
+
+	if err := mgr.Insert(ctx, "uuid-has", 1, &Envelope{
+		Type:    EnvelopeTypeCiphertext,
+		Content: []byte{0x01},
+	}); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	has, err := mgr.HasMessagesForDevice(ctx, "uuid-has", 1)
+	if err != nil {
+		t.Fatalf("HasMessagesForDevice: %v", err)
+	}
+	if !has {
+		t.Error("expected true for device with messages")
+	}
+}
+
+func TestHasMessagesForDevice_StoreError(t *testing.T) {
+	store := newMockMessageStore()
+	store.getErr = errors.New("store error")
+	mgr := NewMessagesManager(store)
+
+	_, err := mgr.HasMessagesForDevice(context.Background(), "uuid-err", 1)
+	if err == nil {
+		t.Fatal("expected error from store")
+	}
+}
+
+// --- RemoveExpired ---
+
+func TestRemoveExpired_NoExpired(t *testing.T) {
+	store := newMockMessageStore()
+	mgr := NewMessagesManager(store)
+
+	n, err := mgr.RemoveExpired(context.Background(), time.Now())
+	if err != nil {
+		t.Fatalf("RemoveExpired: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 removed, got %d", n)
+	}
+}
+
+func TestRemoveExpired_StoreError(t *testing.T) {
+	ms := &mockRemoveExpiredStore{removeErr: errors.New("remove error")}
+	mgr := NewMessagesManager(ms)
+
+	_, err := mgr.RemoveExpired(context.Background(), time.Now())
+	if err == nil {
+		t.Fatal("expected error from store")
+	}
+}
+
+// mockRemoveExpiredStore extends mockMessageStore to inject RemoveExpired errors.
+type mockRemoveExpiredStore struct {
+	mockMessageStore
+	removeErr error
+}
+
+func (s *mockRemoveExpiredStore) RemoveExpired(_ context.Context, _ time.Time) (int64, error) {
+	return 0, s.removeErr
 }

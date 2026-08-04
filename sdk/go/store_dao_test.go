@@ -1,6 +1,7 @@
 package signal
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -19,14 +20,25 @@ func TestNewDefaultDAOStore_CreatesStore(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, store)
 	require.NotNil(t, store.Factory())
-	defer store.Close()
+	defer func() { _ = store.Close() }()
+}
+
+func TestNewDefaultDAOStore_InvalidPath(t *testing.T) {
+	parent := t.TempDir()
+	// Create a FILE at the target directory path so the embedded KV store cannot
+	// initialise — PebbleDB requires a directory, not a file.
+	conflictFile := parent + "/conflict"
+	require.NoError(t, os.WriteFile(conflictFile, []byte("x"), 0644))
+
+	_, err := NewDefaultDAOStore(conflictFile)
+	assert.Error(t, err)
 }
 
 func TestDAOStore_CredentialsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	store, err := NewDefaultDAOStore(dir)
 	require.NoError(t, err)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// No credentials initially -- returns error (not found).
 	creds, _ := store.GetCredentials()
@@ -51,11 +63,39 @@ func TestDAOStore_CredentialsRoundTrip(t *testing.T) {
 	assert.Equal(t, "test-password", creds.Password.Plaintext())
 }
 
+func TestDAOStore_SaveCredentials_UpdateExisting(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewDefaultDAOStore(dir)
+	require.NoError(t, err)
+	defer func() { _ = store.Close() }()
+
+	// First save — creates the settings entity.
+	require.NoError(t, store.SaveCredentials(&Credentials{
+		Number:   "+15555550100",
+		UUID:     "first-uuid",
+		DeviceID: 1,
+		Password: NewSecurePassword("pw1"),
+	}))
+
+	// Second save — updates the existing entity (covers the "existing != nil" branch).
+	require.NoError(t, store.SaveCredentials(&Credentials{
+		Number:   "+15555550200",
+		UUID:     "second-uuid",
+		DeviceID: 2,
+		Password: NewSecurePassword("pw2"),
+	}))
+
+	got, err := store.GetCredentials()
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "second-uuid", got.UUID)
+}
+
 func TestDAOStore_ContactsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	store, err := NewDefaultDAOStore(dir)
 	require.NoError(t, err)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// No contacts initially.
 	contacts, err := store.GetContacts()
@@ -90,7 +130,7 @@ func TestDAOStore_MessagesRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	store, err := NewDefaultDAOStore(dir)
 	require.NoError(t, err)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Save messages (each needs a unique GUID since the entity has a unique index on GUID).
 	err = store.SaveMessage(&Message{
@@ -121,7 +161,7 @@ func TestDAOStore_GroupsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	store, err := NewDefaultDAOStore(dir)
 	require.NoError(t, err)
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Save group.
 	err = store.SaveGroup(&Group{
@@ -136,4 +176,73 @@ func TestDAOStore_GroupsRoundTrip(t *testing.T) {
 	require.Len(t, groups, 1)
 	assert.Equal(t, "group-1", groups[0].ID)
 	assert.Equal(t, "Test Group", groups[0].Name)
+}
+
+func TestDAOStore_StickerPacksRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewDefaultDAOStore(dir)
+	require.NoError(t, err)
+	defer func() { _ = store.Close() }()
+
+	// Empty initially.
+	packs, err := store.GetStickerPacks()
+	require.NoError(t, err)
+	assert.Empty(t, packs)
+
+	// Save a pack.
+	err = store.SaveStickerPack(&InstalledStickerPack{
+		PackID:  "deadbeef1234",
+		PackKey: "aabbccdd",
+		URL:     "https://signal.art/stickers",
+		Title:   "Test Pack",
+	})
+	require.NoError(t, err)
+
+	// List packs.
+	packs, err = store.GetStickerPacks()
+	require.NoError(t, err)
+	require.Len(t, packs, 1)
+	assert.Equal(t, "deadbeef1234", packs[0].PackID)
+	assert.Equal(t, "Test Pack", packs[0].Title)
+
+	// Upsert by PackID.
+	err = store.SaveStickerPack(&InstalledStickerPack{
+		PackID: "deadbeef1234",
+		Title:  "Updated Pack",
+	})
+	require.NoError(t, err)
+	packs, err = store.GetStickerPacks()
+	require.NoError(t, err)
+	require.Len(t, packs, 1)
+	assert.Equal(t, "Updated Pack", packs[0].Title)
+
+	// Delete pack.
+	err = store.DeleteStickerPack("deadbeef1234")
+	require.NoError(t, err)
+	packs, err = store.GetStickerPacks()
+	require.NoError(t, err)
+	assert.Empty(t, packs)
+}
+
+func TestDAOStore_SaveStickerPack_RejectsEmptyID(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewDefaultDAOStore(dir)
+	require.NoError(t, err)
+	defer func() { _ = store.Close() }()
+
+	err = store.SaveStickerPack(nil)
+	assert.Error(t, err)
+
+	err = store.SaveStickerPack(&InstalledStickerPack{})
+	assert.Error(t, err)
+}
+
+func TestDAOStore_DeleteStickerPack_Idempotent(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewDefaultDAOStore(dir)
+	require.NoError(t, err)
+	defer func() { _ = store.Close() }()
+
+	// Deleting a non-existent pack should not error.
+	assert.NoError(t, store.DeleteStickerPack("nonexistent"))
 }

@@ -1,4 +1,4 @@
-FROM golang:1.26-bookworm AS builder
+FROM golang:1.26.3-bookworm AS builder
 
 WORKDIR /app
 
@@ -24,16 +24,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /signald /usr/local/bin/signald
-COPY configs/signal-server.yml /etc/signal-server/config.yml
-COPY test/tls/server-cert.pem /etc/signal-server/tls/server-cert.pem
-COPY test/tls/server-key.pem /etc/signal-server/tls/server-key.pem
-COPY test/tls/ca-cert.pem /etc/signal-server/tls/ca-cert.pem
 
-# Configure TLS cert paths in config
-RUN sed -i 's|tlsCertFile: ""|tlsCertFile: "/etc/signal-server/tls/server-cert.pem"|' /etc/signal-server/config.yml && \
-    sed -i 's|tlsKeyFile: ""|tlsKeyFile: "/etc/signal-server/tls/server-key.pem"|' /etc/signal-server/config.yml
+# This image is hardened for production and ships NO active configuration,
+# secrets, or TLS certificates. It bundles ONLY the production config TEMPLATE
+# as a reference. At deploy time the operator must:
+#   1. Mount a real config at /etc/signal-server/config.yml (start from the
+#      bundled template; it sets `mode: production`, which activates the
+#      fail-closed security gate in pkg/config.validateProduction).
+#   2. Mount real TLS certificates at the paths the config references.
+#   3. Inject secrets via the ${VAR} environment references in the config.
+# With no mounted config the server fails to start (fail-closed) rather than
+# silently running a development/test instance.
+COPY configs/signal-server-prod.yml /etc/signal-server/config.yml.example
 
-EXPOSE 8081 8443
+# Run as a non-root user.
+RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin signal \
+    && mkdir -p /etc/signal-server/tls \
+    && chown -R signal:signal /etc/signal-server
+USER signal
+
+# Non-privileged HTTPS + gRPC ports (a load balancer forwards 443 -> 8443).
+EXPOSE 8443 8444
 
 ENTRYPOINT ["signald"]
 CMD ["start", "--config", "/etc/signal-server/config.yml"]

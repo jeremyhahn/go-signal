@@ -37,6 +37,7 @@ func TestNewMemoryPreKeyStore(t *testing.T) {
 	store := NewMemoryPreKeyStore()
 	if store == nil {
 		t.Fatal("expected non-nil store")
+		return
 	}
 	if store.ecKeys == nil || store.kemKeys == nil || store.signedKeys == nil {
 		t.Fatal("expected all internal maps to be initialized")
@@ -965,5 +966,33 @@ func TestDeleteAllForDevice_IncludesLastResort(t *testing.T) {
 	_, err := store.GetKEMLastResortPreKey(ctx, "uuid-del-lr", 1)
 	if err == nil {
 		t.Fatal("expected error after deleting device keys including last resort")
+	}
+}
+
+func TestListAccountUUIDs_Empty(t *testing.T) {
+	store := NewMemoryPreKeyStore()
+	uuids, err := store.ListAccountUUIDs(context.Background())
+	if err != nil {
+		t.Fatalf("ListAccountUUIDs: %v", err)
+	}
+	if len(uuids) != 0 {
+		t.Errorf("ListAccountUUIDs: expected 0, got %d", len(uuids))
+	}
+}
+
+func TestListAccountUUIDs_MultipleUUIDs(t *testing.T) {
+	store := NewMemoryPreKeyStore()
+	ctx := context.Background()
+
+	_ = store.StoreECPreKeys(ctx, "list-uuid-1", 1, []*keys.PreKey{testPreKey(1)})
+	_ = store.StoreECPreKeys(ctx, "list-uuid-2", 1, []*keys.PreKey{testPreKey(2)})
+	_ = store.StoreKEMLastResortPreKey(ctx, "list-uuid-3", 1, testKEMPreKey(3))
+
+	uuids, err := store.ListAccountUUIDs(ctx)
+	if err != nil {
+		t.Fatalf("ListAccountUUIDs: %v", err)
+	}
+	if len(uuids) != 3 {
+		t.Errorf("ListAccountUUIDs: expected 3, got %d", len(uuids))
 	}
 }

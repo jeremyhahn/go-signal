@@ -58,6 +58,16 @@ type Config struct {
 	DeviceVerify BucketConfig
 	// InboundMessageBytes: 256 MiB per minute per account UUID.
 	InboundMessageBytes BucketConfig
+	// SetBackupID: 2 backup-id rotations per day per account UUID.
+	SetBackupID BucketConfig
+	// SetPaidMediaBackupID: 4 paid-tier media-backup-id rotations per day per account UUID.
+	SetPaidMediaBackupID BucketConfig
+	// BackupAttachment: 10000 backup-attachment upload-form requests per second per backup-id hash.
+	BackupAttachment BucketConfig
+	// CreateCallLink: 100 call-link credential requests per day per
+	// account UUID. Mirrors Java's `createCallLink` rate limit on
+	// POST /v1/call-link/create-auth.
+	CreateCallLink BucketConfig
 }
 
 // DefaultConfig returns a Config populated with Java Signal-Server defaults.
@@ -122,6 +132,22 @@ func DefaultConfig() Config {
 		InboundMessageBytes: BucketConfig{
 			BucketSize: 256 * 1024 * 1024,             // 256 MiB
 			RefillRate: float64(256*1024*1024) / 60.0, // 256 MiB per minute
+		},
+		SetBackupID: BucketConfig{
+			BucketSize: 2,
+			RefillRate: float64(2) / 86400.0, // 2 per day
+		},
+		SetPaidMediaBackupID: BucketConfig{
+			BucketSize: 4,
+			RefillRate: float64(4) / 86400.0, // 4 per day
+		},
+		BackupAttachment: BucketConfig{
+			BucketSize: 10000,
+			RefillRate: 10000.0, // 10000 per second
+		},
+		CreateCallLink: BucketConfig{
+			BucketSize: 100,
+			RefillRate: float64(100) / 86400.0, // 100 per day
 		},
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+
+	"github.com/jeremyhahn/go-signal/pkg/audit"
 )
 
 // handleSetRegistrationLock processes PUT /v1/accounts/registration_lock and
@@ -11,6 +13,9 @@ import (
 func (s *Server) handleSetRegistrationLock(w http.ResponseWriter, r *http.Request) {
 	acct := accountFromContext(r.Context())
 	if acct == nil {
+		if s.audit != nil {
+			s.audit.Denied(r.Context(), audit.ActionSetRegistrationLock, "", nil)
+		}
 		writeError(w, http.StatusUnauthorized, "not authenticated")
 		return
 	}
@@ -31,10 +36,18 @@ func (s *Server) handleSetRegistrationLock(w http.ResponseWriter, r *http.Reques
 		s.logger.Error("failed to set registration lock",
 			slog.String("uuid", acct.UUID),
 			slog.String("error", err.Error()))
+		if s.audit != nil {
+			s.audit.Failure(r.Context(), audit.ActionSetRegistrationLock, acct.UUID,
+				map[string]any{"error": err.Error()})
+		}
 		writeError(w, http.StatusInternalServerError, "failed to set registration lock")
 		return
 	}
 
+	if s.audit != nil {
+		// Never log the PIN itself — only confirmation that it was set.
+		s.audit.Success(r.Context(), audit.ActionSetRegistrationLock, acct.UUID, nil)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

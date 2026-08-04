@@ -4,12 +4,56 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"fmt"
+	"os"
+
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 
 	"github.com/jeremyhahn/go-libsignal/pkg/ecc"
-	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	"github.com/jeremyhahn/go-libsignal/pkg/keys/identity"
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
+
+// AccountConfiguration holds per-account messaging preference flags that are
+// pushed to the server as part of the account-attributes payload. Only
+// non-nil pointer fields are sent; nil means "leave unchanged".
+type AccountConfiguration struct {
+	// ReadReceipts controls whether the server advertises read-receipt
+	// capability to other participants.
+	ReadReceipts *bool
+
+	// TypingIndicators controls whether typing-indicator messages are sent.
+	TypingIndicators *bool
+
+	// LinkPreviews controls whether link-preview metadata is attached.
+	LinkPreviews *bool
+}
+
+// UpdateConfiguration sends the account configuration preferences to the
+// server via PUT /v1/accounts/attributes/. Only non-nil fields are
+// included in the request body.
+func (c *Client) UpdateConfiguration(ctx context.Context, cfg AccountConfiguration) error {
+	body := map[string]any{}
+	if cfg.ReadReceipts != nil {
+		body["readReceipts"] = *cfg.ReadReceipts
+	}
+	if cfg.TypingIndicators != nil {
+		body["typingIndicators"] = *cfg.TypingIndicators
+	}
+	if cfg.LinkPreviews != nil {
+		body["linkPreviews"] = *cfg.LinkPreviews
+	}
+	return c.doRequest(ctx, "PUT", "/v1/accounts/attributes/", body, nil)
+}
+
+// DeleteLocalData removes all locally stored account data from the data
+// directory. This is irreversible and does not contact the server.
+// The store is closed before deletion so any pending writes are flushed.
+func (c *Client) DeleteLocalData() error {
+	if c.store != nil {
+		_ = c.store.Close()
+	}
+	return os.RemoveAll(c.config.DataDir)
+}
 
 // VerificationSession holds the state of a phone verification session.
 type VerificationSession struct {
@@ -32,7 +76,7 @@ func (c *Client) CreateVerificationSession(ctx context.Context, number string) (
 		"number": number,
 	}, &result)
 	if err != nil {
-		return nil, fmt.Errorf("create verification session: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "create verification session", err)
 	}
 	return &result, nil
 }
@@ -42,7 +86,7 @@ func (c *Client) RequestVerificationCode(ctx context.Context, sessionID string) 
 	var result VerificationSession
 	err := c.doRequest(ctx, "POST", "/v1/verification/session/"+sessionID+"/code", nil, &result)
 	if err != nil {
-		return nil, fmt.Errorf("request verification code: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "request verification code", err)
 	}
 	return &result, nil
 }
@@ -54,7 +98,7 @@ func (c *Client) SubmitVerificationCode(ctx context.Context, sessionID, code str
 		"code": code,
 	}, &result)
 	if err != nil {
-		return nil, fmt.Errorf("submit verification code: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "submit verification code", err)
 	}
 	return &result, nil
 }
@@ -66,7 +110,7 @@ func (c *Client) Register(ctx context.Context, number, sessionID string) (*Regis
 	// Generate identity key pair for ACI.
 	aciKeyPair, err := ecc.GenerateKeyPair()
 	if err != nil {
-		return nil, fmt.Errorf("generate ACI identity key: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "generate ACI identity key", err)
 	}
 	aciPubKey := identity.NewKey(aciKeyPair.PublicKey())
 	aciIdentity := identity.NewKeyPair(aciPubKey, aciKeyPair.PrivateKey())
@@ -74,7 +118,7 @@ func (c *Client) Register(ctx context.Context, number, sessionID string) (*Regis
 	// Generate identity key pair for PNI.
 	pniKeyPair, err := ecc.GenerateKeyPair()
 	if err != nil {
-		return nil, fmt.Errorf("generate PNI identity key: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "generate PNI identity key", err)
 	}
 	pniPubKey := identity.NewKey(pniKeyPair.PublicKey())
 	pniIdentity := identity.NewKeyPair(pniPubKey, pniKeyPair.PrivateKey())
@@ -82,11 +126,11 @@ func (c *Client) Register(ctx context.Context, number, sessionID string) (*Regis
 	// Generate signed pre-keys.
 	aciSignedPreKey, err := generateSignedPreKey(aciIdentity, 1)
 	if err != nil {
-		return nil, fmt.Errorf("generate ACI signed pre-key: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "generate ACI signed pre-key", err)
 	}
 	pniSignedPreKey, err := generateSignedPreKey(pniIdentity, 1)
 	if err != nil {
-		return nil, fmt.Errorf("generate PNI signed pre-key: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "generate PNI signed pre-key", err)
 	}
 
 	// Generate registration IDs.
@@ -106,22 +150,22 @@ func (c *Client) Register(ctx context.Context, number, sessionID string) (*Regis
 	regReq := map[string]any{
 		"sessionId": sessionID,
 		"accountAttributes": map[string]any{
-			"fetchesMessages": true,
-			"registrationId":  regID,
+			"fetchesMessages":   true,
+			"registrationId":    regID,
 			"pniRegistrationId": pniRegID,
-			"name":            "signal-go",
+			"name":              "signal-go",
 			"capabilities": map[string]any{
-				"storage":                   true,
-				"transfer":                  false,
-				"paymentActivation":         false,
-				"deleteSync":                false,
-				"versionedExpirationTimer":  false,
+				"storage":                  true,
+				"transfer":                 false,
+				"paymentActivation":        false,
+				"deleteSync":               false,
+				"versionedExpirationTimer": false,
 			},
 		},
-		"aciIdentityKey": base64.StdEncoding.EncodeToString(aciIdentity.PublicKey().Serialize()),
-		"pniIdentityKey": base64.StdEncoding.EncodeToString(pniIdentity.PublicKey().Serialize()),
-		"aciSignedPreKey": aciSignedPreKey,
-		"pniSignedPreKey": pniSignedPreKey,
+		"aciIdentityKey":        base64.StdEncoding.EncodeToString(aciIdentity.PublicKey().Serialize()),
+		"pniIdentityKey":        base64.StdEncoding.EncodeToString(pniIdentity.PublicKey().Serialize()),
+		"aciSignedPreKey":       aciSignedPreKey,
+		"pniSignedPreKey":       pniSignedPreKey,
 		"aciPqLastResortPreKey": generateDummyPQPreKey(aciIdentity),
 		"pniPqLastResortPreKey": generateDummyPQPreKey(pniIdentity),
 	}
@@ -129,7 +173,7 @@ func (c *Client) Register(ctx context.Context, number, sessionID string) (*Regis
 	var result RegistrationResult
 	err = c.doRequestWithAuth(ctx, "POST", "/v1/registration", number, password.Plaintext(), regReq, &result)
 	if err != nil {
-		return nil, fmt.Errorf("register: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "register", err)
 	}
 
 	// Save credentials.
@@ -141,7 +185,7 @@ func (c *Client) Register(ctx context.Context, number, sessionID string) (*Regis
 		DeviceID: 1,
 	}
 	if err := c.store.SaveCredentials(creds); err != nil {
-		return nil, fmt.Errorf("save credentials: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "save credentials", err)
 	}
 
 	// Update client config with new credentials. Password is already SecureString.
@@ -175,7 +219,7 @@ func (c *Client) Verify(ctx context.Context, number, code string) (*Registration
 	}
 
 	if !verified.Verified {
-		return nil, fmt.Errorf("verification failed: session not verified")
+		return nil, signalerrors.New(signalerrors.ErrUnauthenticated, "verification failed: session not verified")
 	}
 
 	// Register account.
@@ -191,12 +235,12 @@ func (c *Client) Unregister(ctx context.Context) error {
 // a new batch if below the threshold.
 func (c *Client) ReplenishPreKeys(ctx context.Context) error {
 	var countResp struct {
-		Count        int  `json:"count"`
-		PQCount      int  `json:"pqCount"`
+		Count         int  `json:"count"`
+		PQCount       int  `json:"pqCount"`
 		HasLastResort bool `json:"hasLastResort"`
 	}
 	if err := c.doRequest(ctx, "GET", "/v2/keys", nil, &countResp); err != nil {
-		return fmt.Errorf("check pre-key count: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "check pre-key count", err)
 	}
 
 	// Replenish if below threshold.
@@ -206,7 +250,7 @@ func (c *Client) ReplenishPreKeys(ctx context.Context) error {
 
 	creds, err := c.store.GetCredentials()
 	if err != nil || creds == nil {
-		return fmt.Errorf("no credentials for pre-key upload")
+		return signalerrors.New(signalerrors.ErrUnauthenticated, "no credentials for pre-key upload")
 	}
 
 	// Generate pre-keys. Use a simple incrementing ID scheme.

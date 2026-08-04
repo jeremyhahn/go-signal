@@ -3,6 +3,8 @@ package signal
 import (
 	"context"
 	"fmt"
+
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
 // ListIdentities returns known identity keys for contacts from local storage.
@@ -35,10 +37,10 @@ func (c *Client) TrustIdentity(ctx context.Context, number string) error {
 	if daoStore, ok := c.store.(*DAOStore); ok {
 		entity, err := daoStore.Factory().IdentityKeys.QueryOneByIndex(ctx, "Address", number+".1")
 		if err != nil {
-			return fmt.Errorf("identity not found for %s", number)
+			return signalerrors.New(signalerrors.ErrNotFound, "identity not found for "+number)
 		}
 		entity.VerifiedStatus = 1
 		return daoStore.Factory().IdentityKeys.Save(ctx, entity)
 	}
-	return fmt.Errorf("identity trust requires DAOStore")
+	return signalerrors.New(signalerrors.ErrInvalidArgument, "identity trust requires DAOStore")
 }

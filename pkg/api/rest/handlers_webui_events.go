@@ -5,9 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 )
+
+// broadcastWriteTimeout bounds each per-client WebSocket write so that one
+// stalled (backpressured) browser cannot block the entire broadcast loop.
+const broadcastWriteTimeout = 5 * time.Second
 
 // WebUIEventHub manages WebSocket connections for the web UI.
 // When the SDK client receives messages via its WebSocket to the Signal
@@ -15,6 +20,15 @@ import (
 type WebUIEventHub struct {
 	mu      sync.RWMutex
 	clients map[*websocket.Conn]struct{}
+	// broadcastMu serializes Broadcast so two concurrent broadcasts never
+	// issue overlapping writes on the same connection (coder/websocket
+	// forbids concurrent writes to one Conn).
+	broadcastMu sync.Mutex
+	// allowedOrigins lists Origin patterns permitted to open the event
+	// WebSocket. When empty the coder/websocket default applies, which
+	// requires the Origin host to match the request Host (same-origin) —
+	// InsecureSkipVerify is never set, so cross-site hijacking is rejected.
+	allowedOrigins []string
 }
 
 // NewWebUIEventHub creates an event hub for web UI clients.
@@ -24,19 +38,35 @@ func NewWebUIEventHub() *WebUIEventHub {
 	}
 }
 
+// SetAllowedOrigins configures the Origin patterns permitted to open the event
+// WebSocket. Passing an empty slice keeps the secure same-origin default.
+func (h *WebUIEventHub) SetAllowedOrigins(origins []string) {
+	h.mu.Lock()
+	h.allowedOrigins = origins
+	h.mu.Unlock()
+}
+
+// acceptOptions returns origin-restricted WebSocket accept options. It never
+// sets InsecureSkipVerify, mirroring the server's wsAcceptOptions policy.
+func (h *WebUIEventHub) acceptOptions() *websocket.AcceptOptions {
+	h.mu.RLock()
+	origins := h.allowedOrigins
+	h.mu.RUnlock()
+	if len(origins) == 0 {
+		return &websocket.AcceptOptions{}
+	}
+	return &websocket.AcceptOptions{OriginPatterns: origins}
+}
+
 // HandleWebSocket upgrades the HTTP connection to WebSocket and registers
 // the client for event delivery. The connection is held open until the
 // client disconnects or the server shuts down.
 func (h *WebUIEventHub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
-	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		// Allow all origins for development. Production should restrict
-		// this to the signald host.
-		InsecureSkipVerify: true,
-	})
+	conn, err := websocket.Accept(w, r, h.acceptOptions())
 	if err != nil {
 		return
 	}
-	defer conn.CloseNow()
+	defer func() { _ = conn.CloseNow() }()
 
 	h.mu.Lock()
 	h.clients[conn] = struct{}{}
@@ -65,6 +95,11 @@ func (h *WebUIEventHub) Broadcast(eventType string, payload interface{}) {
 		return
 	}
 
+	// Serialize the write phase so concurrent broadcasts can't write the same
+	// connection at once.
+	h.broadcastMu.Lock()
+	defer h.broadcastMu.Unlock()
+
 	h.mu.RLock()
 	clients := make([]*websocket.Conn, 0, len(h.clients))
 	for c := range h.clients {
@@ -72,8 +107,27 @@ func (h *WebUIEventHub) Broadcast(eventType string, payload interface{}) {
 	}
 	h.mu.RUnlock()
 
+	var failed []*websocket.Conn
 	for _, c := range clients {
-		_ = c.Write(context.Background(), websocket.MessageText, data)
+		ctx, cancel := context.WithTimeout(context.Background(), broadcastWriteTimeout)
+		err := c.Write(ctx, websocket.MessageText, data)
+		cancel()
+		if err != nil {
+			failed = append(failed, c)
+		}
+	}
+
+	// Reap connections that errored (closed or stalled) so a dead client is
+	// not retained and retried on every subsequent broadcast.
+	if len(failed) > 0 {
+		h.mu.Lock()
+		for _, c := range failed {
+			delete(h.clients, c)
+		}
+		h.mu.Unlock()
+		for _, c := range failed {
+			_ = c.CloseNow()
+		}
 	}
 }
 

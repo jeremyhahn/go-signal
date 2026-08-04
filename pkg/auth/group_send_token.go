@@ -99,16 +99,33 @@ func DeserializeGroupSendToken(data []byte) *GroupSendToken {
 
 // computeGroupSendMAC computes the HMAC-SHA256 over the token's bound fields.
 //
+// Each variable-length field is length-prefixed (8-byte big-endian length
+// before the bytes) so the MAC input is unambiguously framed: distinct
+// (senderUUID, groupID) pairs can never produce the same byte stream through
+// concatenation aliasing (e.g. "ab"+"c" vs "a"+"bc"). This is a server-internal
+// MAC — the same function generates and verifies, and the serialized 40-byte
+// token format (8-byte expiration + 32-byte HMAC) is unchanged — so the framing
+// is purely an integrity hardening with no external wire impact.
+//
 // Key zeroing: the caller (GenerateGroupSendToken or VerifyGroupSendToken)
 // owns the key slice and is responsible for zeroing it after all usages are
 // complete. This internal helper does not zero key to avoid corrupting callers
 // that pass the same slice to multiple functions in sequence.
 func computeGroupSendMAC(key []byte, senderUUID string, groupID string, expiration int64) []byte {
 	h := hmac.New(sha256.New, key)
-	h.Write([]byte(senderUUID))
-	h.Write([]byte(groupID))
+	writeLengthPrefixed(h, []byte(senderUUID))
+	writeLengthPrefixed(h, []byte(groupID))
 	var expBuf [8]byte
 	binary.BigEndian.PutUint64(expBuf[:], uint64(expiration))
 	h.Write(expBuf[:])
 	return h.Sum(nil)
+}
+
+// writeLengthPrefixed writes an 8-byte big-endian length followed by b, so that
+// a sequence of variable-length fields is unambiguously parseable.
+func writeLengthPrefixed(h interface{ Write([]byte) (int, error) }, b []byte) {
+	var lenBuf [8]byte
+	binary.BigEndian.PutUint64(lenBuf[:], uint64(len(b)))
+	h.Write(lenBuf[:])
+	h.Write(b)
 }

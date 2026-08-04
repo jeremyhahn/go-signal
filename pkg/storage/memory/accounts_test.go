@@ -43,6 +43,7 @@ func TestNewMemoryAccountStore(t *testing.T) {
 	store := NewMemoryAccountStore()
 	if store == nil {
 		t.Fatal("expected non-nil store")
+		return
 	}
 	if store.byUUID == nil {
 		t.Fatal("expected byUUID map to be initialized")
@@ -180,6 +181,92 @@ func TestGet(t *testing.T) {
 	}
 	if got.Number != "+15551000000" {
 		t.Fatalf("expected Number %q, got %q", "+15551000000", got.Number)
+	}
+}
+
+func TestGetByPNI_Found(t *testing.T) {
+	store := NewMemoryAccountStore()
+	ctx := context.Background()
+
+	a := testAccount("pni-uuid-1", "+15550000001")
+	a.PNI = "pni-identity-1"
+	if err := store.Create(ctx, a); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := store.GetByPNI(ctx, "pni-identity-1")
+	if err != nil {
+		t.Fatalf("GetByPNI: unexpected error: %v", err)
+	}
+	if got.UUID != "pni-uuid-1" {
+		t.Errorf("GetByPNI: expected pni-uuid-1, got %q", got.UUID)
+	}
+}
+
+func TestGetByPNI_NotFound(t *testing.T) {
+	store := NewMemoryAccountStore()
+	_, err := store.GetByPNI(context.Background(), "nonexistent-pni")
+	if err == nil {
+		t.Fatal("GetByPNI: expected error for missing PNI")
+	}
+}
+
+func TestListAll_Empty(t *testing.T) {
+	store := NewMemoryAccountStore()
+	var visited []*accounts.Account
+	err := store.ListAll(context.Background(), func(a *accounts.Account) error {
+		visited = append(visited, a)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ListAll empty: %v", err)
+	}
+	if len(visited) != 0 {
+		t.Errorf("ListAll empty: expected 0 accounts, got %d", len(visited))
+	}
+}
+
+func TestListAll_MultipleAccounts(t *testing.T) {
+	store := NewMemoryAccountStore()
+	ctx := context.Background()
+
+	for i := 0; i < 3; i++ {
+		a := testAccount("list-uuid-"+string(rune('a'+i)), "+1555000000"+string(rune('0'+i)))
+		if err := store.Create(ctx, a); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+	}
+
+	var visited []string
+	if err := store.ListAll(ctx, func(a *accounts.Account) error {
+		visited = append(visited, a.UUID)
+		return nil
+	}); err != nil {
+		t.Fatalf("ListAll: %v", err)
+	}
+	if len(visited) != 3 {
+		t.Errorf("ListAll: expected 3, got %d", len(visited))
+	}
+}
+
+func TestListAll_FnErrorStopsIteration(t *testing.T) {
+	store := NewMemoryAccountStore()
+	ctx := context.Background()
+
+	_ = store.Create(ctx, testAccount("stop-uuid-1", "+15550001001"))
+	_ = store.Create(ctx, testAccount("stop-uuid-2", "+15550001002"))
+
+	count := 0
+	sentinel := &accounts.AccountNotFoundError{Identifier: "stop"}
+	err := store.ListAll(ctx, func(_ *accounts.Account) error {
+		count++
+		return sentinel
+	})
+	if err == nil {
+		t.Fatal("ListAll: expected error when fn returns error")
+	}
+	if count != 1 {
+		t.Errorf("ListAll: expected fn called once before stop, got %d", count)
 	}
 }
 

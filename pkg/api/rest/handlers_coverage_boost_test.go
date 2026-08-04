@@ -43,9 +43,9 @@ func TestHandleCDNUpload_MethodNotAllowed(t *testing.T) {
 // --------------------------------------------------------------------------
 
 func TestHandleChangeNumber_InvalidPniIdentityKeyEncoding(t *testing.T) {
-	s, _ := newTestServerWithAccount(t)
+	s, sessionID := changeNumberServer(t, "+15559998888")
 
-	body := `{"number":"+15559998888","pniIdentityKey":"!!!invalid!!!"}`
+	body := `{"number":"+15559998888","sessionId":"` + sessionID + `","pniIdentityKey":"!!!invalid!!!"}`
 	req := httptest.NewRequest(http.MethodPut, "/v2/accounts/number", strings.NewReader(body))
 	req.SetBasicAuth(testAccountUUID, testAuthToken)
 	rr := httptest.NewRecorder()
@@ -67,8 +67,10 @@ func TestHandleChangeNumber_NilAccountDirect(t *testing.T) {
 func TestHandleChangeNumber_NoPrimaryDevice(t *testing.T) {
 	s := newTestServer(t)
 
-	acct := &accounts.Account{UUID: "no-primary-uuid", Devices: []accounts.Device{}}
+	// A non-primary (linked) device must not be allowed to change the number.
+	acct := &accounts.Account{UUID: "linked-device-uuid"}
 	ctx := contextWithAccount(context.Background(), acct)
+	ctx = contextWithDevice(ctx, 2)
 	req := httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{}`)).WithContext(ctx)
 	rr := httptest.NewRecorder()
 	s.handleChangeNumber(rr, req)

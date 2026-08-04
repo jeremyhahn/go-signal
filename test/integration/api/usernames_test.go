@@ -3,25 +3,82 @@
 package api
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"io"
 	"net/http"
 	"testing"
 
+	libsignalusernames "github.com/jeremyhahn/go-libsignal/pkg/usernames"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// realUsernameHashAndProofForIntegration generates a ZK-verifiable username hash
+// and proof through go-libsignal, suitable for driving the confirm endpoint.
+// Returns the 32-byte hash (as []byte) and the base64-encoded proof.
+func realUsernameHashAndProofForIntegration(t *testing.T) (hash []byte, proofB64 string) {
+	t.Helper()
+	u, err := libsignalusernames.FromParts("integtest", "01", libsignalusernames.DefaultNicknameLimits())
+	require.NoError(t, err, "FromParts")
+	h := u.Hash()
+	var randomness [32]byte
+	_, err = rand.Read(randomness[:])
+	require.NoError(t, err, "rand.Read")
+	proof, err := u.Proof(randomness)
+	require.NoError(t, err, "Proof")
+	out := make([]byte, 32)
+	copy(out, h[:])
+	return out, base64.StdEncoding.EncodeToString(proof)
+}
+
+// confirmUsernameHashForAccount reserves and confirms a real username hash for
+// the given account via the REST API. It returns the confirmed hash base64-
+// encoded so callers can use it in subsequent assertions. Tests that require a
+// confirmed username hash (e.g. to set a username link) should call this helper
+// first.
+func confirmUsernameHashForAccount(t *testing.T, env *testEnv, acctUUID, password string) string {
+	t.Helper()
+	hash, proofB64 := realUsernameHashAndProofForIntegration(t)
+	hashB64 := base64.StdEncoding.EncodeToString(hash)
+
+	// Reserve the hash.
+	reserveReq := map[string]any{
+		"usernameHashes": []string{hashB64},
+	}
+	resp := env.doAuthRequest(t, "PUT", "/v1/accounts/username_hash/reserve", reserveReq, acctUUID, password)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "reserve username hash")
+	var reserveResp map[string]any
+	decodeJSON(t, resp, &reserveResp)
+	token, ok := reserveResp["reservationToken"].(string)
+	require.True(t, ok, "reservationToken missing from reserve response")
+
+	// Confirm with the real proof and the token from the reserve response.
+	confirmReq := map[string]any{
+		"usernameHash":     hashB64,
+		"reservationToken": token,
+		"zkProof":          proofB64,
+	}
+	resp = env.doAuthRequest(t, "PUT", "/v1/accounts/username_hash/confirm", confirmReq, acctUUID, password)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "confirm username hash")
+	resp.Body.Close()
+
+	return hashB64
+}
 
 func TestUsernames_ReserveAndConfirm(t *testing.T) {
 	env := setupTestEnv(t)
 	uuid, _ := registerTestAccount(t, env, uniquePhoneNumber(), "pass123")
 
-	// Reserve a username hash. Each hash must be exactly 32 bytes when decoded.
-	hash1 := base64.StdEncoding.EncodeToString([]byte("test-username-hash-1-padding!!!!")) // 32 bytes
-	hash2 := base64.StdEncoding.EncodeToString([]byte("test-username-hash-2-padding!!!!"))
+	// Generate a real ZK-verifiable username hash and proof. The confirm
+	// endpoint verifies the proof before checking the reservation token, so
+	// we must supply a real proof to reach the token-validation path.
+	hash, proofB64 := realUsernameHashAndProofForIntegration(t)
+	hashB64 := base64.StdEncoding.EncodeToString(hash)
 
+	// Reserve the hash. Each hash must be exactly 32 bytes when decoded.
 	reserveReq := map[string]any{
-		"usernameHashes": []string{hash1, hash2},
+		"usernameHashes": []string{hashB64},
 	}
 	resp := env.doAuthRequest(t, "PUT", "/v1/accounts/username_hash/reserve", reserveReq, uuid, "pass123")
 	if resp.StatusCode != http.StatusOK {
@@ -36,16 +93,13 @@ func TestUsernames_ReserveAndConfirm(t *testing.T) {
 	require.True(t, ok)
 	assert.NotEmpty(t, selectedHash)
 
-	// Now we need the reservation token. The reserve endpoint only returns
-	// the hash in the spec, but we need to confirm. Let's re-reserve to get
-	// a fresh token. The actual confirm flow requires the token that the
-	// manager generates internally. Since our test env is in-process, we test
-	// the full reserve->confirm flow by using the manager directly through
-	// the store. Instead, let's test the confirm endpoint returns a proper
-	// error with a wrong token.
+	// Confirm with the real proof but a deliberately wrong token. The server
+	// verifies the ZK proof first (succeeds), then validates the reservation
+	// token (fails with InvalidReservationTokenError) → 409 Conflict.
 	confirmReq := map[string]any{
 		"usernameHash":     selectedHash,
-		"reservationToken": "invalid-token",
+		"reservationToken": "bad-token-intentionally-wrong",
+		"zkProof":          proofB64,
 	}
 	resp = env.doAuthRequest(t, "PUT", "/v1/accounts/username_hash/confirm", confirmReq, uuid, "pass123")
 	assert.Equal(t, http.StatusConflict, resp.StatusCode)
@@ -91,9 +145,12 @@ func TestUsernames_DeleteHash(t *testing.T) {
 	env := setupTestEnv(t)
 	uuid, _ := registerTestAccount(t, env, uniquePhoneNumber(), "pass123")
 
-	// Delete without having a hash set should return 404.
+	// Deleting a username hash when none is set is idempotent: the server
+	// returns 204 No Content regardless of whether a hash existed, matching
+	// Java Signal-Server's AccountController#deleteUsernameHash which calls
+	// clearUsername unconditionally.
 	resp := env.doAuthRequest(t, "DELETE", "/v1/accounts/username_hash", nil, uuid, "pass123")
-	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
 	resp.Body.Close()
 }
 
@@ -108,6 +165,11 @@ func TestUsernames_DeleteHashWithoutAuth(t *testing.T) {
 func TestUsernames_SetAndLookupLink(t *testing.T) {
 	env := setupTestEnv(t)
 	uuid, _ := registerTestAccount(t, env, uniquePhoneNumber(), "pass123")
+
+	// A confirmed username hash must exist before a link can be published.
+	// Java AccountController#setUsernameLink returns 409 Conflict otherwise;
+	// the manager enforces the same invariant via HashForUUID.
+	confirmUsernameHashForAccount(t, env, uuid, "pass123")
 
 	encryptedValue := base64.StdEncoding.EncodeToString([]byte("encrypted-username-data-padding!"))
 
@@ -148,7 +210,10 @@ func TestUsernames_DeleteLink(t *testing.T) {
 	env := setupTestEnv(t)
 	uuid, _ := registerTestAccount(t, env, uniquePhoneNumber(), "pass123")
 
-	// Set a link first.
+	// Confirm a username hash first so SetLink can succeed.
+	confirmUsernameHashForAccount(t, env, uuid, "pass123")
+
+	// Set a link.
 	encryptedValue := base64.StdEncoding.EncodeToString([]byte("encrypted-username-data-padding!"))
 	setReq := map[string]any{
 		"usernameLinkEncryptedValue": encryptedValue,
@@ -175,9 +240,11 @@ func TestUsernames_DeleteLinkNotSet(t *testing.T) {
 	env := setupTestEnv(t)
 	uuid, _ := registerTestAccount(t, env, uniquePhoneNumber(), "pass123")
 
-	// Delete without having a link set should return 404.
+	// Deleting a username link when none is set is idempotent: the server
+	// returns 204 No Content regardless of whether a link existed, matching
+	// Java Signal-Server's AccountController#deleteUsernameLink.
 	resp := env.doAuthRequest(t, "DELETE", "/v1/accounts/username_link", nil, uuid, "pass123")
-	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
 	resp.Body.Close()
 }
 

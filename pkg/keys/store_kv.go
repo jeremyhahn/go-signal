@@ -83,7 +83,10 @@ func (s *KVPreKeyStore) StoreSignedPreKey(ctx context.Context, uuid string, devi
 	return s.kv.Put(ctx, key, data)
 }
 
-// TakeEC removes and returns one EC pre-key for a device.
+// TakeEC removes and returns one EC pre-key for a device. The pre-key is
+// claimed via an atomic DeleteIfPresent so a one-time pre-key is never handed
+// to two concurrent callers (a forward-secrecy break). If another caller wins
+// the race for a candidate key, the next candidate is tried.
 func (s *KVPreKeyStore) TakeEC(ctx context.Context, uuid string, deviceID uint64) (*PreKey, error) {
 	did := strconv.FormatUint(deviceID, 10)
 	prefix := kvECPrefix + uuid + "/" + did + "/"
@@ -91,30 +94,34 @@ func (s *KVPreKeyStore) TakeEC(ctx context.Context, uuid string, deviceID uint64
 	if err != nil {
 		return nil, err
 	}
-	if len(keys) == 0 {
-		return nil, &PreKeyNotFoundError{UUID: uuid, DeviceID: deviceID, KeyType: "EC"}
-	}
 
-	data, err := s.kv.Get(ctx, keys[0])
-	if err != nil {
-		return nil, err
-	}
-
-	var pk PreKey
-	if err := json.Unmarshal(data, &pk); err != nil {
-		return nil, err
-	}
-
-	// Delete the consumed pre-key. A not-found error from a concurrent take
-	// is benign; other errors are surfaced to prevent silent key leakage.
-	if err := s.kv.Delete(ctx, keys[0]); err != nil {
-		var knf *store.KeyNotFoundError
-		if !errors.As(err, &knf) {
+	for _, k := range keys {
+		data, err := s.kv.Get(ctx, k)
+		if err != nil {
+			var knf *store.KeyNotFoundError
+			if errors.As(err, &knf) {
+				continue // taken by a concurrent caller between List and Get
+			}
 			return nil, err
 		}
+		// Atomically claim this key. Only the caller that actually removed it
+		// (removed == true) may return it; otherwise another caller already
+		// consumed it, so move on.
+		removed, err := s.kv.DeleteIfPresent(ctx, k)
+		if err != nil {
+			return nil, err
+		}
+		if !removed {
+			continue
+		}
+		var pk PreKey
+		if err := json.Unmarshal(data, &pk); err != nil {
+			return nil, err
+		}
+		return &pk, nil
 	}
 
-	return &pk, nil
+	return nil, &PreKeyNotFoundError{UUID: uuid, DeviceID: deviceID, KeyType: "EC"}
 }
 
 // StoreKEMLastResortPreKey persists the last-resort KEM pre-key for a device.
@@ -153,7 +160,9 @@ func (s *KVPreKeyStore) GetKEMLastResortPreKey(ctx context.Context, uuid string,
 	return &pk, nil
 }
 
-// TakeKEM removes and returns one KEM pre-key for a device.
+// TakeKEM removes and returns one KEM pre-key for a device. Like TakeEC it
+// claims the key atomically via DeleteIfPresent so a one-time KEM pre-key is
+// never consumed twice under concurrency.
 func (s *KVPreKeyStore) TakeKEM(ctx context.Context, uuid string, deviceID uint64) (*KEMSignedPreKey, error) {
 	did := strconv.FormatUint(deviceID, 10)
 	prefix := kvKEMPrefix + uuid + "/" + did + "/"
@@ -161,28 +170,31 @@ func (s *KVPreKeyStore) TakeKEM(ctx context.Context, uuid string, deviceID uint6
 	if err != nil {
 		return nil, err
 	}
-	if len(keys) == 0 {
-		return nil, &PreKeyNotFoundError{UUID: uuid, DeviceID: deviceID, KeyType: "KEM"}
-	}
 
-	data, err := s.kv.Get(ctx, keys[0])
-	if err != nil {
-		return nil, err
-	}
-
-	var pk KEMSignedPreKey
-	if err := json.Unmarshal(data, &pk); err != nil {
-		return nil, err
-	}
-
-	if err := s.kv.Delete(ctx, keys[0]); err != nil {
-		var knf *store.KeyNotFoundError
-		if !errors.As(err, &knf) {
+	for _, k := range keys {
+		data, err := s.kv.Get(ctx, k)
+		if err != nil {
+			var knf *store.KeyNotFoundError
+			if errors.As(err, &knf) {
+				continue
+			}
 			return nil, err
 		}
+		removed, err := s.kv.DeleteIfPresent(ctx, k)
+		if err != nil {
+			return nil, err
+		}
+		if !removed {
+			continue
+		}
+		var pk KEMSignedPreKey
+		if err := json.Unmarshal(data, &pk); err != nil {
+			return nil, err
+		}
+		return &pk, nil
 	}
 
-	return &pk, nil
+	return nil, &PreKeyNotFoundError{UUID: uuid, DeviceID: deviceID, KeyType: "KEM"}
 }
 
 // GetSignedPreKey retrieves the current signed pre-key for a device.
@@ -300,4 +312,37 @@ func (s *KVPreKeyStore) deleteByPrefix(ctx context.Context, prefix string) error
 		}
 	}
 	return nil
+}
+
+// ListAccountUUIDs returns every UUID with rows across the four
+// pre-key prefixes. Keys follow `<prefix><uuid>/...`, so the UUID
+// is the segment between the prefix and the next `/`.
+func (s *KVPreKeyStore) ListAccountUUIDs(ctx context.Context) ([]string, error) {
+	prefixes := []string{kvECPrefix, kvKEMPrefix, kvSignedPrefix, kvKEMLastResortPrefix}
+	seen := make(map[string]struct{})
+	for _, p := range prefixes {
+		ks, err := s.kv.List(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		for _, k := range ks {
+			rest := k[len(p):]
+			slash := -1
+			for i := 0; i < len(rest); i++ {
+				if rest[i] == '/' {
+					slash = i
+					break
+				}
+			}
+			if slash <= 0 {
+				continue
+			}
+			seen[rest[:slash]] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for u := range seen {
+		out = append(out, u)
+	}
+	return out, nil
 }

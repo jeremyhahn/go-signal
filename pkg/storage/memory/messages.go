@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
+	"time"
 
-	"github.com/jeremyhahn/go-signal/pkg/errors"
 	"github.com/jeremyhahn/go-signal/pkg/messages"
 )
 
@@ -42,6 +42,13 @@ func NewMemoryMessageStore() *MemoryMessageStore {
 
 // Insert persists a new message envelope for delivery.
 func (s *MemoryMessageStore) Insert(_ context.Context, destinationUUID string, destinationDevice uint64, envelope *messages.Envelope) (uint64, error) {
+	if envelope == nil {
+		return 0, &messages.InvalidArgumentError{Field: "envelope", Message: "nil envelope"}
+	}
+	if envelope.ServerGUID == "" {
+		return 0, &messages.InvalidArgumentError{Field: "serverGuid", Message: "empty server GUID"}
+	}
+
 	id := s.idCounter.Add(1)
 
 	stored := cloneEnvelope(envelope)
@@ -82,6 +89,15 @@ func (s *MemoryMessageStore) GetMessagesForDevice(_ context.Context, destination
 	return result, nil
 }
 
+// HasMessagesForDevice reports whether the device has at least one
+// pending envelope without materialising the envelope set.
+func (s *MemoryMessageStore) HasMessagesForDevice(_ context.Context, destinationUUID string, destinationDevice uint64) (bool, error) {
+	key := deviceKey{uuid: destinationUUID, deviceID: destinationDevice}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.byDevice[key]) > 0, nil
+}
+
 // Delete removes a specific message by destination UUID and server GUID.
 func (s *MemoryMessageStore) Delete(_ context.Context, destinationUUID string, serverGUID string) error {
 	s.mu.Lock()
@@ -89,11 +105,11 @@ func (s *MemoryMessageStore) Delete(_ context.Context, destinationUUID string, s
 
 	idx, exists := s.byGUID[serverGUID]
 	if !exists {
-		return errors.New(errors.ErrNotFound, "message not found: "+serverGUID)
+		return &messages.MessageNotFoundError{ServerGUID: serverGUID}
 	}
 
 	if idx.destinationUUID != destinationUUID {
-		return errors.New(errors.ErrNotFound, "message not found for account: "+serverGUID)
+		return &messages.MessageNotFoundError{ServerGUID: serverGUID}
 	}
 
 	key := deviceKey{uuid: idx.destinationUUID, deviceID: idx.deviceID}
@@ -114,7 +130,7 @@ func (s *MemoryMessageStore) Delete(_ context.Context, destinationUUID string, s
 	}
 
 	delete(s.byGUID, serverGUID)
-	return errors.New(errors.ErrNotFound, "message not found: "+serverGUID)
+	return &messages.MessageNotFoundError{ServerGUID: serverGUID}
 }
 
 // DeleteForDevice removes all messages for a specific device.
@@ -133,6 +149,14 @@ func (s *MemoryMessageStore) DeleteForDevice(_ context.Context, destinationUUID 
 	delete(s.byDevice, key)
 
 	return nil
+}
+
+// RemoveExpired is a no-op for the memory backend: envelopes carry no
+// expires_at field today, so there is nothing to sweep. The method exists to
+// satisfy [messages.MessageStore] and lets the sweep worker run uniformly
+// against every backend.
+func (s *MemoryMessageStore) RemoveExpired(_ context.Context, _ time.Time) (int64, error) {
+	return 0, nil
 }
 
 // DeleteForAccount removes all messages for an entire account.

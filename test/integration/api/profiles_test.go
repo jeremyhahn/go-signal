@@ -17,10 +17,10 @@ func TestProfiles_SetAndGet(t *testing.T) {
 
 	profileReq := map[string]any{
 		"version":    "testversion1",
-		"name":       base64.StdEncoding.EncodeToString([]byte("Test User")),
-		"about":      base64.StdEncoding.EncodeToString([]byte("Hello!")),
-		"aboutEmoji": base64.StdEncoding.EncodeToString([]byte("wave")),
-		"commitment": base64.StdEncoding.EncodeToString([]byte("commitment-value-padding!!!!!!")),
+		"name":       validProfileName(),
+		"about":      validProfileAbout(),
+		"aboutEmoji": validProfileEmoji(),
+		"commitment": validProfileCommitment(),
 	}
 
 	resp := env.doAuthRequest(t, "PUT", "/v1/profile", profileReq, uuid, "pass123")
@@ -65,8 +65,8 @@ func TestProfiles_GetUnversionedAfterSet(t *testing.T) {
 	// Set a versioned profile.
 	profileReq := map[string]any{
 		"version":    "v1",
-		"name":       base64.StdEncoding.EncodeToString([]byte("Alice")),
-		"commitment": base64.StdEncoding.EncodeToString([]byte("commitment-value-alice-padding!")),
+		"name":       validProfileName(),
+		"commitment": validProfileCommitment(),
 	}
 	resp := env.doAuthRequest(t, "PUT", "/v1/profile", profileReq, uuid, "pass123")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -92,11 +92,23 @@ func TestProfiles_MultipleVersions(t *testing.T) {
 	env := setupTestEnv(t)
 	uuid, _ := registerTestAccount(t, env, uniquePhoneNumber(), "pass123")
 
+	// Profile names are encrypted blobs stored and returned verbatim; the
+	// server validates the byte length (must be exactly 81 bytes decoded) but
+	// does not inspect the content. Build two distinct 81-byte payloads so we
+	// can verify the round-trip independently for each version.
+	nameV1 := make([]byte, 81)
+	nameV1[0] = 0x01 // first byte distinguishes v1
+	nameV1B64 := base64.StdEncoding.EncodeToString(nameV1)
+
+	nameV2 := make([]byte, 81)
+	nameV2[0] = 0x02 // first byte distinguishes v2
+	nameV2B64 := base64.StdEncoding.EncodeToString(nameV2)
+
 	// Set version 1.
 	profileV1 := map[string]any{
 		"version":    "v1",
-		"name":       base64.StdEncoding.EncodeToString([]byte("Alice V1")),
-		"commitment": base64.StdEncoding.EncodeToString([]byte("commitment-v1-padding!!!!!!!!!!")),
+		"name":       nameV1B64,
+		"commitment": validProfileCommitment(),
 	}
 	resp := env.doAuthRequest(t, "PUT", "/v1/profile", profileV1, uuid, "pass123")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -105,26 +117,24 @@ func TestProfiles_MultipleVersions(t *testing.T) {
 	// Set version 2.
 	profileV2 := map[string]any{
 		"version":    "v2",
-		"name":       base64.StdEncoding.EncodeToString([]byte("Alice V2")),
-		"commitment": base64.StdEncoding.EncodeToString([]byte("commitment-v2-padding!!!!!!!!!!")),
+		"name":       nameV2B64,
+		"commitment": validProfileCommitment(),
 	}
 	resp = env.doAuthRequest(t, "PUT", "/v1/profile", profileV2, uuid, "pass123")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	resp.Body.Close()
 
-	// Fetch version 1.
+	// Fetch version 1 and verify the stored name round-trips exactly.
 	resp = env.doAuthRequest(t, "GET", "/v1/profile/"+uuid+"/v1", nil, uuid, "pass123")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	var p1 map[string]any
 	decodeJSON(t, resp, &p1)
-	name1Bytes, _ := base64.StdEncoding.DecodeString(p1["name"].(string))
-	assert.Equal(t, "Alice V1", string(name1Bytes))
+	assert.Equal(t, nameV1B64, p1["name"].(string))
 
-	// Fetch version 2.
+	// Fetch version 2 and verify the stored name round-trips exactly.
 	resp = env.doAuthRequest(t, "GET", "/v1/profile/"+uuid+"/v2", nil, uuid, "pass123")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	var p2 map[string]any
 	decodeJSON(t, resp, &p2)
-	name2Bytes, _ := base64.StdEncoding.DecodeString(p2["name"].(string))
-	assert.Equal(t, "Alice V2", string(name2Bytes))
+	assert.Equal(t, nameV2B64, p2["name"].(string))
 }

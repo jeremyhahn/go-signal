@@ -8,31 +8,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sync"
 	"time"
+
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 
 	"github.com/coder/websocket"
 )
-
-// WSClient manages a persistent WebSocket connection to the Signal server
-// for real-time message delivery.
-type WSClient struct {
-	mu       sync.Mutex
-	conn     *websocket.Conn
-	url      string
-	username string
-	password string
-	caCert   string
-	closed   bool
-	onMessage func([]byte)
-}
 
 // ConnectWebSocket establishes a persistent WebSocket connection for
 // real-time message delivery. Messages received are passed to the handler.
 func (c *Client) ConnectWebSocket(ctx context.Context, handler func(msg ReceivedMessage)) error {
 	creds, err := c.store.GetCredentials()
 	if err != nil || creds == nil {
-		return fmt.Errorf("no credentials for WebSocket connection")
+		return signalerrors.New(signalerrors.ErrUnauthenticated, "no credentials for WebSocket connection")
 	}
 
 	scheme := "wss"
@@ -79,12 +67,12 @@ func (c *Client) ConnectWebSocket(ctx context.Context, handler func(msg Received
 
 	conn, _, err := websocket.Dial(ctx, wsURL, opts)
 	if err != nil {
-		return fmt.Errorf("WebSocket connect: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "WebSocket connect", err)
 	}
 
 	// Read messages in a loop.
 	go func() {
-		defer conn.CloseNow()
+		defer func() { _ = conn.CloseNow() }()
 		for {
 			_, data, err := conn.Read(ctx)
 			if err != nil {

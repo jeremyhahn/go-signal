@@ -3,13 +3,21 @@ package signal
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"reflect"
 	"time"
+
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	"github.com/jeremyhahn/go-signal/pkg/daostore"
 	"github.com/jeremyhahn/go-signal/pkg/daostore/entities"
 )
+
+// errSDKInvalidStickerPack is returned when a caller asks the SDK to
+// persist a sticker pack with no PackID.
+var errSDKInvalidStickerPack = errors.New("sdk: sticker pack PackID is required")
 
 // DAOStore implements the Store interface using QRDB GenericDAO for
 // persistence. This is the default store for both CLI and desktop modes,
@@ -19,8 +27,35 @@ type DAOStore struct {
 }
 
 // NewDAOStore creates a Store backed by the given DAO factory.
+//
+// Asserts that StickerPackEntity carries the `PackID` secondary
+// index — without it, SaveStickerPack's upsert path would silently
+// degrade to "always insert" and DeleteStickerPack to a full scan
+// with empty results. The assertion is a fail-fast contract check
+// against struct-tag drift.
 func NewDAOStore(factory *daostore.Factory) *DAOStore {
+	if err := assertStickerPackIndex(); err != nil {
+		// Panic at boot rather than silently behave wrong at runtime.
+		panic("sdk: " + err.Error())
+	}
 	return &DAOStore{factory: factory}
+}
+
+// assertStickerPackIndex confirms entities.StickerPackEntity.PackID
+// carries the `index:"true"` struct tag. Returns a descriptive error
+// when the tag is missing so the panic message at boot points the
+// operator at the exact field.
+func assertStickerPackIndex() error {
+	var ent entities.StickerPackEntity
+	t := reflect.TypeOf(ent)
+	field, ok := t.FieldByName("PackID")
+	if !ok {
+		return errors.New("StickerPackEntity is missing the PackID field")
+	}
+	if field.Tag.Get("index") != "true" {
+		return errors.New("StickerPackEntity.PackID is missing the `index:\"true\"` tag; SaveStickerPack and DeleteStickerPack require the secondary index")
+	}
+	return nil
 }
 
 // NewDefaultDAOStore creates a Store with an embedded QRDB KVStore
@@ -29,12 +64,12 @@ func NewDAOStore(factory *daostore.Factory) *DAOStore {
 func NewDefaultDAOStore(dataDir string) (*DAOStore, error) {
 	kvStore, err := daostore.NewEmbeddedKVStore(dataDir)
 	if err != nil {
-		return nil, fmt.Errorf("create embedded kvstore: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "create embedded kvstore", err)
 	}
 
 	factory, err := daostore.NewFactory(kvStore)
 	if err != nil {
-		return nil, fmt.Errorf("create dao factory: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "create dao factory", err)
 	}
 
 	return NewDAOStore(factory), nil
@@ -237,6 +272,58 @@ func (s *DAOStore) SaveGroup(group *Group) error {
 	entity.Revision = group.Revision
 
 	return s.factory.Groups.Save(ctx, entity)
+}
+
+// GetStickerPacks returns every locally-installed sticker pack.
+func (s *DAOStore) GetStickerPacks() ([]InstalledStickerPack, error) {
+	ctx, cancel := s.ctx()
+	defer cancel()
+	rows, err := s.factory.StickerPacks.Find(ctx).Execute()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]InstalledStickerPack, len(rows))
+	for i, r := range rows {
+		out[i] = InstalledStickerPack{
+			PackID:  r.PackID,
+			PackKey: r.PackKey,
+			URL:     r.URL,
+			Title:   r.Title,
+		}
+	}
+	return out, nil
+}
+
+// SaveStickerPack upserts a pack by PackID.
+func (s *DAOStore) SaveStickerPack(pack *InstalledStickerPack) error {
+	if pack == nil || pack.PackID == "" {
+		return errSDKInvalidStickerPack
+	}
+	ctx, cancel := s.ctx()
+	defer cancel()
+	var entity *entities.StickerPackEntity
+	existing, err := s.factory.StickerPacks.QueryOneByIndex(ctx, "PackID", pack.PackID)
+	if err == nil && existing != nil {
+		entity = existing
+	} else {
+		entity = &entities.StickerPackEntity{}
+	}
+	entity.PackID = pack.PackID
+	entity.PackKey = pack.PackKey
+	entity.URL = pack.URL
+	entity.Title = pack.Title
+	return s.factory.StickerPacks.Save(ctx, entity)
+}
+
+// DeleteStickerPack removes the pack record by PackID. Idempotent.
+func (s *DAOStore) DeleteStickerPack(packID string) error {
+	ctx, cancel := s.ctx()
+	defer cancel()
+	existing, err := s.factory.StickerPacks.QueryOneByIndex(ctx, "PackID", packID)
+	if err != nil || existing == nil {
+		return nil
+	}
+	return s.factory.StickerPacks.Delete(ctx, existing)
 }
 
 // Close releases resources.

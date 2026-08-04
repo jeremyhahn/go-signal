@@ -6,13 +6,13 @@ package ws
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	signal "github.com/jeremyhahn/go-signal/sdk/go"
 	"github.com/jeremyhahn/go-signal/pkg/desktop/events"
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
+	signal "github.com/jeremyhahn/go-signal/sdk/go"
 )
 
 // Manager maintains dual WebSocket connections to the Signal server:
@@ -114,7 +114,7 @@ func (m *Manager) connect() error {
 		m.eventBus.Emit(events.MessageReceived, msg)
 	})
 	if err != nil {
-		return fmt.Errorf("websocket connect: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "websocket connect", err)
 	}
 
 	return nil

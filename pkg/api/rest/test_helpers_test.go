@@ -19,13 +19,18 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	"github.com/jeremyhahn/go-signal/pkg/devices"
 	"github.com/jeremyhahn/go-signal/pkg/directory"
+	"github.com/jeremyhahn/go-signal/pkg/extservice/registration/inprocess"
 	"github.com/jeremyhahn/go-signal/pkg/keys"
 	"github.com/jeremyhahn/go-signal/pkg/keytransparency"
 	"github.com/jeremyhahn/go-signal/pkg/messages"
 	"github.com/jeremyhahn/go-signal/pkg/profiles"
+	"github.com/jeremyhahn/go-signal/pkg/registration/core"
+	"github.com/jeremyhahn/go-signal/pkg/registration/recoverypassword"
+	"github.com/jeremyhahn/go-signal/pkg/registration/sessionshim"
 	"github.com/jeremyhahn/go-signal/pkg/securestorage"
 	"github.com/jeremyhahn/go-signal/pkg/securevaluerecovery"
 	"github.com/jeremyhahn/go-signal/pkg/stickers"
+	storagememory "github.com/jeremyhahn/go-signal/pkg/storage/memory"
 	"github.com/jeremyhahn/go-signal/pkg/usernames"
 	"github.com/jeremyhahn/go-signal/pkg/verification"
 )
@@ -357,10 +362,15 @@ func newTestServerWithVerification(t *testing.T) (*Server, *noopVerificationTran
 
 	transport := newNoopVerificationTransport()
 	store := verification.NewMemoryVerificationSessionStore()
-	verificationMgr := verification.NewManager(store, transport, verification.ManagerConfig{
+	coreSvc := core.NewService(store, transport, core.Config{
 		CodeLength:  6,
 		CodeTTL:     5 * time.Minute,
 		MaxAttempts: 3,
+	})
+	t.Cleanup(coreSvc.Shutdown)
+	verificationMgr := sessionshim.NewShim(sessionshim.Config{
+		Client:       inprocess.New(coreSvc),
+		CaptchaStore: sessionshim.NewMemoryCaptchaStore(),
 	})
 
 	logger := testLogger()
@@ -390,7 +400,7 @@ func newTestServerWithVerification(t *testing.T) (*Server, *noopVerificationTran
 	}
 	profilesMgr := profiles.NewProfilesManager(profileStore)
 
-	stickersMgr := stickers.NewStickersManager(logger)
+	stickersMgr := stickers.NewStickersManager(stickers.ManagerConfig{Logger: logger})
 	directoryMgr := directory.NewDirectoryManager(logger)
 	secureStorageMgr := securestorage.NewSecureStorageManager(logger)
 	svrMgr := securevaluerecovery.NewSVRManager(logger)
@@ -415,39 +425,43 @@ func newTestServerWithVerification(t *testing.T) (*Server, *noopVerificationTran
 	}
 	usernamesMgr := usernames.NewUsernamesManager(usernameStore, logger)
 
+	rrpStore := storagememory.NewMemoryRecoveryPasswordStore()
+	rrpMgr := recoverypassword.NewManager(rrpStore, 0, logger)
+
 	provStore := &memProvisioningStore{
 		sessions: make(map[string]*devices.ProvisioningSession),
 	}
 	devicesMgr := devices.NewDevicesManager(provStore, accountsMgr, keysMgr, logger)
 
 	s := NewServer(ServerConfig{
-		Host:            "127.0.0.1",
-		Port:            0,
-		Logger:          logger,
-		Accounts:        accountsMgr,
-		Captcha:         captchaMgr,
-		Certificates:    certsMgr,
-		Keys:            keysMgr,
-		Messages:        msgsMgr,
-		Profiles:        profilesMgr,
-		Stickers:        stickersMgr,
-		Directory:       directoryMgr,
-		SecureStorage:   secureStorageMgr,
-		SVR:             svrMgr,
-		Calling:         callingMgr,
-		KeyTransparency: ktMgr,
-		Usernames:       usernamesMgr,
-		Devices:         devicesMgr,
-		Verification:    verificationMgr,
+		Host:              "127.0.0.1",
+		Port:              0,
+		Logger:            logger,
+		Accounts:          accountsMgr,
+		Captcha:           captchaMgr,
+		Certificates:      certsMgr,
+		Keys:              keysMgr,
+		Messages:          msgsMgr,
+		Profiles:          profilesMgr,
+		Stickers:          stickersMgr,
+		Directory:         directoryMgr,
+		SecureStorage:     secureStorageMgr,
+		SVR:               svrMgr,
+		Calling:           callingMgr,
+		KeyTransparency:   ktMgr,
+		Usernames:         usernamesMgr,
+		RecoveryPasswords: rrpMgr,
+		Devices:           devicesMgr,
+		Verification:      verificationMgr,
 	})
 	return s, transport
 }
 
 // buildTestServerWithVerificationMgr creates a test server using the provided
-// verification.Manager instead of creating a new one. All other managers are
+// sessionshim.Shim instead of creating a new one. All other managers are
 // created with in-memory stores. It is used by tests that need to inject a
-// custom-configured manager (e.g., with a very short session TTL).
-func buildTestServerWithVerificationMgr(t *testing.T, verificationMgr *verification.Manager) *Server {
+// custom-configured shim (e.g., with a very short session TTL).
+func buildTestServerWithVerificationMgr(t *testing.T, verificationMgr *sessionshim.Shim) *Server {
 	t.Helper()
 
 	logger := testLogger()
@@ -477,7 +491,7 @@ func buildTestServerWithVerificationMgr(t *testing.T, verificationMgr *verificat
 	}
 	profilesMgr := profiles.NewProfilesManager(profileStore)
 
-	stickersMgr := stickers.NewStickersManager(logger)
+	stickersMgr := stickers.NewStickersManager(stickers.ManagerConfig{Logger: logger})
 	directoryMgr := directory.NewDirectoryManager(logger)
 	secureStorageMgr := securestorage.NewSecureStorageManager(logger)
 	svrMgr := securevaluerecovery.NewSVRManager(logger)
@@ -502,30 +516,34 @@ func buildTestServerWithVerificationMgr(t *testing.T, verificationMgr *verificat
 	}
 	usernamesMgr := usernames.NewUsernamesManager(usernameStore, logger)
 
+	rrpStore := storagememory.NewMemoryRecoveryPasswordStore()
+	rrpMgr := recoverypassword.NewManager(rrpStore, 0, logger)
+
 	provStore := &memProvisioningStore{
 		sessions: make(map[string]*devices.ProvisioningSession),
 	}
 	devicesMgr := devices.NewDevicesManager(provStore, accountsMgr, keysMgr, logger)
 
 	return NewServer(ServerConfig{
-		Host:            "127.0.0.1",
-		Port:            0,
-		Logger:          logger,
-		Accounts:        accountsMgr,
-		Captcha:         captchaMgr,
-		Certificates:    certsMgr,
-		Keys:            keysMgr,
-		Messages:        msgsMgr,
-		Profiles:        profilesMgr,
-		Stickers:        stickersMgr,
-		Directory:       directoryMgr,
-		SecureStorage:   secureStorageMgr,
-		SVR:             svrMgr,
-		Calling:         callingMgr,
-		KeyTransparency: ktMgr,
-		Usernames:       usernamesMgr,
-		Devices:         devicesMgr,
-		Verification:    verificationMgr,
+		Host:              "127.0.0.1",
+		Port:              0,
+		Logger:            logger,
+		Accounts:          accountsMgr,
+		Captcha:           captchaMgr,
+		Certificates:      certsMgr,
+		Keys:              keysMgr,
+		Messages:          msgsMgr,
+		Profiles:          profilesMgr,
+		Stickers:          stickersMgr,
+		Directory:         directoryMgr,
+		SecureStorage:     secureStorageMgr,
+		SVR:               svrMgr,
+		Calling:           callingMgr,
+		KeyTransparency:   ktMgr,
+		Usernames:         usernamesMgr,
+		RecoveryPasswords: rrpMgr,
+		Devices:           devicesMgr,
+		Verification:      verificationMgr,
 	})
 }
 
@@ -568,6 +586,7 @@ type memAccountStore struct {
 	mu       sync.RWMutex
 	accounts map[string]*accounts.Account
 	byNumber map[string]string // number -> uuid
+	byPNI    map[string]string // pni -> uuid
 }
 
 func (s *memAccountStore) Create(_ context.Context, account *accounts.Account) error {
@@ -583,6 +602,12 @@ func (s *memAccountStore) Create(_ context.Context, account *accounts.Account) e
 	s.accounts[account.UUID] = &clone
 	if account.Number != "" {
 		s.byNumber[account.Number] = account.UUID
+	}
+	if account.PNI != "" {
+		if s.byPNI == nil {
+			s.byPNI = make(map[string]string)
+		}
+		s.byPNI[account.PNI] = account.UUID
 	}
 	return nil
 }
@@ -614,10 +639,28 @@ func (s *memAccountStore) GetByNumber(_ context.Context, number string) (*accoun
 	return &clone, nil
 }
 
+// GetByPNI looks up an account by its PNI namespace UUID. The PNI is stored
+// bare (no "PNI:" prefix); callers at REST boundaries must strip the prefix
+// before invoking this.
+func (s *memAccountStore) GetByPNI(_ context.Context, pni string) (*accounts.Account, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	uuid, ok := s.byPNI[pni]
+	if !ok {
+		return nil, &accounts.AccountNotFoundError{Identifier: pni}
+	}
+	acct := s.accounts[uuid]
+	clone := *acct
+	clone.Devices = make([]accounts.Device, len(acct.Devices))
+	copy(clone.Devices, acct.Devices)
+	return &clone, nil
+}
+
 func (s *memAccountStore) Update(_ context.Context, account *accounts.Account) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.accounts[account.UUID]; !ok {
+	old, ok := s.accounts[account.UUID]
+	if !ok {
 		return &accounts.AccountNotFoundError{Identifier: account.UUID}
 	}
 	clone := *account
@@ -626,6 +669,15 @@ func (s *memAccountStore) Update(_ context.Context, account *accounts.Account) e
 	s.accounts[account.UUID] = &clone
 	if account.Number != "" {
 		s.byNumber[account.Number] = account.UUID
+	}
+	if s.byPNI == nil {
+		s.byPNI = make(map[string]string)
+	}
+	if old.PNI != account.PNI && old.PNI != "" {
+		delete(s.byPNI, old.PNI)
+	}
+	if account.PNI != "" {
+		s.byPNI[account.PNI] = account.UUID
 	}
 	return nil
 }
@@ -639,6 +691,22 @@ func (s *memAccountStore) Delete(_ context.Context, uuid string) error {
 	}
 	delete(s.byNumber, acct.Number)
 	delete(s.accounts, uuid)
+	return nil
+}
+
+func (s *memAccountStore) ListAll(_ context.Context, fn func(*accounts.Account) error) error {
+	s.mu.Lock()
+	snap := make([]*accounts.Account, 0, len(s.accounts))
+	for _, a := range s.accounts {
+		cp := *a
+		snap = append(snap, &cp)
+	}
+	s.mu.Unlock()
+	for _, a := range snap {
+		if err := fn(a); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -785,6 +853,10 @@ func (s *memPreKeyStore) DeleteAllForAccount(_ context.Context, uuid string) err
 	return nil
 }
 
+func (s *memPreKeyStore) ListAccountUUIDs(_ context.Context) ([]string, error) {
+	return nil, nil
+}
+
 // --------------------------------------------------------------------------
 // In-memory MessageStore
 // --------------------------------------------------------------------------
@@ -855,6 +927,14 @@ func (s *memMessageStore) DeleteForAccount(_ context.Context, uuid string) error
 		}
 	}
 	return nil
+}
+
+func (s *memMessageStore) RemoveExpired(_ context.Context, _ time.Time) (int64, error) {
+	return 0, nil
+}
+
+func (s *memMessageStore) HasMessagesForDevice(_ context.Context, _ string, _ uint64) (bool, error) {
+	return false, nil
 }
 
 // --------------------------------------------------------------------------
@@ -1022,6 +1102,37 @@ func (s *memUsernameStore) DeleteLink(_ context.Context, uuid string) error {
 	delete(s.links, handle)
 	delete(s.uuidToLink, uuid)
 	return nil
+}
+
+func (s *memUsernameStore) HashForUUID(_ context.Context, uuid string) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	hash, ok := s.uuidToHash[uuid]
+	if !ok {
+		return nil, &usernames.UsernameNotFoundError{Hash: []byte(uuid)}
+	}
+	out := make([]byte, len(hash))
+	copy(out, hash)
+	return out, nil
+}
+
+func (s *memUsernameStore) LinkForUUID(_ context.Context, uuid string) (*usernames.UsernameLink, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	handle, ok := s.uuidToLink[uuid]
+	if !ok {
+		return nil, &usernames.UsernameLinkNotFoundError{Handle: uuid}
+	}
+	link, ok := s.links[handle]
+	if !ok {
+		return nil, &usernames.UsernameLinkNotFoundError{Handle: uuid}
+	}
+	clone := *link
+	return &clone, nil
+}
+
+func (s *memUsernameStore) DeleteExpiredReservations(_ context.Context) (int, error) {
+	return 0, nil
 }
 
 // --------------------------------------------------------------------------

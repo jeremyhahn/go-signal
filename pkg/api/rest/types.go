@@ -2,11 +2,23 @@ package rest
 
 // RegistrationRequest is the JSON body submitted during account registration.
 type RegistrationRequest struct {
-	// SessionID is the ID of a completed verification session. The session
-	// must exist, must not be expired, and must be in the Verified state for
-	// the phone number supplied via Basic Auth. Missing or invalid sessions
-	// result in 400 or 403 respectively.
-	SessionID             string                   `json:"sessionId"`
+	// SessionID is the ID of a completed verification session. Mutually
+	// exclusive with RecoveryPassword: exactly one of the two must be
+	// supplied. When SessionID is set the session must exist, must not be
+	// expired, and must be in the Verified state for the phone number
+	// supplied via Basic Auth.
+	SessionID string `json:"sessionId,omitempty"`
+	// RecoveryPassword is a base64-encoded registration recovery password
+	// that re-registers an account without an SMS verification round trip.
+	// Mutually exclusive with SessionID. Mirrors Java
+	// RegistrationRequest.recoveryPassword.
+	RecoveryPassword string `json:"recoveryPassword,omitempty"`
+	// Captcha is an optional `provider.sitekey.action.token` string. When
+	// supplied, the server verifies it via captcha.RegistrationCaptchaManager
+	// before the account is created. Required when the request fails
+	// rate-limit/fraud heuristics (see captchaRequired in the verification
+	// session response).
+	Captcha               string                   `json:"captcha,omitempty"`
 	AccountAttributes     AccountAttributesRequest `json:"accountAttributes"`
 	IdentityKey           string                   `json:"aciIdentityKey"`
 	PniIdentityKey        string                   `json:"pniIdentityKey"`
@@ -26,7 +38,11 @@ type AccountAttributesRequest struct {
 	UnidentifiedAccessKey string `json:"unidentifiedAccessKey"`
 	// RegistrationLock is the PIN the client supplies when re-registering a
 	// number that has an active registration lock. Omitted when not applicable.
-	RegistrationLock string          `json:"registrationLock,omitempty"`
+	RegistrationLock string `json:"registrationLock,omitempty"`
+	// RecoveryPassword, when present on an attribute update, replaces the
+	// stored registration recovery password for the account's PNI. Mirrors
+	// Java AccountAttributes.recoveryPassword.
+	RecoveryPassword string          `json:"recoveryPassword,omitempty"`
 	Capabilities     map[string]bool `json:"capabilities"`
 }
 
@@ -38,6 +54,16 @@ type RegistrationLockErrorResponse struct {
 	// TimeRemaining is the number of seconds until the registration lock expires.
 	TimeRemaining int64 `json:"timeRemaining"`
 }
+
+// RegistrationCaptchaField carries the optional captcha solution submitted
+// on a registration request. Top-level on RegistrationRequest so the
+// account-create handler can verify it before any account state mutates.
+// Mirrors Java RegistrationRequest.captcha.
+//
+// Format: `provider.sitekey.action.token` (the same dotted layout used by
+// PATCH /v1/verification/session/{id}). The action slot must be
+// "registration" — captcha.RegistrationCaptchaManager enforces that.
+type RegistrationCaptchaField = string
 
 // SignedPreKeyEntity represents a signed EC pre-key in API request/response
 // payloads.
@@ -153,6 +179,14 @@ type VerificationSessionResponse struct {
 	RequestedInformation []string `json:"requestedInformation"`
 }
 
+// UpdateVerificationSessionRequest is the JSON body for PATCH on a
+// verification session. Today it carries an optional captcha solution
+// (provider.sitekey.action.token format). Future fields will follow Java's
+// shape (push challenge token, language hints, etc.).
+type UpdateVerificationSessionRequest struct {
+	Captcha string `json:"captcha,omitempty"`
+}
+
 // CreateVerificationSessionRequest is the JSON body for creating a new
 // verification session.
 type CreateVerificationSessionRequest struct {
@@ -247,17 +281,21 @@ type AttachmentDescriptorV3 struct {
 	SignedUploadLocation string            `json:"signedUploadLocation"`
 }
 
-// RemoteConfigItem represents a single remote configuration entry.
+// RemoteConfigItem is preserved for the legacy /v1/config response that
+// returned a typed-list payload. Production clients are on /v2/config
+// (the Java-current shape, RemoteConfigResponse) which carries a
+// name→value map instead.
 type RemoteConfigItem struct {
 	Name    string `json:"name"`
 	Enabled bool   `json:"enabled"`
 	Value   string `json:"value"`
 }
 
-// RemoteConfigResponse is the API response for the v2 remote configuration
-// endpoint.
+// RemoteConfigResponse is the /v2/config response shape. Mirrors Java
+// RemoteConfigurationResponse: a single field containing a map of
+// fully-qualified config names to their per-account rendered values.
 type RemoteConfigResponse struct {
-	Config []RemoteConfigItem `json:"config"`
+	Config map[string]string `json:"config"`
 }
 
 // KeyCheckRequest is the JSON body for the identity key check endpoint.
@@ -388,16 +426,29 @@ type UsernameHashReserveRequest struct {
 }
 
 // UsernameHashReserveResponse is returned after a successful username hash
-// reservation.
+// reservation. ReservationToken must be echoed back by the client in the
+// subsequent confirm call (UsernameHashConfirmRequest.ReservationToken).
 type UsernameHashReserveResponse struct {
-	UsernameHash string `json:"usernameHash"`
+	UsernameHash     string `json:"usernameHash"`
+	ReservationToken string `json:"reservationToken"`
 }
 
 // UsernameHashConfirmRequest is the JSON body for confirming a reserved
-// username hash.
+// username hash. The client must supply a zero-knowledge proof (ZkProof,
+// base64-encoded) that it knows the nickname/discriminator pair behind
+// UsernameHash; the server verifies it via go-libsignal/usernames.VerifyProof
+// before binding the hash to the account, mirroring Java Signal-Server's
+// `usernameHashZkProofVerifier.verifyProof(...)` call site.
 type UsernameHashConfirmRequest struct {
 	UsernameHash     string `json:"usernameHash"`
 	ReservationToken string `json:"reservationToken"`
+	ZkProof          string `json:"zkProof"`
+}
+
+// UsernameHashConfirmResponse is returned after a username hash is confirmed,
+// echoing the now-bound hash. Mirrors Java's UsernameHashResponse.
+type UsernameHashConfirmResponse struct {
+	UsernameHash string `json:"usernameHash"`
 }
 
 // UsernameHashLookupResponse is returned when looking up a username hash.
@@ -408,6 +459,13 @@ type UsernameHashLookupResponse struct {
 // UsernameLinkSetRequest is the JSON body for setting a username link.
 type UsernameLinkSetRequest struct {
 	UsernameLinkEncryptedValue string `json:"usernameLinkEncryptedValue"`
+
+	// KeepLinkHandle requests that the server re-use the account's
+	// existing link handle (if one exists) rather than minting a fresh
+	// one. Clients that are only rotating the ciphertext should set
+	// this so previously-published share URLs continue to resolve.
+	// Matches Java EncryptedUsername.keepLinkHandle().
+	KeepLinkHandle bool `json:"keepLinkHandle,omitempty"`
 }
 
 // UsernameLinkSetResponse is returned after a successful username link

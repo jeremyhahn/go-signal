@@ -76,6 +76,7 @@ func TestNewCloudflareTurnProvider_Success(t *testing.T) {
 	}
 	if p == nil {
 		t.Fatal("expected non-nil provider")
+		return
 	}
 	if p.endpoint != "https://example.com/api" {
 		t.Errorf("got endpoint %q", p.endpoint)

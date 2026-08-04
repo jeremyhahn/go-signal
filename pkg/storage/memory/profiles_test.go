@@ -6,7 +6,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jeremyhahn/go-signal/pkg/errors"
 	"github.com/jeremyhahn/go-signal/pkg/profiles"
 )
 
@@ -29,6 +28,7 @@ func TestNewMemoryProfileStore(t *testing.T) {
 	store := NewMemoryProfileStore()
 	if store == nil {
 		t.Fatal("expected non-nil store")
+		return
 	}
 	if store.byUUID == nil {
 		t.Fatal("expected byUUID map to be initialized")
@@ -183,12 +183,8 @@ func TestProfileStore_GetNotFound(t *testing.T) {
 		t.Fatal("expected error for nonexistent profile")
 	}
 
-	se, ok := err.(*errors.SignalError)
-	if !ok {
-		t.Fatalf("expected *errors.SignalError, got %T", err)
-	}
-	if se.Code != errors.ErrProfileNotFound {
-		t.Fatalf("expected ErrProfileNotFound, got %v", se.Code)
+	if _, ok := err.(*profiles.ProfileNotFoundError); !ok {
+		t.Fatalf("expected *profiles.ProfileNotFoundError, got %T", err)
 	}
 }
 
@@ -205,12 +201,8 @@ func TestProfileStore_GetVersionNotFound(t *testing.T) {
 		t.Fatal("expected error for nonexistent version")
 	}
 
-	se, ok := err.(*errors.SignalError)
-	if !ok {
-		t.Fatalf("expected *errors.SignalError, got %T", err)
-	}
-	if se.Code != errors.ErrProfileNotFound {
-		t.Fatalf("expected ErrProfileNotFound, got %v", se.Code)
+	if _, ok := err.(*profiles.ProfileNotFoundError); !ok {
+		t.Fatalf("expected *profiles.ProfileNotFoundError, got %T", err)
 	}
 }
 
@@ -310,12 +302,8 @@ func TestProfileStore_GetLatestNotFound(t *testing.T) {
 		t.Fatal("expected error for nonexistent profile")
 	}
 
-	se, ok := err.(*errors.SignalError)
-	if !ok {
-		t.Fatalf("expected *errors.SignalError, got %T", err)
-	}
-	if se.Code != errors.ErrProfileNotFound {
-		t.Fatalf("expected ErrProfileNotFound, got %v", se.Code)
+	if _, ok := err.(*profiles.ProfileNotFoundError); !ok {
+		t.Fatalf("expected *profiles.ProfileNotFoundError, got %T", err)
 	}
 }
 
@@ -386,21 +374,14 @@ func TestProfileStore_Delete(t *testing.T) {
 	}
 }
 
-func TestProfileStore_DeleteNotFound(t *testing.T) {
+func TestProfileStore_DeleteNotFound_Idempotent(t *testing.T) {
 	store := NewMemoryProfileStore()
 	ctx := context.Background()
 
+	// Deleting a non-existent profile is idempotent and returns nil.
 	err := store.Delete(ctx, "nonexistent")
-	if err == nil {
-		t.Fatal("expected error for nonexistent profile")
-	}
-
-	se, ok := err.(*errors.SignalError)
-	if !ok {
-		t.Fatalf("expected *errors.SignalError, got %T", err)
-	}
-	if se.Code != errors.ErrProfileNotFound {
-		t.Fatalf("expected ErrProfileNotFound, got %v", se.Code)
+	if err != nil {
+		t.Fatalf("expected nil for nonexistent profile delete, got %v", err)
 	}
 }
 

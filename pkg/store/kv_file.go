@@ -4,12 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
 // FileKVClient is a thread-safe file-based implementation of KVClient.
@@ -24,7 +26,7 @@ type FileKVClient struct {
 // directory. The directory is created if it does not exist.
 func NewFileKVClient(rootDir string) (*FileKVClient, error) {
 	if err := os.MkdirAll(rootDir, 0700); err != nil {
-		return nil, fmt.Errorf("kv_file: create root dir: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "kv_file: create root dir", err)
 	}
 	return &FileKVClient{rootDir: rootDir}, nil
 }
@@ -42,25 +44,25 @@ func (f *FileKVClient) Put(_ context.Context, key string, value []byte) error {
 	path := f.keyPath(key)
 
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return fmt.Errorf("kv_file: mkdir: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "kv_file: mkdir", err)
 	}
 
 	// Atomic write: temp file → fsync → rename.
 	tmp := path + ".tmp." + randSuffix()
 	if err := os.WriteFile(tmp, value, 0600); err != nil {
-		return fmt.Errorf("kv_file: write temp: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "kv_file: write temp", err)
 	}
 
 	// fsync the temp file for durability.
 	tf, err := os.Open(tmp)
 	if err == nil {
 		_ = tf.Sync()
-		tf.Close()
+		_ = tf.Close()
 	}
 
 	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return fmt.Errorf("kv_file: rename: %w", err)
+		_ = os.Remove(tmp)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "kv_file: rename", err)
 	}
 
 	return nil
@@ -76,7 +78,7 @@ func (f *FileKVClient) Get(_ context.Context, key string) ([]byte, error) {
 		if os.IsNotExist(err) {
 			return nil, &KeyNotFoundError{Key: key}
 		}
-		return nil, fmt.Errorf("kv_file: read: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "kv_file: read", err)
 	}
 	return data, nil
 }
@@ -91,7 +93,7 @@ func (f *FileKVClient) Delete(_ context.Context, key string) error {
 		if os.IsNotExist(err) {
 			return &KeyNotFoundError{Key: key}
 		}
-		return fmt.Errorf("kv_file: delete: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "kv_file: delete", err)
 	}
 
 	// Clean up empty parent directories up to rootDir.
@@ -104,6 +106,33 @@ func (f *FileKVClient) Delete(_ context.Context, key string) error {
 	}
 
 	return nil
+}
+
+// DeleteIfPresent atomically removes key and reports whether this call removed
+// it. The os.Remove (which fails with ErrNotExist when the key is absent) runs
+// under the write lock, so concurrent callers see exactly one true.
+func (f *FileKVClient) DeleteIfPresent(_ context.Context, key string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	path := f.keyPath(key)
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, signalerrors.Wrap(signalerrors.ErrInternal, "kv_file: delete", err)
+	}
+
+	// Clean up empty parent directories up to rootDir.
+	dir := filepath.Dir(path)
+	for dir != f.rootDir && dir != "." {
+		if err := os.Remove(dir); err != nil {
+			break // Not empty or other error — stop.
+		}
+		dir = filepath.Dir(dir)
+	}
+
+	return true, nil
 }
 
 // List returns all keys that share the given prefix, sorted lexicographically.
@@ -137,7 +166,7 @@ func (f *FileKVClient) List(_ context.Context, prefix string) ([]string, error) 
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("kv_file: list: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "kv_file: list", err)
 	}
 
 	sort.Strings(keys)
@@ -155,10 +184,10 @@ func (f *FileKVClient) Scan(ctx context.Context, prefix string, fn func(key stri
 	for _, key := range keys {
 		data, err := f.Get(ctx, key)
 		if err != nil {
-			// Key may have been deleted between List and Get.
+			// Key may have been deleted between List and Get; skip it.
+			// Other errors (permission, IO) are real and propagate.
 			var knf *KeyNotFoundError
-			if isKNF := err; isKNF != nil {
-				_ = knf
+			if errors.As(err, &knf) {
 				continue
 			}
 			return err
@@ -180,7 +209,7 @@ func (f *FileKVClient) Exists(_ context.Context, key string) (bool, error) {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
-		return false, fmt.Errorf("kv_file: stat: %w", err)
+		return false, signalerrors.Wrap(signalerrors.ErrInternal, "kv_file: stat", err)
 	}
 	return true, nil
 }

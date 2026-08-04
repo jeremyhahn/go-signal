@@ -1,15 +1,39 @@
 package rest
 
 import (
+	"encoding/base64"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 )
 
+// isSafeCDNKey reports whether a client-supplied CDN object key is safe to pass
+// to the attachment store. It rejects empty keys, absolute paths, backslashes,
+// NUL bytes, and any "."/".." path segment so that a crafted key cannot escape
+// a filesystem-backed store's root directory (path traversal).
+func isSafeCDNKey(key string) bool {
+	if key == "" || strings.HasPrefix(key, "/") || strings.ContainsAny(key, "\\\x00") {
+		return false
+	}
+	for _, seg := range strings.Split(key, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
+}
+
 // handleAttachmentUploadForm handles GET /v4/attachments/form/upload and
-// returns an upload descriptor pointing to the built-in CDN3 TUS endpoint.
+// returns an upload descriptor. When an external TUS server is configured
+// the descriptor carries an HMAC-signed Authorization header so the TUS
+// server can validate the upload was authorized by Signal. Otherwise the
+// embedded /cdn3 route is used (dev mode).
+//
+// Mirrors Java AttachmentControllerV4.getAttachmentUploadForm — same
+// AttachmentDescriptorV3 shape on the wire.
 func (s *Server) handleAttachmentUploadForm(w http.ResponseWriter, r *http.Request) {
 	acct := accountFromContext(r.Context())
 	if acct == nil {
@@ -18,17 +42,34 @@ func (s *Server) handleAttachmentUploadForm(w http.ResponseWriter, r *http.Reque
 	}
 
 	key := uuid.NewString()
+	attachmentKey := "attachments/" + key
+	headers := map[string]string{}
+	var uploadURL string
 
-	scheme := "https"
-	if r.TLS == nil {
-		scheme = "http"
+	if s.tusGenerator != nil && s.tusURI != "" {
+		// External TUS server mode (Java parity).
+		creds, err := s.tusGenerator.Generate(attachmentKey)
+		if err != nil {
+			s.logger.Error("attachment credentials failed", "error", err.Error())
+			writeError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		auth := "Basic " + base64.StdEncoding.EncodeToString([]byte(creds.Username+":"+creds.Password))
+		headers["Authorization"] = auth
+		headers["Upload-Metadata"] = "filename " + base64.StdEncoding.EncodeToString([]byte(key))
+		uploadURL = s.tusURI + "/attachments"
+	} else {
+		scheme := "https"
+		if r.TLS == nil {
+			scheme = "http"
+		}
+		uploadURL = scheme + "://" + r.Host + "/cdn3/" + attachmentKey
 	}
-	uploadURL := scheme + "://" + r.Host + "/cdn3/attachments/" + key
 
 	descriptor := AttachmentDescriptorV3{
 		CDN:                  3,
-		Key:                  "attachments/" + key,
-		Headers:              map[string]string{},
+		Key:                  attachmentKey,
+		Headers:              headers,
 		SignedUploadLocation: uploadURL,
 	}
 	writeJSON(w, http.StatusOK, descriptor)
@@ -73,14 +114,36 @@ func (s *Server) handleCDNUploadCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCDNUploadPatch(w http.ResponseWriter, r *http.Request) {
-	// Extract the attachment key from the URL path.
+	// Extract the attachment key from the URL path and reject any key that
+	// could escape the store's namespace (path traversal).
 	key := r.PathValue("rest")
-	if key == "" {
-		key = "unknown/" + uuid.NewString()
+	if !isSafeCDNKey(key) {
+		writeError(w, http.StatusBadRequest, "invalid attachment key")
+		return
+	}
+
+	startOffset := int64(0)
+	if offsetStr := r.Header.Get("Upload-Offset"); offsetStr != "" {
+		if parsed, err := strconv.ParseInt(offsetStr, 10, 64); err == nil {
+			startOffset = parsed
+		}
 	}
 
 	var n int64
 	if s.attachmentStore != nil {
+		// Refuse to overwrite an existing object, but only on the initial
+		// chunk (Upload-Offset == 0) so a legitimately resumed upload at a
+		// non-zero offset is not rejected.
+		if startOffset == 0 {
+			if exists, err := s.attachmentStore.Exists(r.Context(), key); err != nil {
+				s.logger.Error("attachment exists check failed", "key", key, "error", err.Error())
+				writeError(w, http.StatusInternalServerError, "upload failed")
+				return
+			} else if exists {
+				writeError(w, http.StatusConflict, "attachment already exists")
+				return
+			}
+		}
 		size := int64(0)
 		if lenStr := r.Header.Get("Upload-Length"); lenStr != "" {
 			if parsed, err := strconv.ParseInt(lenStr, 10, 64); err == nil {
@@ -97,12 +160,6 @@ func (s *Server) handleCDNUploadPatch(w http.ResponseWriter, r *http.Request) {
 		n, _ = io.Copy(io.Discard, r.Body)
 	}
 
-	startOffset := int64(0)
-	if offsetStr := r.Header.Get("Upload-Offset"); offsetStr != "" {
-		if parsed, err := strconv.ParseInt(offsetStr, 10, 64); err == nil {
-			startOffset = parsed
-		}
-	}
 	newOffset := startOffset + n
 
 	w.Header().Set("Tus-Resumable", "1.0.0")
@@ -124,11 +181,22 @@ func (s *Server) handleCDNUploadHead(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCDNUploadPut(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("rest")
-	if key == "" {
-		key = "unknown/" + uuid.NewString()
+	if !isSafeCDNKey(key) {
+		writeError(w, http.StatusBadRequest, "invalid attachment key")
+		return
 	}
 
 	if s.attachmentStore != nil {
+		// Refuse to overwrite an existing object so a caller cannot clobber
+		// another upload's content at a known key.
+		if exists, err := s.attachmentStore.Exists(r.Context(), key); err != nil {
+			s.logger.Error("attachment exists check failed", "key", key, "error", err.Error())
+			writeError(w, http.StatusInternalServerError, "upload failed")
+			return
+		} else if exists {
+			writeError(w, http.StatusConflict, "attachment already exists")
+			return
+		}
 		if err := s.attachmentStore.Put(r.Context(), key, r.Body, r.ContentLength); err != nil {
 			s.logger.Error("attachment upload failed", "key", key, "error", err.Error())
 			writeError(w, http.StatusInternalServerError, "upload failed")
@@ -146,8 +214,8 @@ func (s *Server) handleCDNUploadPut(w http.ResponseWriter, r *http.Request) {
 // handleCDNDownload serves attachment downloads from the attachment store.
 func (s *Server) handleCDNDownload(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("rest")
-	if key == "" {
-		writeError(w, http.StatusBadRequest, "missing attachment key")
+	if !isSafeCDNKey(key) {
+		writeError(w, http.StatusBadRequest, "invalid attachment key")
 		return
 	}
 
@@ -161,10 +229,12 @@ func (s *Server) handleCDNDownload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "attachment not found")
 		return
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.WriteHeader(http.StatusOK)
-	io.Copy(w, reader)
+	if _, err := io.Copy(w, reader); err != nil {
+		s.logger.Error("attachment download interrupted", "key", key, "error", err.Error())
+	}
 }

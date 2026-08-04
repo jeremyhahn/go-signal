@@ -47,6 +47,10 @@ type CloudflareTurnProvider struct {
 	hostname            string
 	clientCredentialTTL time.Duration
 	logger              *slog.Logger
+	// breaker short-circuits credential calls when Cloudflare is having
+	// a bad day, so a TURN outage doesn't cascade into the request path
+	// for every concurrent caller. Always non-nil after construction.
+	breaker *CircuitBreaker
 }
 
 // CloudflareTurnProviderConfig holds configuration for creating a CloudflareTurnProvider.
@@ -60,6 +64,10 @@ type CloudflareTurnProviderConfig struct {
 	ClientCredentialTTL    time.Duration
 	NumHTTPClients         int
 	Logger                 *slog.Logger
+	// Breaker overrides the default CircuitBreaker configuration. Zero
+	// value picks the production defaults (5 consecutive failures /
+	// 30s open window).
+	Breaker CircuitBreakerConfig
 }
 
 // NewCloudflareTurnProvider creates a new CloudflareTurnProvider.
@@ -83,6 +91,7 @@ func NewCloudflareTurnProvider(cfg CloudflareTurnProviderConfig) (*CloudflareTur
 		hostname:            cfg.Hostname,
 		clientCredentialTTL: cfg.ClientCredentialTTL,
 		logger:              cfg.Logger,
+		breaker:             NewCircuitBreaker(cfg.Breaker),
 	}, nil
 }
 
@@ -97,6 +106,8 @@ func (p *CloudflareTurnProvider) Destroy() {
 
 // RetrieveCredentials fetches TURN credentials from the Cloudflare API, resolves
 // the configured hostname to IP addresses, and formats urlsWithIps patterns.
+// The Cloudflare HTTP call is wrapped in a CircuitBreaker so a downstream
+// outage short-circuits subsequent calls instead of saturating goroutines.
 func (p *CloudflareTurnProvider) RetrieveCredentials(ctx context.Context) (*TurnToken, error) {
 	// Resolve hostname to IP addresses for urlsWithIps.
 	composedURLs, err := p.resolveHostnameURLs(ctx)
@@ -104,33 +115,16 @@ func (p *CloudflareTurnProvider) RetrieveCredentials(ctx context.Context) (*Turn
 		return nil, err
 	}
 
-	// Make HTTP request to Cloudflare.
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, strings.NewReader(string(p.requestBody)))
-	if err != nil {
-		return nil, &CloudflareRequestError{Cause: err}
+	// Lazy-init the breaker so struct-literal construction in tests still
+	// works without bypassing the protection. Constructors set it eagerly.
+	if p.breaker == nil {
+		p.breaker = NewCircuitBreaker(CircuitBreakerConfig{})
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+p.apiToken.Plaintext())
-
-	resp, err := p.client.Do(req)
-	if err != nil {
-		p.logger.WarnContext(ctx, "failed to make http request to Cloudflare Turn", slog.String("error", err.Error()))
-		return nil, &CloudflareRequestError{Cause: err}
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		p.logger.WarnContext(ctx, "failure requesting credentials from Cloudflare Turn",
-			slog.Int("code", resp.StatusCode),
-			slog.String("body", string(body)),
-		)
-		return nil, &CloudflareRequestError{Cause: &httpStatusError{StatusCode: resp.StatusCode}}
-	}
-
 	var cfResp cloudflareResponse
-	if err := json.NewDecoder(resp.Body).Decode(&cfResp); err != nil {
-		return nil, &CloudflareRequestError{Cause: err}
+	if err := p.breaker.Do(func() error {
+		return p.callCloudflare(ctx, &cfResp)
+	}); err != nil {
+		return nil, err
 	}
 
 	urls := p.urls
@@ -146,6 +140,41 @@ func (p *CloudflareTurnProvider) RetrieveCredentials(ctx context.Context) (*Turn
 		URLsWithIPs: composedURLs,
 		Hostname:    p.hostname,
 	}, nil
+}
+
+// callCloudflare performs the actual HTTP request to the Cloudflare TURN
+// API and decodes the response into out. Factored out of
+// RetrieveCredentials so the breaker has a clean "downstream call" to
+// wrap. Returns a *CloudflareRequestError on every failure mode so the
+// breaker counts the right family of failures.
+func (p *CloudflareTurnProvider) callCloudflare(ctx context.Context, out *cloudflareResponse) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, strings.NewReader(string(p.requestBody)))
+	if err != nil {
+		return &CloudflareRequestError{Cause: err}
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+p.apiToken.Plaintext())
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		p.logger.WarnContext(ctx, "failed to make http request to Cloudflare Turn", slog.String("error", err.Error()))
+		return &CloudflareRequestError{Cause: err}
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		p.logger.WarnContext(ctx, "failure requesting credentials from Cloudflare Turn",
+			slog.Int("code", resp.StatusCode),
+			slog.String("body", string(body)),
+		)
+		return &CloudflareRequestError{Cause: &httpStatusError{StatusCode: resp.StatusCode}}
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return &CloudflareRequestError{Cause: err}
+	}
+	return nil
 }
 
 // resolveHostnameURLs resolves the configured hostname and formats the

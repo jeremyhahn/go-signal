@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/jeremyhahn/go-signal/pkg/accounts"
+	"github.com/jeremyhahn/go-signal/pkg/audit"
 )
 
 // handleGetProvisioningCode processes GET /v1/devices/provisioning/code and
@@ -34,6 +34,9 @@ func (s *Server) handleGetProvisioningCode(w http.ResponseWriter, r *http.Reques
 func (s *Server) handleLinkDevice(w http.ResponseWriter, r *http.Request) {
 	acct := accountFromContext(r.Context())
 	if acct == nil {
+		if s.audit != nil {
+			s.audit.Denied(r.Context(), audit.ActionLinkDevice, "", nil)
+		}
 		writeError(w, http.StatusUnauthorized, "not authenticated")
 		return
 	}
@@ -44,20 +47,30 @@ func (s *Server) handleLinkDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := s.devices.LinkDevice(r.Context(), req.VerificationCode, req.toLinkDeviceRequest())
+	// Bind the link to the authenticated account so a caller cannot link a
+	// device onto another account by presenting that account's code.
+	resp, err := s.devices.LinkDeviceForAccount(r.Context(), acct.UUID, req.VerificationCode, req.toLinkDeviceRequest())
 	if err != nil {
 		s.logger.Error("failed to link device",
 			slog.String("uuid", acct.UUID),
 			slog.String("error", err.Error()))
+		if s.audit != nil {
+			s.audit.Failure(r.Context(), audit.ActionLinkDevice, acct.UUID,
+				map[string]any{"error": err.Error()})
+		}
 		writeError(w, http.StatusForbidden, "failed to link device")
 		return
 	}
 
+	if s.audit != nil {
+		s.audit.Success(r.Context(), audit.ActionLinkDevice, acct.UUID,
+			map[string]any{"deviceID": resp.DeviceId})
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleSetDeviceCapabilities processes PUT /v1/devices/capabilities and
-// updates the capabilities of the primary device on the authenticated account.
+// updates the capabilities of the authenticated device on the account.
 func (s *Server) handleSetDeviceCapabilities(w http.ResponseWriter, r *http.Request) {
 	acct := accountFromContext(r.Context())
 	if acct == nil {
@@ -71,7 +84,9 @@ func (s *Server) handleSetDeviceCapabilities(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if err := s.devices.SetCapabilities(r.Context(), acct.UUID, accounts.PrimaryDeviceID, req.Capabilities); err != nil {
+	// Update the device that actually authenticated, not always the primary —
+	// otherwise a linked device would silently rewrite the primary's capabilities.
+	if err := s.devices.SetCapabilities(r.Context(), acct.UUID, deviceIDFromContext(r.Context()), req.Capabilities); err != nil {
 		s.logger.Error("failed to set device capabilities",
 			slog.String("uuid", acct.UUID),
 			slog.String("error", err.Error()))

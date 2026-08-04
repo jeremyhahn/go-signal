@@ -92,6 +92,16 @@ func (s *stubAccountStore) GetByNumber(_ context.Context, number string) (*accou
 	return nil, &accounts.AccountNotFoundError{}
 }
 
+// GetByPNI is a stub; PNI routing comes in task 2.1.3.
+func (s *stubAccountStore) GetByPNI(_ context.Context, pni string) (*accounts.Account, error) {
+	for _, acct := range s.accounts {
+		if acct.PNI == pni {
+			return acct, nil
+		}
+	}
+	return nil, &accounts.AccountNotFoundError{Identifier: pni}
+}
+
 func (s *stubAccountStore) Update(_ context.Context, account *accounts.Account) error {
 	s.accounts[account.UUID] = account
 	return nil
@@ -99,6 +109,15 @@ func (s *stubAccountStore) Update(_ context.Context, account *accounts.Account) 
 
 func (s *stubAccountStore) Delete(_ context.Context, uuid string) error {
 	delete(s.accounts, uuid)
+	return nil
+}
+
+func (s *stubAccountStore) ListAll(_ context.Context, fn func(*accounts.Account) error) error {
+	for _, a := range s.accounts {
+		if err := fn(a); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -132,6 +151,14 @@ func (s *stubMessageStore) DeleteForDevice(_ context.Context, destUUID string, _
 func (s *stubMessageStore) DeleteForAccount(_ context.Context, uuid string) error {
 	delete(s.messages, uuid)
 	return nil
+}
+
+func (s *stubMessageStore) RemoveExpired(_ context.Context, _ time.Time) (int64, error) {
+	return 0, nil
+}
+
+func (s *stubMessageStore) HasMessagesForDevice(_ context.Context, _ string, _ uint64) (bool, error) {
+	return false, nil
 }
 
 // errorMessageStore always returns errors from GetMessagesForDevice.
@@ -362,6 +389,7 @@ func TestBuildEnvelopeRequest_ValidEnvelope(t *testing.T) {
 	msg := buildEnvelopeRequest(1, env)
 	if msg == nil {
 		t.Fatal("buildEnvelopeRequest returned nil")
+		return
 	}
 	if msg.Type != "request" {
 		t.Errorf("Type = %q, want %q", msg.Type, "request")
@@ -408,6 +436,7 @@ func TestBuildEnvelopeRequest_DifferentIDs(t *testing.T) {
 		msg := buildEnvelopeRequest(id, env)
 		if msg == nil {
 			t.Fatalf("buildEnvelopeRequest returned nil for id %d", id)
+			return
 		}
 		if msg.Request.ID != id {
 			t.Errorf("Request.ID = %d, want %d", msg.Request.ID, id)
@@ -421,6 +450,7 @@ func TestBuildEnvelopeRequest_MinimalEnvelope(t *testing.T) {
 	msg := buildEnvelopeRequest(1, env)
 	if msg == nil {
 		t.Fatal("buildEnvelopeRequest returned nil for empty envelope")
+		return
 	}
 	if msg.Request.Body == "" {
 		t.Error("expected non-empty body even for empty envelope")

@@ -55,6 +55,19 @@ func (m *MemoryKVClient) Delete(_ context.Context, key string) error {
 	return nil
 }
 
+// DeleteIfPresent atomically removes key and reports whether this call removed
+// it. The check and delete happen under the same write lock, so concurrent
+// callers racing on the same key see exactly one true.
+func (m *MemoryKVClient) DeleteIfPresent(_ context.Context, key string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.data[key]; !ok {
+		return false, nil
+	}
+	delete(m.data, key)
+	return true, nil
+}
+
 // List returns all keys that share the given prefix, sorted lexicographically.
 func (m *MemoryKVClient) List(_ context.Context, prefix string) ([]string, error) {
 	m.mu.RLock()

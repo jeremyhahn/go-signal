@@ -505,9 +505,8 @@ func TestKVAccountStore_Delete_NumberIndexNonKNFDeleteError(t *testing.T) {
 	// covering the `return err` path on line 163 of store_kv.go.
 	type selectiveKV struct {
 		store.KVClient
-		deleteCount int
-		failAfter   int
-		injectErr   error
+		failAfter int
+		injectErr error
 	}
 	kv := store.NewMemoryKVClient()
 	sel := &selectiveKV{KVClient: kv, failAfter: 1, injectErr: errors.New("index delete failure")}
@@ -570,6 +569,204 @@ func TestKVAccountStore_Delete_NoNumber(t *testing.T) {
 	_, err := s.Get(ctx, "uuid-no-num")
 	var notFound *AccountNotFoundError
 	require.True(t, errors.As(err, &notFound))
+}
+
+// --- Create with PNI ---
+
+func TestKVAccountStore_Create_WithPNI(t *testing.T) {
+	s, _ := newTestAccountStore()
+	ctx := context.Background()
+
+	acct := testAccount("uuid-pni", "+15550000099")
+	acct.PNI = "pni-uuid-1234"
+	err := s.Create(ctx, acct)
+	require.NoError(t, err)
+
+	// PNI index must resolve.
+	got, err := s.GetByPNI(ctx, "pni-uuid-1234")
+	require.NoError(t, err)
+	assert.Equal(t, "uuid-pni", got.UUID)
+}
+
+// countingPutKV wraps a KVClient and fails Put on the Nth call (1-based).
+type countingPutKV struct {
+	store.KVClient
+	n      int
+	failAt int
+	err    error
+}
+
+func (c *countingPutKV) Put(ctx context.Context, key string, value []byte) error {
+	c.n++
+	if c.n == c.failAt {
+		return c.err
+	}
+	return c.KVClient.Put(ctx, key, value)
+}
+
+func TestKVAccountStore_Create_NumberIndexPutError(t *testing.T) {
+	// Make the second Put (number index) fail while the first (account key) succeeds.
+	inner := store.NewMemoryKVClient()
+	kv := &countingPutKV{KVClient: inner, failAt: 2, err: errors.New("number index put failure")}
+	s := NewKVAccountStore(kv)
+
+	acct := testAccount("uuid-numfail", "+15550000010")
+	err := s.Create(context.Background(), acct)
+	require.Error(t, err)
+	assert.Equal(t, "number index put failure", err.Error())
+}
+
+func TestKVAccountStore_Create_PNIIndexPutError(t *testing.T) {
+	// Make the third Put (PNI index) fail while account + number index writes succeed.
+	inner := store.NewMemoryKVClient()
+	kv := &countingPutKV{KVClient: inner, failAt: 3, err: errors.New("pni index put failure")}
+	s := NewKVAccountStore(kv)
+
+	acct := testAccount("uuid-pnifail", "+15550000011")
+	acct.PNI = "pni-fail-uuid"
+	err := s.Create(context.Background(), acct)
+	require.Error(t, err)
+	assert.Equal(t, "pni index put failure", err.Error())
+}
+
+// --- Delete with PNI / index error paths ---
+
+func TestKVAccountStore_Delete_WithPNI(t *testing.T) {
+	s, _ := newTestAccountStore()
+	ctx := context.Background()
+
+	acct := testAccount("uuid-del-pni", "+15550000020")
+	acct.PNI = "pni-del-uuid"
+	require.NoError(t, s.Create(ctx, acct))
+	require.NoError(t, s.Delete(ctx, "uuid-del-pni"))
+
+	// Primary, number-index, and PNI-index must all be gone.
+	_, err := s.Get(ctx, "uuid-del-pni")
+	var nfe *AccountNotFoundError
+	require.ErrorAs(t, err, &nfe)
+}
+
+// countingDeleteKV fails Delete on the Nth call (1-based).
+type countingDeleteKV struct {
+	store.KVClient
+	n      int
+	failAt int
+	err    error
+}
+
+func (c *countingDeleteKV) Delete(ctx context.Context, key string) error {
+	c.n++
+	if c.n == c.failAt {
+		return c.err
+	}
+	return c.KVClient.Delete(ctx, key)
+}
+
+func TestKVAccountStore_Delete_NumberIndexNonKNFError(t *testing.T) {
+	// First Delete (account key) succeeds; second Delete (number index) fails non-KNF.
+	inner := store.NewMemoryKVClient()
+	kv := &countingDeleteKV{KVClient: inner, failAt: 2, err: errors.New("number delete failure")}
+	s := NewKVAccountStore(kv)
+	ctx := context.Background()
+
+	// Seed via the real inner KV so all three keys exist.
+	innerS := NewKVAccountStore(inner)
+	acct := testAccount("uuid-numdel-fail", "+15550000030")
+	require.NoError(t, innerS.Create(ctx, acct))
+
+	err := s.Delete(ctx, "uuid-numdel-fail")
+	require.Error(t, err)
+	assert.Equal(t, "number delete failure", err.Error())
+}
+
+func TestKVAccountStore_Delete_PNIIndexNonKNFError(t *testing.T) {
+	// First Delete (account key) and second Delete (number index) succeed;
+	// third Delete (PNI index) fails non-KNF.
+	inner := store.NewMemoryKVClient()
+	kv := &countingDeleteKV{KVClient: inner, failAt: 3, err: errors.New("pni delete failure")}
+	s := NewKVAccountStore(kv)
+	ctx := context.Background()
+
+	innerS := NewKVAccountStore(inner)
+	acct := testAccount("uuid-pnidel-fail", "+15550000031")
+	acct.PNI = "pni-delfail-uuid"
+	require.NoError(t, innerS.Create(ctx, acct))
+
+	err := s.Delete(ctx, "uuid-pnidel-fail")
+	require.Error(t, err)
+	assert.Equal(t, "pni delete failure", err.Error())
+}
+
+// --- ListAll ---
+
+func TestKVAccountStore_ListAll_Empty(t *testing.T) {
+	s, _ := newTestAccountStore()
+	var visited []string
+	err := s.ListAll(context.Background(), func(a *Account) error {
+		visited = append(visited, a.UUID)
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Empty(t, visited)
+}
+
+func TestKVAccountStore_ListAll_MultipleAccounts(t *testing.T) {
+	s, _ := newTestAccountStore()
+	ctx := context.Background()
+
+	for i, num := range []string{"+15550000041", "+15550000042", "+15550000043"} {
+		a := testAccount("uuid-list-"+string(rune('a'+i)), num)
+		require.NoError(t, s.Create(ctx, a))
+	}
+
+	var uuids []string
+	err := s.ListAll(ctx, func(a *Account) error {
+		uuids = append(uuids, a.UUID)
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Len(t, uuids, 3)
+}
+
+func TestKVAccountStore_ListAll_SkipsSecondaryIndexEntries(t *testing.T) {
+	// Accounts with a by-number and by-PNI index must not appear twice.
+	s, _ := newTestAccountStore()
+	ctx := context.Background()
+
+	a := testAccount("uuid-listskip", "+15550000050")
+	a.PNI = "pni-listskip"
+	require.NoError(t, s.Create(ctx, a))
+
+	var count int
+	err := s.ListAll(ctx, func(_ *Account) error {
+		count++
+		return nil
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, count, "secondary index entries must not be yielded by ListAll")
+}
+
+func TestKVAccountStore_ListAll_ScanError(t *testing.T) {
+	fkv := store.NewFailingKVClient()
+	fkv.ScanErr = errors.New("scan failure")
+	s := NewKVAccountStore(fkv)
+
+	err := s.ListAll(context.Background(), func(_ *Account) error { return nil })
+	require.Error(t, err)
+	assert.Equal(t, "scan failure", err.Error())
+}
+
+func TestKVAccountStore_ListAll_CallbackError(t *testing.T) {
+	s, _ := newTestAccountStore()
+	ctx := context.Background()
+
+	require.NoError(t, s.Create(ctx, testAccount("uuid-cb-err", "+15550000060")))
+
+	sentinel := errors.New("callback error")
+	err := s.ListAll(ctx, func(_ *Account) error {
+		return sentinel
+	})
+	require.ErrorIs(t, err, sentinel)
 }
 
 // --- Interface compliance ---

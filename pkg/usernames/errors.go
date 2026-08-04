@@ -52,3 +52,16 @@ type InvalidArgumentError struct {
 func (e *InvalidArgumentError) Error() string {
 	return "invalid argument: " + e.Field + ": " + e.Message
 }
+
+// InvalidProofError indicates the supplied zero-knowledge proof did not
+// verify against the username hash. Returned by UsernamesManager.ConfirmHash
+// when go-libsignal/usernames.VerifyProof rejects the proof; REST handlers
+// translate this into HTTP 422 Unprocessable Entity (the same status Java
+// Signal-Server returns for an invalid ZK proof).
+type InvalidProofError struct {
+	Reason string
+}
+
+func (e *InvalidProofError) Error() string {
+	return "invalid zero-knowledge proof: " + e.Reason
+}

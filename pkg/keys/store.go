@@ -41,4 +41,11 @@ type PreKeyStore interface {
 
 	// DeleteAllForAccount removes all pre-keys associated with an account.
 	DeleteAllForAccount(ctx context.Context, uuid string) error
+
+	// ListAccountUUIDs returns every account UUID that has pre-keys
+	// stored in any of the underlying tables (EC, KEM, KEM-last-resort,
+	// signed). Used by the orphan-prekey sweeper to find rows whose
+	// owning account no longer exists. Implementations may return
+	// duplicates; the caller deduplicates. Ordering is undefined.
+	ListAccountUUIDs(ctx context.Context) ([]string, error)
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/jeremyhahn/go-signal/pkg/accounts"
 	"github.com/jeremyhahn/go-signal/pkg/calling"
@@ -80,6 +81,12 @@ func (s *mockAccountStore) GetByNumber(_ context.Context, number string) (*accou
 	return &cp, nil
 }
 
+// GetByPNI is a stub. Service-layer tests don't exercise PNI routing
+// yet; the full path comes in task 2.1.3 (message routing).
+func (s *mockAccountStore) GetByPNI(_ context.Context, pni string) (*accounts.Account, error) {
+	return nil, &accounts.AccountNotFoundError{Identifier: pni}
+}
+
 func (s *mockAccountStore) Update(_ context.Context, a *accounts.Account) error {
 	if s.updateErr != nil {
 		return s.updateErr
@@ -106,6 +113,22 @@ func (s *mockAccountStore) Delete(_ context.Context, uuid string) error {
 	}
 	delete(s.byNumber, a.Number)
 	delete(s.data, uuid)
+	return nil
+}
+
+func (s *mockAccountStore) ListAll(_ context.Context, fn func(*accounts.Account) error) error {
+	s.mu.Lock()
+	snap := make([]*accounts.Account, 0, len(s.data))
+	for _, a := range s.data {
+		cp := *a
+		snap = append(snap, &cp)
+	}
+	s.mu.Unlock()
+	for _, a := range snap {
+		if err := fn(a); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -278,6 +301,10 @@ func (s *mockPreKeyStore) DeleteAllForAccount(_ context.Context, uuid string) er
 	return nil
 }
 
+func (s *mockPreKeyStore) ListAccountUUIDs(_ context.Context) ([]string, error) {
+	return nil, nil
+}
+
 // ─── Messages store mock ─────────────────────────────────────────────────────
 
 type mockMessageStore struct {
@@ -366,6 +393,16 @@ func (s *mockMessageStore) DeleteForAccount(_ context.Context, uuid string) erro
 	return nil
 }
 
+func (s *mockMessageStore) RemoveExpired(_ context.Context, _ time.Time) (int64, error) {
+	return 0, nil
+}
+
+func (s *mockMessageStore) HasMessagesForDevice(_ context.Context, uuid string, deviceID uint64) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.envelopes[msgDeviceKey(uuid, deviceID)]) > 0, nil
+}
+
 // ─── Profiles store mock ─────────────────────────────────────────────────────
 
 type mockProfileStore struct {
@@ -443,16 +480,17 @@ func (s *mockProfileStore) Delete(_ context.Context, uuid string) error {
 // ─── Usernames store mock ────────────────────────────────────────────────────
 
 type mockUsernameStore struct {
-	mu           sync.Mutex
-	hashes       map[string][]byte                  // uuid → confirmed hash
-	reservations map[string]string                  // uuid → token
-	links        map[string]*usernames.UsernameLink // handle → link
-	reserveErr   error
-	confirmErr   error
-	lookupErr    error
-	deleteErr    error
-	linkErr      error
-	getLinkErr   error
+	mu               sync.Mutex
+	hashes           map[string][]byte                  // uuid → confirmed hash
+	reservations     map[string]string                  // uuid → token
+	links            map[string]*usernames.UsernameLink // handle → link
+	reserveErr       error
+	confirmErr       error
+	lookupErr        error
+	deleteErr        error
+	linkErr          error
+	getLinkErr       error
+	deleteExpiredErr error
 }
 
 func newMockUsernameStore() *mockUsernameStore {
@@ -545,6 +583,37 @@ func (s *mockUsernameStore) DeleteLink(_ context.Context, uuid string) error {
 		}
 	}
 	return nil
+}
+
+func (s *mockUsernameStore) HashForUUID(_ context.Context, uuid string) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	hash, ok := s.hashes[uuid]
+	if !ok {
+		return nil, &usernames.UsernameNotFoundError{Hash: []byte(uuid)}
+	}
+	out := make([]byte, len(hash))
+	copy(out, hash)
+	return out, nil
+}
+
+func (s *mockUsernameStore) LinkForUUID(_ context.Context, uuid string) (*usernames.UsernameLink, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, link := range s.links {
+		if link.UUID == uuid {
+			cp := *link
+			return &cp, nil
+		}
+	}
+	return nil, &usernames.UsernameLinkNotFoundError{Handle: uuid}
+}
+
+func (s *mockUsernameStore) DeleteExpiredReservations(_ context.Context) (int, error) {
+	if s.deleteExpiredErr != nil {
+		return 0, s.deleteExpiredErr
+	}
+	return 0, nil
 }
 
 // ─── Calling stubs ───────────────────────────────────────────────────────────

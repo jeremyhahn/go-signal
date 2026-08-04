@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	signal "github.com/jeremyhahn/go-signal/sdk/go"
 	"github.com/spf13/cobra"
@@ -35,9 +36,10 @@ Examples:
 		if err != nil {
 			return err
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(cmd.Context(), time.Duration(receiveTimeout)*time.Second)
+		defer cancel()
 
 		opts := &signal.ReceiveOptions{
 			Timeout:           receiveTimeout,
@@ -47,7 +49,7 @@ Examples:
 
 		messages, err := client.Receive(ctx, opts)
 		if err != nil {
-			return fmt.Errorf("receive failed: %w", err)
+			return &CLIError{Op: "receive", Cause: err}
 		}
 
 		if outputFmt == "json" {
@@ -55,12 +57,12 @@ Examples:
 		}
 
 		if len(messages) == 0 {
-			fmt.Fprintln(cmd.OutOrStdout(), "No messages.")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "No messages.")
 			return nil
 		}
 
 		for _, msg := range messages {
-			fmt.Fprintf(cmd.OutOrStdout(), "[%d] From: %s (device %d): %s\n",
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "[%d] From: %s (device %d): %s\n",
 				msg.Timestamp, msg.Source, msg.SourceDevice, msg.Content)
 		}
 		return nil

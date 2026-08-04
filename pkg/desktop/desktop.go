@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 	signal "github.com/jeremyhahn/go-signal/sdk/go"
 )
 
@@ -20,13 +21,13 @@ func Run(serverURL, dataDir string) error {
 	if dataDir == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return fmt.Errorf("desktop: get home dir: %w", err)
+			return signalerrors.Wrap(signalerrors.ErrInternal, "desktop: get home dir", err)
 		}
 		dataDir = filepath.Join(home, ".config", "signal")
 	}
 
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
-		return fmt.Errorf("desktop: create data dir: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "desktop: create data dir", err)
 	}
 
 	// Default server URL for self-hosted deployments.
@@ -42,7 +43,7 @@ func Run(serverURL, dataDir string) error {
 
 	app, err := NewApp(cfg)
 	if err != nil {
-		return fmt.Errorf("desktop: create app: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "desktop: create app", err)
 	}
 
 	// Launch the Wails application.

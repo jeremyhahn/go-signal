@@ -176,6 +176,15 @@ func (m *CertificatesManager) Ed25519PublicKey() ed25519.PublicKey {
 // otherwise the method falls back to HMAC-SHA256. When includeE164 is false,
 // the phone number is omitted from the certificate to support anonymous
 // sealed-sender delivery.
+//
+// DEPRECATED: this method emits a JSON-encoded envelope with raw Ed25519
+// or HMAC over a JSON payload. That format is NOT byte-wire compatible
+// with Rust libsignal or the Java Signal-Server reference. New code MUST
+// use BuildSignalSenderCertificate (in signal_compat.go) which delegates
+// to go-libsignal/pkg/sealed and produces a protobuf-encoded,
+// XEdDSA-signed Signal SenderCertificate. This method is retained only
+// to keep existing API consumers compiling until they migrate; it will
+// be removed in a future release.
 func (m *CertificatesManager) GetDeliveryCertificate(
 	ctx context.Context,
 	uuid string,
@@ -355,10 +364,10 @@ func (m *CertificatesManager) GetExpiringProfileKeyCredential(
 		return nil, &ZKGroupError{Operation: "issue-expiring-profile-key-credential", Cause: err}
 	}
 
-	// Serialize the response using the zkcredential proof encoder and the
-	// zkgroup Serialize helper (reserved byte prefix).
-	proofBytes := response.Proof
-	credBytes := zkgroup.Serialize(proofBytes)
+	// Serialize the full response (reserved + blinded credential + expiration +
+	// proof) to the Rust wire format the client expects in
+	// ReceiveExpiringProfileKeyCredential.
+	credBytes := zkgroup.SerializeExpiringProfileKeyCredentialResponse(response)
 
 	m.logger.DebugContext(ctx, "issued expiring profile key credential",
 		slog.String("aci", aciUUID),

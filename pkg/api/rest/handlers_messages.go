@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/jeremyhahn/go-signal/pkg/accounts"
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 	"github.com/jeremyhahn/go-signal/pkg/messages"
@@ -140,8 +142,13 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	// short-circuit blocked or challenged senders as early as possible.
 	// For unidentified (sealed-sender) messages the sender UUID is empty.
 	senderUUID := ""
+	var sourceDevice uint32
 	if acct != nil {
 		senderUUID = acct.UUID
+		// Attribute the envelope to the device that actually authenticated.
+		// Sealed-sender (unidentified) envelopes keep SourceDevice at 0 to
+		// preserve sender anonymity.
+		sourceDevice = uint32(deviceIDFromContext(r.Context()))
 	}
 	msgType := 0
 	if len(req.Messages) > 0 {
@@ -222,23 +229,6 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delivery loop detection — only applicable for authenticated (identified)
-	// senders where the sender UUID is known. Sealed-sender paths are skipped
-	// because the sender identity is intentionally concealed.
-	if s.loopDetector != nil && !unidentified && senderUUID != "" {
-		if err := s.loopDetector.Check(ctx, senderUUID, destAcct.UUID, ""); err != nil {
-			var loopErr *messages.DeliveryLoopError
-			if errors.As(err, &loopErr) {
-				s.logger.Warn("delivery loop detected",
-					slog.String("sender", senderUUID),
-					slog.String("recipient", destAcct.UUID),
-				)
-				writeError(w, http.StatusLoopDetected, "delivery loop detected")
-				return
-			}
-		}
-	}
-
 	for i, msg := range req.Messages {
 		content, err := decodeBase64(msg.Content)
 		if err != nil {
@@ -257,15 +247,40 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 			envelopeType = messages.EnvelopeTypeUnidentifiedSender
 		}
 
+		// Pre-assign the ServerGUID so the loop detector can Check the same
+		// GUID it will later Record. The manager preserves caller-supplied
+		// GUIDs (it only mints a fresh one when ServerGUID is empty).
+		serverGUID := uuid.New().String()
+
 		envelope := &messages.Envelope{
 			Type:              envelopeType,
 			SourceUUID:        senderUUID,
-			SourceDevice:      uint32(accounts.PrimaryDeviceID),
+			SourceDevice:      sourceDevice,
 			DestinationUUID:   destAcct.UUID,
 			DestinationDevice: deviceID,
 			Timestamp:         msg.Timestamp,
 			Content:           content,
 			Urgent:            req.Urgent,
+			ServerGUID:        serverGUID,
+		}
+
+		// Delivery loop detection: trips when the recipient already sent the
+		// current sender a message carrying the same ServerGUID inside the
+		// detector window. Only meaningful for authenticated senders since
+		// sealed-sender paths conceal the sender identity.
+		if s.loopDetector != nil && !unidentified && senderUUID != "" {
+			if err := s.loopDetector.Check(ctx, senderUUID, destAcct.UUID, serverGUID); err != nil {
+				var loopErr *messages.DeliveryLoopError
+				if errors.As(err, &loopErr) {
+					s.logger.Warn("delivery loop detected",
+						slog.String("sender", senderUUID),
+						slog.String("recipient", destAcct.UUID),
+						slog.String("serverGuid", serverGUID),
+					)
+					writeError(w, http.StatusLoopDetected, "delivery loop detected")
+					return
+				}
+			}
 		}
 
 		if err := s.messages.Insert(ctx, destAcct.UUID, deviceID, envelope); err != nil {
@@ -298,7 +313,7 @@ func (s *Server) handleGetMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	envelopes, err := s.messages.GetMessagesForDevice(r.Context(), acct.UUID, accounts.PrimaryDeviceID)
+	envelopes, err := s.messages.GetMessagesForDevice(r.Context(), acct.UUID, deviceIDFromContext(r.Context()))
 	if err != nil {
 		s.logger.Error("failed to get messages",
 			slog.String("uuid", acct.UUID),

@@ -11,12 +11,18 @@ Authorization: Basic base64(uuid.deviceId:password)
 Authorization: Basic base64(uuid:password)
 ```
 
-- **Username**: The account UUID, optionally suffixed with `.deviceId` (e.g., `550e8400-e29b.1`). If the `.deviceId` suffix is present, the middleware strips it and uses only the UUID for account lookup.
-- **Password**: The primary device's `AuthToken`, set during registration.
+- **Username**: The account UUID, optionally suffixed with `.deviceId` (e.g., `550e8400-e29b.1`). The UUID selects the account; the `.deviceId` suffix selects which device's credential to verify. When the suffix is absent the credential targets the primary device (`accounts.PrimaryDeviceID`). An invalid or zero device suffix is rejected as bad credentials.
+- **Password**: The auth token of the *specific device* named in the username, set when the device was registered or linked.
 
-The `authMiddleware` function in `pkg/api/rest/middleware.go` extracts credentials via `r.BasicAuth()`, looks up the account through `AccountsManager.Get()`, and compares the password against `acct.PrimaryDevice().AuthToken`. On success, the authenticated account is stored in the request context using `contextWithAccount()` and retrieved downstream with `accountFromContext()`.
+The `authMiddleware` function in `pkg/api/rest/middleware.go` extracts credentials via `r.BasicAuth()`, looks up the account through `AccountService.Get()`, then verifies the password against the addressed device's stored token hash — `device.AuthTokenHash.Verify(password)` — not the primary device's. This means a linked device authenticates as itself, and the authenticated device ID is available to downstream handlers via `deviceIDFromContext()`. On success the account is stored in context with `contextWithAccount()` and the device ID with `contextWithDevice()`; handlers read them back through `accountFromContext()` and `deviceIDFromContext()`.
+
+Auth tokens are never compared in plaintext. Each device stores a `*auth.SaltedTokenHash` (a salted HKDF-SHA256 digest, `pkg/auth/token.go`); `Verify` re-derives the digest and compares it in constant time. To prevent a UUID-existence or device-existence timing oracle, every failure path — unknown account, missing/credential-less device, invalid device suffix — still performs a dummy `SaltedTokenHash.Verify` so response latency does not reveal which check failed.
 
 If authentication fails at any step, the middleware returns `401 Unauthorized` with a `WWW-Authenticate: Basic realm="signal"` header.
+
+### gRPC parity
+
+The gRPC interceptor `AuthenticatedUnary` in `pkg/api/grpc/interceptors/auth.go` mirrors this model exactly: it parses the same `uuid.deviceId:password` credential from the `authorization` metadata entry, verifies it against the addressed device's `AuthTokenHash`, performs the same timing-equalisation, and exposes the principal through `interceptors.AccountFromContext` / `interceptors.DeviceIDFromContext`. The REST and gRPC layers use distinct, layer-private context keys. `AnonymousUnary` rejects any request that carries an `authorization` entry, for services that must only be reached by unauthenticated (sealed-sender / group-send-credentialed) callers.
 
 ## Registration Modes
 
@@ -76,7 +82,9 @@ Clone detection works through the WebAuthn sign counter. Each assertion incremen
 
 The auth middleware is defined in `pkg/api/rest/middleware.go`. Key behaviors:
 
-- Username parsing splits on `.` to separate UUID from device ID. Only the UUID portion is used for the `AccountsManager.Get()` lookup.
-- Password comparison is a direct string equality check against `PrimaryDevice().AuthToken`. This is acceptable because the auth token is a server-generated random value, not a user-chosen password.
+- Username parsing splits on `.` to separate the UUID from the device ID. The UUID drives the `AccountService.Get()` lookup; the device ID selects which device credential is verified.
+- Password comparison runs through `device.AuthTokenHash.Verify()` (HKDF-SHA256, constant-time). It targets the addressed device, so device-scoped authorization is enforceable downstream via `deviceIDFromContext()`. The auth token is a server-generated random value, not a user-chosen password.
+- Every rejection path performs a dummy hash verification so that account/device existence cannot be inferred from response timing.
+- `optionalAuthMiddleware` additionally accepts the sealed-sender path: a request with no Basic credentials but a valid `Unidentified-Access-Key` header (constant-time compared against the destination account's stored key) is admitted and marked as an unidentified sender.
 - The middleware does not handle FIDO2 assertion validation. That is performed separately when the `fido2` build tag is active, through the FIDO2 accounts manager.
 - Routes that do not require authentication (registration, verification endpoints) bypass the middleware entirely.

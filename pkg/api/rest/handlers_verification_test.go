@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,8 +11,40 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-signal/pkg/captcha"
+	"github.com/jeremyhahn/go-signal/pkg/extservice/registration/inprocess"
+	"github.com/jeremyhahn/go-signal/pkg/registration/core"
+	"github.com/jeremyhahn/go-signal/pkg/registration/sessionshim"
 	"github.com/jeremyhahn/go-signal/pkg/verification"
 )
+
+// newTestShim wires a sessionshim.Shim atop a freshly constructed
+// core.Service for tests. coreCfg controls the lower-half behaviour
+// (CodeLength, CodeTTL, MaxAttempts, MaxSessions, SessionTTL,
+// CleanupInterval, RequestCodeCooldowns, FixedCode). captchaChecker,
+// escalateAfter and scoreThreshold control the chat-server-side
+// captcha gate exactly as the pre-split *verification.Manager did.
+// The core's background cleanup goroutine is wired through t.Cleanup.
+func newTestShim(
+	t *testing.T,
+	store verification.VerificationSessionStore,
+	transport verification.VerificationTransport,
+	coreCfg core.Config,
+	captchaChecker *captcha.Checker,
+	escalateAfter int,
+	scoreThreshold float64,
+) *sessionshim.Shim {
+	t.Helper()
+	svc := core.NewService(store, transport, coreCfg)
+	t.Cleanup(svc.Shutdown)
+	return sessionshim.NewShim(sessionshim.Config{
+		Client:                 inprocess.New(svc),
+		CaptchaStore:           sessionshim.NewMemoryCaptchaStore(),
+		CaptchaChecker:         captchaChecker,
+		CaptchaEscalationAfter: escalateAfter,
+		CaptchaScoreThreshold:  scoreThreshold,
+	})
+}
 
 // createSession is a test helper that POSTs to /v1/verification/session and
 // returns the parsed response. It fatals on any unexpected status or decode
@@ -55,9 +88,9 @@ func submitCode(t *testing.T, s *Server, sessionID, code string) *httptest.Respo
 }
 
 // newTestServerWithCustomVerification creates a full test server wired to a
-// caller-provided verification.Manager instead of the default one. This allows
+// caller-provided sessionshim.Shim instead of the default one. This allows
 // tests to inject custom TTLs, session limits, and cleanup intervals.
-func newTestServerWithCustomVerification(t *testing.T, mgr *verification.Manager) *Server {
+func newTestServerWithCustomVerification(t *testing.T, mgr *sessionshim.Shim) *Server {
 	t.Helper()
 	s, _ := newTestServerWithVerification(t)
 	s.verification = mgr
@@ -125,14 +158,13 @@ func TestHandleCreateVerificationSession_MissingNumber(t *testing.T) {
 func TestHandleCreateVerificationSession_MaxSessions(t *testing.T) {
 	transport := newNoopVerificationTransport()
 	store := verification.NewMemoryVerificationSessionStore()
-	verificationMgr := verification.NewManager(store, transport, verification.ManagerConfig{
+	verificationMgr := newTestShim(t, store, transport, core.Config{
 		CodeLength:  6,
 		CodeTTL:     5 * time.Minute,
 		MaxAttempts: 3,
 		MaxSessions: 2, // cap at 2 so the test runs fast
 		SessionTTL:  10 * time.Minute,
-	})
-	t.Cleanup(verificationMgr.Shutdown)
+	}, nil, 0, 0)
 
 	s := newTestServerWithCustomVerification(t, verificationMgr)
 
@@ -221,13 +253,12 @@ func TestHandleGetVerificationSession_ExpiredSessionPreventsCodeSend(t *testing.
 	transport := newNoopVerificationTransport()
 	store := verification.NewMemoryVerificationSessionStore()
 	// Use a 1ns TTL so the session is expired immediately after creation.
-	verificationMgr := verification.NewManager(store, transport, verification.ManagerConfig{
+	verificationMgr := newTestShim(t, store, transport, core.Config{
 		CodeLength:  6,
 		CodeTTL:     5 * time.Minute,
 		MaxAttempts: 3,
 		SessionTTL:  time.Nanosecond,
-	})
-	t.Cleanup(verificationMgr.Shutdown)
+	}, nil, 0, 0)
 
 	s := newTestServerWithCustomVerification(t, verificationMgr)
 	sess := createSession(t, s, "+15551234567")
@@ -301,13 +332,12 @@ func TestHandleRequestVerificationCode_SessionNotFound(t *testing.T) {
 func TestHandleRequestVerificationCode_ExpiredSession(t *testing.T) {
 	transport := newNoopVerificationTransport()
 	store := verification.NewMemoryVerificationSessionStore()
-	verificationMgr := verification.NewManager(store, transport, verification.ManagerConfig{
+	verificationMgr := newTestShim(t, store, transport, core.Config{
 		CodeLength:  6,
 		CodeTTL:     5 * time.Minute,
 		MaxAttempts: 3,
 		SessionTTL:  time.Nanosecond,
-	})
-	t.Cleanup(verificationMgr.Shutdown)
+	}, nil, 0, 0)
 
 	s := newTestServerWithCustomVerification(t, verificationMgr)
 	sess := createSession(t, s, "+15551234567")
@@ -317,6 +347,38 @@ func TestHandleRequestVerificationCode_ExpiredSession(t *testing.T) {
 	statusCode := requestCode(t, s, sess.ID)
 	if statusCode != http.StatusGone {
 		t.Errorf("expected 410 Gone, got %d", statusCode)
+	}
+}
+
+// TestHandleRequestVerificationCode_RateLimited covers the 429 path with the
+// Retry-After header populated from RequestCodeRateLimitedError.RetryAfter.
+func TestHandleRequestVerificationCode_RateLimited(t *testing.T) {
+	transport := newNoopVerificationTransport()
+	store := verification.NewMemoryVerificationSessionStore()
+	verificationMgr := newTestShim(t, store, transport, core.Config{
+		CodeLength: 6,
+		CodeTTL:    5 * time.Minute,
+		// Force the second SendCode into the cooldown branch immediately.
+		RequestCodeCooldowns: []time.Duration{0, 1 * time.Hour},
+	}, nil, 0, 0)
+
+	s := newTestServerWithCustomVerification(t, verificationMgr)
+	sess := createSession(t, s, "+15555550100")
+
+	// First request succeeds.
+	if code := requestCode(t, s, sess.ID); code != http.StatusOK {
+		t.Fatalf("first requestCode: expected 200, got %d", code)
+	}
+
+	// Second request must be rate-limited.
+	req := httptest.NewRequest(http.MethodPost, "/v1/verification/session/"+sess.ID+"/code", nil)
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d", rr.Code)
+	}
+	if retry := rr.Header().Get("Retry-After"); retry == "" || retry == "0" {
+		t.Errorf("expected non-zero Retry-After, got %q", retry)
 	}
 }
 
@@ -437,13 +499,12 @@ func TestHandleSubmitVerificationCode_InvalidCode(t *testing.T) {
 func TestHandleSubmitVerificationCode_ExpiredSession(t *testing.T) {
 	transport := newNoopVerificationTransport()
 	store := verification.NewMemoryVerificationSessionStore()
-	verificationMgr := verification.NewManager(store, transport, verification.ManagerConfig{
+	verificationMgr := newTestShim(t, store, transport, core.Config{
 		CodeLength:  6,
 		CodeTTL:     time.Nanosecond,
 		MaxAttempts: 3,
 		SessionTTL:  time.Nanosecond,
-	})
-	t.Cleanup(verificationMgr.Shutdown)
+	}, nil, 0, 0)
 
 	s := newTestServerWithCustomVerification(t, verificationMgr)
 	sess := createSession(t, s, "+15551234567")
@@ -461,13 +522,12 @@ func TestHandleSubmitVerificationCode_ExpiredSession(t *testing.T) {
 func TestHandleSubmitVerificationCode_MaxAttempts(t *testing.T) {
 	transport := newNoopVerificationTransport()
 	store := verification.NewMemoryVerificationSessionStore()
-	verificationMgr := verification.NewManager(store, transport, verification.ManagerConfig{
+	verificationMgr := newTestShim(t, store, transport, core.Config{
 		CodeLength:  6,
 		CodeTTL:     5 * time.Minute,
 		MaxAttempts: 1, // allow only one attempt
 		SessionTTL:  10 * time.Minute,
-	})
-	t.Cleanup(verificationMgr.Shutdown)
+	}, nil, 0, 0)
 
 	s := newTestServerWithCustomVerification(t, verificationMgr)
 	sess := createSession(t, s, "+15551234567")
@@ -510,14 +570,13 @@ func TestHandleSubmitVerificationCode_ServiceUnavailable(t *testing.T) {
 func TestVerificationManager_CleanupRemovesExpiredSessions(t *testing.T) {
 	transport := newNoopVerificationTransport()
 	store := verification.NewMemoryVerificationSessionStore()
-	verificationMgr := verification.NewManager(store, transport, verification.ManagerConfig{
+	verificationMgr := newTestShim(t, store, transport, core.Config{
 		CodeLength:      6,
 		CodeTTL:         time.Nanosecond,
 		MaxAttempts:     3,
 		SessionTTL:      time.Nanosecond,
 		CleanupInterval: 10 * time.Millisecond, // fast cleanup for tests
-	})
-	t.Cleanup(verificationMgr.Shutdown)
+	}, nil, 0, 0)
 
 	s := newTestServerWithCustomVerification(t, verificationMgr)
 
@@ -608,13 +667,12 @@ func TestVerificationSession_ConcurrentCreateAndLookup(t *testing.T) {
 func TestHandleSubmitVerificationCode_EndToEndExpiry(t *testing.T) {
 	transport := newNoopVerificationTransport()
 	store := verification.NewMemoryVerificationSessionStore()
-	verificationMgr := verification.NewManager(store, transport, verification.ManagerConfig{
+	verificationMgr := newTestShim(t, store, transport, core.Config{
 		CodeLength:  6,
 		CodeTTL:     time.Nanosecond,
 		MaxAttempts: 3,
 		SessionTTL:  time.Nanosecond,
-	})
-	t.Cleanup(verificationMgr.Shutdown)
+	}, nil, 0, 0)
 
 	s := newTestServerWithCustomVerification(t, verificationMgr)
 	sess := createSession(t, s, "+15551234567")
@@ -631,5 +689,195 @@ func TestHandleSubmitVerificationCode_EndToEndExpiry(t *testing.T) {
 	rr := submitCode(t, s, sess.ID, "123456")
 	if rr.Code != http.StatusGone && rr.Code != http.StatusNotFound {
 		t.Errorf("submitCode after expiry: expected 410 or 404, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// --------------------------------------------------------------------------
+// PATCH /v1/verification/session/{id}  +  captcha escalation gate
+// --------------------------------------------------------------------------
+
+// captchaStubVerifier is a tiny captcha.CaptchaVerifier used by the REST
+// PATCH tests; it returns a canned success/failure result.
+type captchaStubVerifier struct {
+	success bool
+	score   float64
+}
+
+func (c *captchaStubVerifier) Verify(_ context.Context, _, _, _ string) (*captcha.VerifyResult, error) {
+	return &captcha.VerifyResult{Success: c.success, Score: c.score}, nil
+}
+
+// buildCaptchaCheckerWithProvider constructs a captcha.Checker wired to a
+// single stub provider keyed under "recaptcha".
+func buildCaptchaCheckerWithProvider(v captcha.CaptchaVerifier) *captcha.Checker {
+	return &captcha.Checker{Providers: map[string]captcha.CaptchaVerifier{"recaptcha": v}}
+}
+
+// newTestServerWithCaptchaEscalation creates a test server whose
+// sessionshim.Shim escalates to CaptchaRequired after the first
+// successful SendCode.
+func newTestServerWithCaptchaEscalation(t *testing.T, checker *captcha.Checker) *Server {
+	t.Helper()
+	transport := newNoopVerificationTransport()
+	store := verification.NewMemoryVerificationSessionStore()
+	mgr := newTestShim(t, store, transport, core.Config{
+		FixedCode:            "111111",
+		CodeTTL:              5 * time.Minute,
+		RequestCodeCooldowns: []time.Duration{0, 0},
+	}, checker, 1, 0)
+	s, _ := newTestServerWithVerification(t)
+	s.verification = mgr
+	s.captchaChecker = checker
+	if checker != nil {
+		s.regCaptcha = captcha.NewRegistrationCaptchaManager(checker)
+	}
+	return s
+}
+
+func TestHandleRequestVerificationCode_CaptchaRequiredReturns409(t *testing.T) {
+	s := newTestServerWithCaptchaEscalation(t, buildCaptchaCheckerWithProvider(&captchaStubVerifier{success: true, score: 0.9}))
+	sess := createSession(t, s, "+15555550500")
+
+	// First request goes through.
+	if code := requestCode(t, s, sess.ID); code != http.StatusOK {
+		t.Fatalf("first requestCode: expected 200, got %d", code)
+	}
+
+	// Second request is gated by CaptchaRequired and returns 409.
+	req := httptest.NewRequest(http.MethodPost, "/v1/verification/session/"+sess.ID+"/code", nil)
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("expected 409 Conflict, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp VerificationSessionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode 409 body: %v", err)
+	}
+	if len(resp.RequestedInformation) != 1 || resp.RequestedInformation[0] != "captcha" {
+		t.Errorf(`expected requestedInformation=["captcha"], got %+v`, resp.RequestedInformation)
+	}
+}
+
+func TestHandleUpdateVerificationSession_ClearsCaptchaRequired(t *testing.T) {
+	s := newTestServerWithCaptchaEscalation(t, buildCaptchaCheckerWithProvider(&captchaStubVerifier{success: true, score: 0.9}))
+	sess := createSession(t, s, "+15555550501")
+
+	// Drive escalation.
+	if code := requestCode(t, s, sess.ID); code != http.StatusOK {
+		t.Fatalf("first requestCode: %d", code)
+	}
+	if code := requestCode(t, s, sess.ID); code != http.StatusConflict {
+		t.Fatalf("expected 409 after escalation: got %d", code)
+	}
+
+	// PATCH with a valid challenge captcha clears the flag.
+	body := `{"captcha":"recaptcha.sk.challenge.opaque"}`
+	patch := httptest.NewRequest(http.MethodPatch, "/v1/verification/session/"+sess.ID, strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, patch)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 from PATCH, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp VerificationSessionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode PATCH body: %v", err)
+	}
+	if len(resp.RequestedInformation) != 0 {
+		t.Errorf("captchaRequired should be cleared; got requestedInformation=%v", resp.RequestedInformation)
+	}
+
+	// Next SendCode succeeds.
+	if code := requestCode(t, s, sess.ID); code != http.StatusOK {
+		t.Errorf("requestCode after PATCH: expected 200, got %d", code)
+	}
+}
+
+func TestHandleUpdateVerificationSession_RejectsBadCaptcha(t *testing.T) {
+	s := newTestServerWithCaptchaEscalation(t, buildCaptchaCheckerWithProvider(&captchaStubVerifier{success: false}))
+	sess := createSession(t, s, "+15555550502")
+
+	body := `{"captcha":"recaptcha.sk.challenge.opaque"}`
+	req := httptest.NewRequest(http.MethodPatch, "/v1/verification/session/"+sess.ID, strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422 for rejected captcha, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandleUpdateVerificationSession_NoBodyReturnsCurrent(t *testing.T) {
+	s := newTestServerWithCaptchaEscalation(t, buildCaptchaCheckerWithProvider(&captchaStubVerifier{success: true}))
+	sess := createSession(t, s, "+15555550503")
+
+	req := httptest.NewRequest(http.MethodPatch, "/v1/verification/session/"+sess.ID, strings.NewReader("{}"))
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandleUpdateVerificationSession_NoCheckerReturns503(t *testing.T) {
+	// Deployment without a captcha checker — PATCH with a captcha must
+	// return 503 (and never silently accept it).
+	s := newTestServer(t)
+	body := `{"number":"+15555550504","transport":"sms"}`
+	createReq := httptest.NewRequest(http.MethodPost, "/v1/verification/session", strings.NewReader(body))
+	createRR := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(createRR, createReq)
+	var resp VerificationSessionResponse
+	if err := json.Unmarshal(createRR.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode create body: %v", err)
+	}
+
+	patch := httptest.NewRequest(http.MethodPatch, "/v1/verification/session/"+resp.ID,
+		strings.NewReader(`{"captcha":"recaptcha.sk.challenge.tok"}`))
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, patch)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandleUpdateVerificationSession_SessionNotFound(t *testing.T) {
+	s := newTestServerWithCaptchaEscalation(t, buildCaptchaCheckerWithProvider(&captchaStubVerifier{success: true}))
+	req := httptest.NewRequest(http.MethodPatch, "/v1/verification/session/missing-id",
+		strings.NewReader(`{"captcha":"recaptcha.sk.challenge.tok"}`))
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("expected 404, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestHandleUpdateVerificationSession_NoCaptcha_SessionNotFound verifies that
+// a PATCH with no captcha field for a missing session returns 404.
+// This exercises the req.Captcha == "" path → GetSession → notFound.
+func TestHandleUpdateVerificationSession_NoCaptcha_SessionNotFound(t *testing.T) {
+	s := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodPatch, "/v1/verification/session/nonexistent-id",
+		strings.NewReader(`{}`))
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for non-existent session with no captcha, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestHandleUpdateVerificationSession_InvalidBody verifies that an invalid
+// JSON body returns 400.
+func TestHandleUpdateVerificationSession_InvalidBody(t *testing.T) {
+	s := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodPatch, "/v1/verification/session/some-id",
+		strings.NewReader(`{bad json`))
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid body, got %d: %s", rr.Code, rr.Body.String())
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
@@ -545,4 +546,137 @@ func TestConfig_Destroy_Idempotent(t *testing.T) {
 	}
 	cfg.Destroy()
 	cfg.Destroy() // Should not panic.
+}
+
+// validProductionConfig returns a Config that passes the production gate.
+// Tests mutate one field at a time to assert each violation is detected.
+func validProductionConfig() *Config {
+	return &Config{
+		Mode:            "production",
+		Server:          ServerConfig{HTTPPort: 443, MaxDevices: 6, TLSCertFile: "/tls/c.pem", TLSKeyFile: "/tls/k.pem", AllowedOrigins: []string{"https://chat.example.com"}},
+		Storage:         StorageConfig{Backend: "postgres"},
+		Cache:           CacheConfig{Backend: "redis"},
+		ZKConfig:        ZKConfig{Enabled: true, ServerSecret: secrets.NewSecureString("zk-secret")},
+		CallingZKConfig: CallingZKConfig{ServerSecret: secrets.NewSecureString("calling-secret")},
+		Verification:    VerificationConfig{Transport: "twilio"},
+		Captcha:         CaptchaConfig{Provider: "hcaptcha"},
+		Limits:          LimitsConfig{Messages: RateLimitConfig{BucketSize: 200, LeakRatePerMin: 60}},
+	}
+}
+
+func TestValidate_ProductionConfig_Passes(t *testing.T) {
+	if err := validProductionConfig().Validate(); err != nil {
+		t.Fatalf("expected valid production config to pass, got: %v", err)
+	}
+}
+
+func TestValidate_ProductionConfig_NonProductionModeSkipsGate(t *testing.T) {
+	// A wide-open test config must pass when mode is not "production".
+	cfg := &Config{
+		Mode:         "development",
+		Server:       ServerConfig{HTTPPort: 8081},
+		Storage:      StorageConfig{Backend: "memory"},
+		Cache:        CacheConfig{Backend: "memory"},
+		Verification: VerificationConfig{Transport: "stub", FixedCode: "123456"},
+		Captcha:      CaptchaConfig{Provider: "test"},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("non-production mode should skip the gate, got: %v", err)
+	}
+	if cfg.IsProduction() {
+		t.Fatal("IsProduction must be false for development mode")
+	}
+}
+
+func TestValidate_ProductionGate_DetectsEachViolation(t *testing.T) {
+	cases := map[string]struct {
+		mutate     func(*Config)
+		wantSubstr string
+	}{
+		"memory storage":        {func(c *Config) { c.Storage.Backend = "memory" }, "storage.backend"},
+		"qrdb storage":          {func(c *Config) { c.Storage.Backend = "qrdb" }, "storage.backend"},
+		"dynamodb storage":      {func(c *Config) { c.Storage.Backend = "dynamodb" }, "storage.backend"},
+		"memory cache":          {func(c *Config) { c.Cache.Backend = "memory" }, "cache.backend"},
+		"stub transport":        {func(c *Config) { c.Verification.Transport = "stub" }, "verification.transport"},
+		"empty transport":       {func(c *Config) { c.Verification.Transport = "" }, "verification.transport"},
+		"fixed code":            {func(c *Config) { c.Verification.FixedCode = "123456" }, "verification.fixedCode"},
+		"test captcha":          {func(c *Config) { c.Captcha.Provider = "test" }, "captcha.provider"},
+		"empty captcha":         {func(c *Config) { c.Captcha.Provider = "" }, "captcha.provider"},
+		"zk disabled":           {func(c *Config) { c.ZKConfig.Enabled = false }, "zkConfig"},
+		"zk empty secret":       {func(c *Config) { c.ZKConfig.ServerSecret = nil }, "zkConfig"},
+		"calling zk empty":      {func(c *Config) { c.CallingZKConfig.ServerSecret = nil }, "callingZkConfig"},
+		"calling zk test value": {func(c *Config) { c.CallingZKConfig.ServerSecret = secrets.NewSecureString(testCallingZKSecret) }, "well-known development secret"},
+		"no tls cert":           {func(c *Config) { c.Server.TLSCertFile = "" }, "tlsCertFile"},
+		"no tls key":            {func(c *Config) { c.Server.TLSKeyFile = "" }, "tlsKeyFile"},
+		"wildcard origin":       {func(c *Config) { c.Server.AllowedOrigins = []string{"*"} }, "allowedOrigins"},
+		"zero message bucket":   {func(c *Config) { c.Limits.Messages.BucketSize = 0 }, "limits.messages.bucketSize"},
+		"insecure verification": {func(c *Config) { c.Verification.RemoteInsecure = true }, "verification.remoteInsecure"},
+		"insecure kt":           {func(c *Config) { c.KeyTransparency.RemoteInsecure = true }, "keyTransparency.remoteInsecure"},
+		"insecure storage svc":  {func(c *Config) { c.StorageService.RemoteInsecure = true }, "storageService.remoteInsecure"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := validProductionConfig()
+			tc.mutate(cfg)
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatalf("expected production violation for %q, got nil", name)
+			}
+			var pErr *ProductionValidationError
+			if !errors.As(err, &pErr) {
+				t.Fatalf("expected *ProductionValidationError, got %T: %v", err, err)
+			}
+			found := false
+			for _, viol := range pErr.Violations {
+				if strings.Contains(viol, tc.wantSubstr) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("expected a violation containing %q, got: %v", tc.wantSubstr, pErr.Violations)
+			}
+		})
+	}
+}
+
+func TestValidate_ProductionGate_AggregatesMultiple(t *testing.T) {
+	cfg := validProductionConfig()
+	cfg.Storage.Backend = "memory"
+	cfg.Verification.Transport = "stub"
+	cfg.Captcha.Provider = "test"
+	err := cfg.Validate()
+	var pErr *ProductionValidationError
+	if !errors.As(err, &pErr) {
+		t.Fatalf("expected *ProductionValidationError, got %T", err)
+	}
+	if len(pErr.Violations) < 3 {
+		t.Fatalf("expected at least 3 aggregated violations, got %d: %v", len(pErr.Violations), pErr.Violations)
+	}
+}
+
+func TestIsProduction_CaseInsensitive(t *testing.T) {
+	for _, m := range []string{"production", "Production", "PRODUCTION", " production "} {
+		if !(&Config{Mode: m}).IsProduction() {
+			t.Errorf("mode %q should be production", m)
+		}
+	}
+	for _, m := range []string{"", "development", "dev", "prod"} {
+		if (&Config{Mode: m}).IsProduction() {
+			t.Errorf("mode %q should NOT be production", m)
+		}
+	}
+}
+
+func TestLoad_ProductionTemplate_PassesGate(t *testing.T) {
+	// The shipped production template must always satisfy the production
+	// gate; ${ENV} secret references are stored verbatim at load (resolution
+	// happens later) and read as non-empty, so the presence checks pass.
+	cfg, err := Load("../../configs/signal-server-prod.yml")
+	if err != nil {
+		t.Fatalf("production template must load and pass the gate, got: %v", err)
+	}
+	if !cfg.IsProduction() {
+		t.Fatal("production template must set mode: production")
+	}
 }

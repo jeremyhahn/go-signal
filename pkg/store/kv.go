@@ -15,6 +15,15 @@ type KVClient interface {
 	// Delete removes the value stored at the given key.
 	Delete(ctx context.Context, key string) error
 
+	// DeleteIfPresent atomically removes the value at the given key and
+	// reports whether this call was the one that removed it. It returns
+	// (true, nil) when the key existed and was deleted by this call, and
+	// (false, nil) when the key was already absent. Implementations MUST make
+	// the check-and-delete atomic with respect to concurrent callers so that,
+	// among racing deletes of the same key, exactly one observes true. This is
+	// the primitive that makes one-time pre-key consumption single-use.
+	DeleteIfPresent(ctx context.Context, key string) (bool, error)
+
 	// List returns all keys that share the given prefix.
 	List(ctx context.Context, prefix string) ([]string, error)
 

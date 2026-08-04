@@ -1,0 +1,225 @@
+# The five external services in one file. Each gets its own
+# Deployment + ClusterIP Service. Replicas are conservative defaults
+# tuned in Phase 5 with HPAs.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: registration-service
+  namespace: signal
+spec:
+  selector:
+    app: registration-service
+  ports:
+    - name: grpc
+      port: 8090
+      targetPort: 8090
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: registration-service
+  namespace: signal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: registration-service
+  template:
+    metadata:
+      labels:
+        app: registration-service
+    spec:
+      containers:
+        - name: registration-service
+          image: go-signal-registration-service:dev
+          ports:
+            - containerPort: 8090
+              name: grpc
+          env:
+            - name: SIGNAL_VERIFICATION_GRPCLISTEN
+              value: "0.0.0.0:8090"
+            - name: SIGNAL_VERIFICATION_TRANSPORT
+              value: "stub"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: svr2
+  namespace: signal
+spec:
+  selector:
+    app: svr2
+  ports:
+    - name: admin
+      port: 8091
+      targetPort: 8091
+    - name: ws
+      port: 8092
+      targetPort: 8092
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: svr2
+  namespace: signal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: svr2
+  template:
+    metadata:
+      labels:
+        app: svr2
+    spec:
+      containers:
+        - name: svr2
+          image: go-signal-svr2:dev
+          ports:
+            - containerPort: 8091
+              name: admin
+            - containerPort: 8092
+              name: ws
+          env:
+            - name: SIGNAL_SVR2_HTTPLISTEN
+              value: "0.0.0.0:8091"
+            - name: SIGNAL_SVR2_WSLISTEN
+              value: "0.0.0.0:8092"
+            - name: SIGNAL_SVR2_ATTESTATION
+              value: "software"
+            - name: SIGNAL_SVR2_SHAREDSECRET
+              valueFrom:
+                secretKeyRef:
+                  name: signal-shared-secrets
+                  key: svr2-hmac
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cdsi
+  namespace: signal
+spec:
+  selector:
+    app: cdsi
+  ports:
+    - name: ws
+      port: 8094
+      targetPort: 8094
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cdsi
+  namespace: signal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cdsi
+  template:
+    metadata:
+      labels:
+        app: cdsi
+    spec:
+      containers:
+        - name: cdsi
+          image: go-signal-cdsi:dev
+          ports:
+            - containerPort: 8094
+              name: ws
+          env:
+            - name: SIGNAL_CDSI_WSLISTEN
+              value: "0.0.0.0:8094"
+            - name: SIGNAL_CDSI_ATTESTATION
+              value: "software"
+            - name: SIGNAL_CDSI_SHAREDSECRET
+              valueFrom:
+                secretKeyRef:
+                  name: signal-shared-secrets
+                  key: cdsi-hmac
+            - name: SIGNAL_CDSI_SIGNALDDIRECTORYADDR
+              value: "signald:8443"
+            - name: SIGNAL_CDSI_SIGNALDDIRECTORYINSECURE
+              value: "true"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: storage-service
+  namespace: signal
+spec:
+  selector:
+    app: storage-service
+  ports:
+    - name: http
+      port: 8096
+      targetPort: 8096
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: storage-service
+  namespace: signal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: storage-service
+  template:
+    metadata:
+      labels:
+        app: storage-service
+    spec:
+      containers:
+        - name: storage-service
+          image: go-signal-storage-service:dev
+          ports:
+            - containerPort: 8096
+              name: http
+          env:
+            - name: SIGNAL_STORAGESERVICE_HTTPLISTEN
+              value: "0.0.0.0:8096"
+            - name: SIGNAL_STORAGESERVICE_SHAREDSECRET
+              valueFrom:
+                secretKeyRef:
+                  name: signal-shared-secrets
+                  key: storage-service-hmac
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: key-transparency
+  namespace: signal
+spec:
+  selector:
+    app: key-transparency
+  ports:
+    - name: grpc
+      port: 8098
+      targetPort: 8098
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: key-transparency
+  namespace: signal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: key-transparency
+  template:
+    metadata:
+      labels:
+        app: key-transparency
+    spec:
+      containers:
+        - name: key-transparency
+          image: go-signal-key-transparency:dev
+          ports:
+            - containerPort: 8098
+              name: grpc
+          env:
+            - name: SIGNAL_KEYTRANSPARENCY_GRPCLISTEN
+              value: "0.0.0.0:8098"

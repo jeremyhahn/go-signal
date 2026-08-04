@@ -4,6 +4,7 @@ import (
 	"log/slog"
 
 	"github.com/jeremyhahn/go-signal/pkg/accounts"
+	"github.com/jeremyhahn/go-signal/pkg/backups"
 	"github.com/jeremyhahn/go-signal/pkg/calling"
 	"github.com/jeremyhahn/go-signal/pkg/certificates"
 	"github.com/jeremyhahn/go-signal/pkg/devices"
@@ -27,6 +28,10 @@ type SignalService struct {
 	Devices       DeviceService
 	Usernames     UsernameService
 	CallSignaling CallSignalingService
+	// Backups is wired only when the backup subsystem is enabled (i.e.
+	// cmd/signald constructs a backups.Service). Handlers that depend on
+	// Backups must nil-check and return Unimplemented when it is absent.
+	Backups BackupService
 }
 
 // ServiceConfig holds the manager dependencies required to construct a
@@ -43,6 +48,9 @@ type ServiceConfig struct {
 	Calling      *calling.CallingManager
 	WSSessions   *signalws.SessionManager
 	Logger       *slog.Logger
+	// Backups is optional. When nil, SignalService.Backups stays nil and
+	// gRPC backup handlers return Unimplemented.
+	Backups *backups.Service
 }
 
 // NewSignalService constructs a SignalService, wiring each manager into its
@@ -67,6 +75,10 @@ func NewSignalService(cfg ServiceConfig) *SignalService {
 			logger = slog.Default()
 		}
 		svc.CallSignaling = NewCallSignalingService(cfg.WSSessions, cfg.Calling, logger)
+	}
+
+	if cfg.Backups != nil {
+		svc.Backups = NewBackupService(cfg.Backups)
 	}
 
 	return svc

@@ -46,9 +46,11 @@ func (s *stubGroupStore) Delete(ctx context.Context, groupID string) error {
 var _ GroupStore = (*stubGroupStore)(nil)
 
 func TestGroupStore_StubSatisfiesInterface(t *testing.T) {
-	var store GroupStore = &stubGroupStore{}
-	if store == nil {
-		t.Fatal("expected non-nil store")
+	// The compile-time assertion above already verifies interface satisfaction.
+	// Confirm the stub is usable without panicking.
+	store := &stubGroupStore{}
+	if err := store.Create(context.Background(), &Group{ID: "check"}); err != nil {
+		t.Fatalf("unexpected error from stub Create: %v", err)
 	}
 }
 

@@ -223,3 +223,25 @@ func TestMultiRecipient_SpamChecker_AllowedSender(t *testing.T) {
 		t.Errorf("expected 200 for allowed sender, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
+
+// --------------------------------------------------------------------------
+// invalidTimestampError
+// --------------------------------------------------------------------------
+
+func TestInvalidTimestampError_Error(t *testing.T) {
+	e := &invalidTimestampError{reason: "overflow"}
+	got := e.Error()
+	want := "invalid timestamp: overflow"
+	if got != want {
+		t.Errorf("expected %q, got %q", want, got)
+	}
+}
+
+func TestInvalidTimestampError_EmptyReason(t *testing.T) {
+	e := &invalidTimestampError{reason: ""}
+	got := e.Error()
+	want := "invalid timestamp: "
+	if got != want {
+		t.Errorf("expected %q, got %q", want, got)
+	}
+}

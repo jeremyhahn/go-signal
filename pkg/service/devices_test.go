@@ -203,3 +203,58 @@ func TestDeviceService_SetCapabilities_UnknownAccount(t *testing.T) {
 		t.Fatal("SetCapabilities: expected error for unknown account")
 	}
 }
+
+func TestDeviceService_LinkDeviceForAccount_Success(t *testing.T) {
+	svc, _, seed := newTestDeviceService()
+	uuid := seed("+14155550030")
+
+	// Obtain a provisioning code for this account.
+	code, err := svc.CreateProvisioningCode(context.Background(), uuid)
+	if err != nil {
+		t.Fatalf("CreateProvisioningCode: %v", err)
+	}
+
+	req := &devices.LinkDeviceRequest{
+		VerificationCode: code.VerificationCode,
+		AccountAttributes: devices.DeviceAccountAttributes{
+			FetchesMessages: true,
+			RegistrationId:  99,
+			Name:            "Linked Device",
+		},
+		AciSignedPreKey: devices.SignedPreKeyEntity{
+			KeyId:     1,
+			PublicKey: "dGVzdHB1YmxpY2tleQ==",
+			Signature: "dGVzdHNpZ25hdHVyZQ==",
+		},
+	}
+
+	resp, err := svc.LinkDeviceForAccount(context.Background(), uuid, code.VerificationCode, req)
+	if err != nil {
+		t.Fatalf("LinkDeviceForAccount: unexpected error: %v", err)
+	}
+	if resp.DeviceId == 0 {
+		t.Error("LinkDeviceForAccount: expected non-zero DeviceId")
+	}
+}
+
+func TestDeviceService_LinkDeviceForAccount_WrongAccount(t *testing.T) {
+	svc, _, seed := newTestDeviceService()
+	seed("+14155550031")
+	uuid2 := seed("+14155550032")
+
+	// Create provisioning code for uuid2.
+	code, err := svc.CreateProvisioningCode(context.Background(), uuid2)
+	if err != nil {
+		t.Fatalf("CreateProvisioningCode: %v", err)
+	}
+
+	req := &devices.LinkDeviceRequest{
+		VerificationCode: code.VerificationCode,
+	}
+
+	// Attempt to link using uuid1 (wrong owner) — must fail.
+	_, err = svc.LinkDeviceForAccount(context.Background(), "different-uuid", code.VerificationCode, req)
+	if err == nil {
+		t.Fatal("LinkDeviceForAccount: expected error when code belongs to a different account")
+	}
+}

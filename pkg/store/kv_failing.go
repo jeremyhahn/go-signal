@@ -46,6 +46,14 @@ func (f *FailingKVClient) Delete(ctx context.Context, key string) error {
 	return f.Delegate.Delete(ctx, key)
 }
 
+// DeleteIfPresent delegates to the underlying KVClient unless DeleteErr is set.
+func (f *FailingKVClient) DeleteIfPresent(ctx context.Context, key string) (bool, error) {
+	if f.DeleteErr != nil {
+		return false, f.DeleteErr
+	}
+	return f.Delegate.DeleteIfPresent(ctx, key)
+}
+
 // List delegates to the underlying KVClient unless ListErr is set.
 func (f *FailingKVClient) List(ctx context.Context, prefix string) ([]string, error) {
 	if f.ListErr != nil {

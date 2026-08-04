@@ -34,9 +34,10 @@ type reCAPTCHAResponse struct {
 // siteverify API. It supports both v2 (checkbox/invisible) and v3 (score-based)
 // tokens; the response Score and Action fields are populated for v3 only.
 type ReCAPTCHAVerifier struct {
-	secretKey *secrets.SecureString
-	endpoint  string
-	client    *http.Client
+	secretKey        *secrets.SecureString
+	endpoint         string
+	client           *http.Client
+	siteKeysByAction map[Action][]string
 }
 
 // ReCAPTCHAConfig holds the configuration for a ReCAPTCHAVerifier.
@@ -52,6 +53,10 @@ type ReCAPTCHAConfig struct {
 	// HTTPClient is the HTTP client used for outbound requests. When nil,
 	// a client with a 10 s timeout is used.
 	HTTPClient *http.Client
+
+	// SiteKeysByAction is the per-action allowlist of site keys the
+	// Checker enforces. nil = no restriction.
+	SiteKeysByAction map[Action][]string
 }
 
 // NewReCAPTCHAVerifier returns a configured ReCAPTCHAVerifier. It returns
@@ -72,10 +77,20 @@ func NewReCAPTCHAVerifier(cfg ReCAPTCHAConfig) (*ReCAPTCHAVerifier, error) {
 	}
 
 	return &ReCAPTCHAVerifier{
-		secretKey: cfg.SecretKey,
-		endpoint:  endpoint,
-		client:    client,
+		secretKey:        cfg.SecretKey,
+		endpoint:         endpoint,
+		client:           client,
+		siteKeysByAction: normalizeSiteKeys(cfg.SiteKeysByAction),
 	}, nil
+}
+
+// ValidSiteKeys returns the lower-cased allowlist for the given action, or
+// nil when no restriction is configured.
+func (v *ReCAPTCHAVerifier) ValidSiteKeys(action Action) []string {
+	if v.siteKeysByAction == nil {
+		return nil
+	}
+	return v.siteKeysByAction[action]
 }
 
 // Verify sends a POST request to the reCAPTCHA siteverify endpoint and returns

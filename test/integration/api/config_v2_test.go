@@ -20,34 +20,26 @@ func TestConfigV2_GetRemoteConfig(t *testing.T) {
 	var result map[string]any
 	decodeJSON(t, resp, &result)
 
-	config, ok := result["config"].([]any)
-	require.True(t, ok, "config should be an array")
+	// The canonical Java RemoteConfigurationResponse is
+	// `Map<String, String> config` — a name→value object, NOT an array.
+	config, ok := result["config"].(map[string]any)
+	require.True(t, ok, "config should be a JSON object (name→value map)")
 	require.GreaterOrEqual(t, len(config), 6, "should have at least 6 config items")
 
-	// Verify expected config item names are present.
-	expectedNames := map[string]bool{
-		"global.calling":    false,
-		"global.groupsv2":   false,
-		"global.storage":    false,
-		"global.senderKey":  false,
-		"global.stories":    false,
-		"global.giftBadges": false,
+	// The test environment seeds these global flags at 100%, so every
+	// account receives the value "TRUE".
+	expectedNames := []string{
+		"global.calling",
+		"global.groupsv2",
+		"global.storage",
+		"global.senderKey",
+		"global.stories",
+		"global.giftBadges",
 	}
-
-	for _, item := range config {
-		entry, ok := item.(map[string]any)
-		require.True(t, ok)
-		name, ok := entry["name"].(string)
-		require.True(t, ok)
-		if _, exists := expectedNames[name]; exists {
-			expectedNames[name] = true
-			assert.Equal(t, true, entry["enabled"], "config item %s should be enabled", name)
-			assert.Equal(t, "TRUE", entry["value"], "config item %s should have value TRUE", name)
-		}
-	}
-
-	for name, found := range expectedNames {
-		assert.True(t, found, "expected config item %s not found", name)
+	for _, name := range expectedNames {
+		value, present := config[name]
+		assert.True(t, present, "expected config item %s not found", name)
+		assert.Equal(t, "TRUE", value, "config item %s should have value TRUE", name)
 	}
 }
 

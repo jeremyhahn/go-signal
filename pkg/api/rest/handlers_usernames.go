@@ -3,6 +3,7 @@ package rest
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -54,9 +55,10 @@ func (s *Server) handleReserveUsernameHash(w http.ResponseWriter, r *http.Reques
 		hashes[i] = decoded
 	}
 
-	selectedHash, _, err := s.usernames.ReserveHash(r.Context(), acct.UUID, hashes)
+	selectedHash, reservationToken, err := s.usernames.ReserveHash(r.Context(), acct.UUID, hashes)
 	if err != nil {
-		if _, ok := err.(*usernames.UsernameHashConflictError); ok {
+		var conflict *usernames.UsernameHashConflictError
+		if errors.As(err, &conflict) {
 			writeError(w, http.StatusConflict, "all username hashes are taken")
 			return
 		}
@@ -67,8 +69,11 @@ func (s *Server) handleReserveUsernameHash(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// The reservation token must be returned so the client can echo it back
+	// in the confirm call (UsernameHashConfirmRequest.ReservationToken).
 	writeJSON(w, http.StatusOK, UsernameHashReserveResponse{
-		UsernameHash: base64.StdEncoding.EncodeToString(selectedHash),
+		UsernameHash:     base64.StdEncoding.EncodeToString(selectedHash),
+		ReservationToken: reservationToken,
 	})
 }
 
@@ -99,9 +104,26 @@ func (s *Server) handleConfirmUsernameHash(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := s.usernames.ConfirmHash(r.Context(), acct.UUID, hash, req.ReservationToken); err != nil {
-		if _, ok := err.(*usernames.InvalidReservationTokenError); ok {
+	if req.ZkProof == "" {
+		writeError(w, http.StatusBadRequest, "zkProof must not be empty")
+		return
+	}
+	zkProof, err := decodeBase64(req.ZkProof)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid base64 in zkProof")
+		return
+	}
+
+	if err := s.usernames.ConfirmHash(r.Context(), acct.UUID, hash, req.ReservationToken, zkProof); err != nil {
+		var invalidToken *usernames.InvalidReservationTokenError
+		var invalidProof *usernames.InvalidProofError
+		if errors.As(err, &invalidToken) {
 			writeError(w, http.StatusConflict, "invalid or expired reservation")
+			return
+		}
+		if errors.As(err, &invalidProof) {
+			// Java parity: 422 for an unverifiable ZK proof.
+			writeError(w, http.StatusUnprocessableEntity, "invalid zero-knowledge proof")
 			return
 		}
 		s.logger.Error("failed to confirm username hash",
@@ -111,7 +133,10 @@ func (s *Server) handleConfirmUsernameHash(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	// Echo the now-bound username hash, matching Java's UsernameHashResponse.
+	writeJSON(w, http.StatusOK, UsernameHashConfirmResponse{
+		UsernameHash: base64.StdEncoding.EncodeToString(hash),
+	})
 }
 
 // handleDeleteUsernameHash processes DELETE /v1/accounts/username_hash and
@@ -124,7 +149,8 @@ func (s *Server) handleDeleteUsernameHash(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := s.usernames.DeleteHash(r.Context(), acct.UUID); err != nil {
-		if _, ok := err.(*usernames.UsernameNotFoundError); ok {
+		var notFound *usernames.UsernameNotFoundError
+		if errors.As(err, &notFound) {
 			writeError(w, http.StatusNotFound, "no username hash set")
 			return
 		}
@@ -157,7 +183,8 @@ func (s *Server) handleLookupUsernameHash(w http.ResponseWriter, r *http.Request
 
 	accountUUID, err := s.usernames.LookupByHash(r.Context(), hash)
 	if err != nil {
-		if _, ok := err.(*usernames.UsernameNotFoundError); ok {
+		var notFound *usernames.UsernameNotFoundError
+		if errors.As(err, &notFound) {
 			writeError(w, http.StatusNotFound, "username hash not found")
 			return
 		}
@@ -205,7 +232,21 @@ func (s *Server) handleSetUsernameLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handle := uuid.New().String()
+	// Decide the handle. Java AccountController#updateUsernameLink reuses the
+	// existing handle when the client sets keepLinkHandle=true and the
+	// account already has one; otherwise a fresh UUID is minted. The link
+	// is only valid for accounts with a confirmed username hash — the
+	// manager checks that and returns *UsernameNotFoundError on miss, which
+	// we translate to 409 Conflict.
+	handle := ""
+	if req.KeepLinkHandle {
+		if existing, err := s.usernames.ExistingLinkHandle(r.Context(), acct.UUID); err == nil {
+			handle = existing
+		}
+	}
+	if handle == "" {
+		handle = uuid.New().String()
+	}
 
 	link := &usernames.UsernameLink{
 		UUID:               acct.UUID,
@@ -214,6 +255,11 @@ func (s *Server) handleSetUsernameLink(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.usernames.SetLink(r.Context(), link); err != nil {
+		var notFound *usernames.UsernameNotFoundError
+		if errors.As(err, &notFound) {
+			writeError(w, http.StatusConflict, "username not set for account")
+			return
+		}
 		s.logger.Error("failed to set username link",
 			slog.String("uuid", acct.UUID),
 			slog.String("error", err.Error()))
@@ -236,7 +282,8 @@ func (s *Server) handleDeleteUsernameLink(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := s.usernames.DeleteLink(r.Context(), acct.UUID); err != nil {
-		if _, ok := err.(*usernames.UsernameLinkNotFoundError); ok {
+		var linkNotFound *usernames.UsernameLinkNotFoundError
+		if errors.As(err, &linkNotFound) {
 			writeError(w, http.StatusNotFound, "no username link set")
 			return
 		}
@@ -263,7 +310,8 @@ func (s *Server) handleLookupUsernameLink(w http.ResponseWriter, r *http.Request
 
 	link, err := s.usernames.GetLink(r.Context(), handle)
 	if err != nil {
-		if _, ok := err.(*usernames.UsernameLinkNotFoundError); ok {
+		var linkNotFound *usernames.UsernameLinkNotFoundError
+		if errors.As(err, &linkNotFound) {
 			writeError(w, http.StatusNotFound, "username link not found")
 			return
 		}

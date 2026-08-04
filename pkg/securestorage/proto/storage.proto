@@ -1,0 +1,40 @@
+// Copyright 2026 Signal Messenger, LLC.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+syntax = "proto3";
+
+package org.signal.storage;
+option go_package = "github.com/jeremyhahn/go-signal/pkg/securestorage/storagepb;storagepb";
+
+// StorageItem is a single end-to-end-encrypted storage record. Both key and
+// value are opaque to the server.
+message StorageItem {
+  bytes key   = 1;
+  bytes value = 2;
+}
+
+// StorageItems is the response body for a read operation.
+message StorageItems {
+  repeated StorageItem items = 1;
+}
+
+// StorageManifest is the encrypted manifest plus its monotonically increasing
+// version. The value is opaque to the server.
+message StorageManifest {
+  uint64 version = 1;
+  bytes  value   = 2;
+}
+
+// ReadOperation requests the storage items for the given keys.
+message ReadOperation {
+  repeated bytes readKey = 1;
+}
+
+// WriteOperation atomically updates the manifest and inserts/deletes items.
+// clearAll deletes every existing item for the account before applying inserts.
+message WriteOperation {
+  StorageManifest manifest    = 1;
+  repeated StorageItem insertItem = 2;
+  repeated bytes deleteKey     = 3;
+  bool clearAll                = 4;
+}

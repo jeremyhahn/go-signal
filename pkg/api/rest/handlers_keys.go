@@ -3,9 +3,11 @@ package rest
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -13,8 +15,17 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/keys"
 )
 
+// maxOneTimePreKeysPerUpload bounds the number of one-time (EC and KEM)
+// pre-keys accepted in a single PUT /v2/keys upload, matching the Java
+// Signal-Server's KeysController maximum.
+const maxOneTimePreKeysPerUpload = 100
+
 // handleGetPreKeyCount processes GET /v2/keys and returns the count of
 // remaining one-time pre-keys for the authenticated user's primary device.
+//
+// The ?identity= query parameter selects which identity namespace (ACI or
+// PNI) to report counts for. It defaults to "aci" for backwards
+// compatibility, matching Java KeysController#getStatus.
 func (s *Server) handleGetPreKeyCount(w http.ResponseWriter, r *http.Request) {
 	acct := accountFromContext(r.Context())
 	if acct == nil {
@@ -22,10 +33,21 @@ func (s *Server) handleGetPreKeyCount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state, err := s.keys.GetPreKeyCount(r.Context(), acct.UUID, accounts.PrimaryDeviceID)
+	identity, err := parseIdentityQueryParam(r)
 	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	state, err := s.keys.GetPreKeyCountForIdentity(r.Context(), acct, identity, deviceIDFromContext(r.Context()))
+	if err != nil {
+		if errors.Is(err, keys.ErrIdentityNotSet) {
+			writeError(w, http.StatusBadRequest, "identity not set on account")
+			return
+		}
 		s.logger.Error("failed to get pre-key count",
 			slog.String("uuid", acct.UUID),
+			slog.String("identity", identity.String()),
 			slog.String("error", err.Error()))
 		writeError(w, http.StatusInternalServerError, "failed to get pre-key count")
 		return
@@ -41,10 +63,21 @@ func (s *Server) handleGetPreKeyCount(w http.ResponseWriter, r *http.Request) {
 
 // handleUploadKeys processes PUT /v2/keys and stores uploaded pre-keys for the
 // authenticated user's primary device.
+//
+// The ?identity= query parameter selects which identity namespace the keys
+// are uploaded into; signatures are verified against the matching identity
+// key (Account.IdentityKey for ACI, Account.PhoneNumberIdentityKey for PNI).
+// This mirrors Java KeysController#setKeys.
 func (s *Server) handleUploadKeys(w http.ResponseWriter, r *http.Request) {
 	acct := accountFromContext(r.Context())
 	if acct == nil {
 		writeError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+
+	identity, err := parseIdentityQueryParam(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -55,6 +88,14 @@ func (s *Server) handleUploadKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Bound the number of one-time pre-keys accepted per upload so a single
+	// request cannot inflate per-account key storage. Mirrors Java's
+	// KeysController maximum-key-count check.
+	if len(req.PreKeys) > maxOneTimePreKeysPerUpload || len(req.PqPreKeys) > maxOneTimePreKeysPerUpload {
+		writeError(w, http.StatusBadRequest, "too many pre-keys in request")
+		return
+	}
+
 	setReq, err := convertSetKeysRequest(&req)
 	if err != nil {
 		s.logger.Error("failed to convert keys request", slog.String("error", err.Error()))
@@ -62,23 +103,35 @@ func (s *Server) handleUploadKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	identityKey := identityKeyForType(acct, identity)
+	if len(identityKey) == 0 {
+		writeError(w, http.StatusBadRequest, "identity key not set on account")
+		return
+	}
+
 	// Validate signatures on all uploaded signed and KEM pre-keys against the
-	// account's identity key. This mirrors the Java isEverySignedKeyValid check.
+	// chosen identity's key. Mirrors Java's isEverySignedKeyValid check.
 	var signedSlice []*keys.SignedPreKey
 	if setReq.SignedPreKey != nil {
 		signedSlice = []*keys.SignedPreKey{setReq.SignedPreKey}
 	}
-	if err := keys.ValidateAllSignedKeys(acct.IdentityKey, signedSlice, setReq.KEMPreKeys); err != nil {
+	if err := keys.ValidateAllSignedKeys(identityKey, signedSlice, setReq.KEMPreKeys); err != nil {
 		s.logger.Warn("invalid pre-key signature on key upload",
 			slog.String("uuid", acct.UUID),
+			slog.String("identity", identity.String()),
 			slog.String("error", err.Error()))
 		writeError(w, http.StatusUnprocessableEntity, "invalid pre-key signature")
 		return
 	}
 
-	if err := s.keys.StoreKeys(r.Context(), acct.UUID, accounts.PrimaryDeviceID, setReq); err != nil {
+	if err := s.keys.StoreKeysForIdentity(r.Context(), acct, identity, deviceIDFromContext(r.Context()), setReq); err != nil {
+		if errors.Is(err, keys.ErrIdentityNotSet) {
+			writeError(w, http.StatusBadRequest, "identity not set on account")
+			return
+		}
 		s.logger.Error("failed to store keys",
 			slog.String("uuid", acct.UUID),
+			slog.String("identity", identity.String()),
 			slog.String("error", err.Error()))
 		writeError(w, http.StatusInternalServerError, "failed to store keys")
 		return
@@ -87,9 +140,55 @@ func (s *Server) handleUploadKeys(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// parseIdentityQueryParam reads the ?identity= query parameter from r and
+// returns the matching IdentityType. Empty value defaults to ACI; any other
+// value besides "aci"/"pni" produces a user-facing error suitable for HTTP 400.
+func parseIdentityQueryParam(r *http.Request) (accounts.IdentityType, error) {
+	v := r.URL.Query().Get("identity")
+	switch v {
+	case "", "aci", "ACI":
+		return accounts.IdentityTypeACI, nil
+	case "pni", "PNI":
+		return accounts.IdentityTypePNI, nil
+	default:
+		return 0, errInvalidIdentityQueryParam
+	}
+}
+
+// identityKeyForType returns the public identity key for the requested
+// namespace, or nil when the account has no value for that identity.
+func identityKeyForType(acct *accounts.Account, t accounts.IdentityType) []byte {
+	if acct == nil {
+		return nil
+	}
+	switch t {
+	case accounts.IdentityTypeACI:
+		return acct.IdentityKey
+	case accounts.IdentityTypePNI:
+		return acct.PhoneNumberIdentityKey
+	default:
+		return nil
+	}
+}
+
+// errInvalidIdentityQueryParam is returned when the ?identity= query
+// parameter is neither "aci" nor "pni".
+var errInvalidIdentityQueryParam = &identityQueryParamError{}
+
+type identityQueryParamError struct{}
+
+func (e *identityQueryParamError) Error() string {
+	return "identity must be aci or pni"
+}
+
 // handleGetPreKeys processes GET /v2/keys/{identifier}/{device_id} and returns
 // the pre-key bundle for the target account and device. The special device_id
 // "*" returns bundles for all devices.
+//
+// The identifier accepts three shapes, matching Java ServiceIdentifier parsing:
+//   - "ACI:<uuid>" — bundle from the ACI namespace, using Account.IdentityKey.
+//   - "PNI:<uuid>" — bundle from the PNI namespace, using Account.PhoneNumberIdentityKey.
+//   - bare "<uuid>" or "<E.164>" — legacy ACI default for backwards compatibility.
 func (s *Server) handleGetPreKeys(w http.ResponseWriter, r *http.Request) {
 	identifier := r.PathValue("identifier")
 	deviceIDStr := r.PathValue("device_id")
@@ -99,31 +198,36 @@ func (s *Server) handleGetPreKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The identifier must be either a well-formed UUID (account lookup by ACI)
-	// or a valid E.164 phone number (account lookup by number). Any other value
-	// is rejected to prevent path-traversal or injection via the identifier.
-	if _, err := uuid.Parse(identifier); err != nil && !isValidE164(identifier) {
-		writeError(w, http.StatusBadRequest, "invalid identifier")
+	identity, bare, err := parseServiceIdentifier(identifier)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	targetAcct, err := s.resolveAccount(r, identifier)
+	targetAcct, err := s.resolveAccountForIdentity(r, identity, bare)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "account not found")
 		return
 	}
 
+	identityKey := identityKeyForType(targetAcct, identity)
+	if len(identityKey) == 0 {
+		writeError(w, http.StatusNotFound, "identity key not set on account")
+		return
+	}
+
 	resp := PreKeyResponseEntity{
-		IdentityKey: base64.StdEncoding.EncodeToString(targetAcct.IdentityKey),
+		IdentityKey: base64.StdEncoding.EncodeToString(identityKey),
 	}
 
 	if deviceIDStr == "*" {
 		// Return pre-keys for all devices.
 		for _, dev := range targetAcct.Devices {
-			item, err := s.getPreKeyResponseItem(r, targetAcct.UUID, &dev)
+			item, err := s.getPreKeyResponseItem(r, targetAcct, identity, &dev)
 			if err != nil {
 				s.logger.Error("failed to get pre-keys for device",
 					slog.String("uuid", targetAcct.UUID),
+					slog.String("identity", identity.String()),
 					slog.Uint64("deviceId", dev.ID),
 					slog.String("error", err.Error()))
 				continue
@@ -143,10 +247,11 @@ func (s *Server) handleGetPreKeys(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		item, err := s.getPreKeyResponseItem(r, targetAcct.UUID, dev)
+		item, err := s.getPreKeyResponseItem(r, targetAcct, identity, dev)
 		if err != nil {
 			s.logger.Error("failed to get pre-keys",
 				slog.String("uuid", targetAcct.UUID),
+				slog.String("identity", identity.String()),
 				slog.Uint64("deviceId", deviceID),
 				slog.String("error", err.Error()))
 			writeError(w, http.StatusNotFound, "pre-keys not available")
@@ -163,17 +268,68 @@ func (s *Server) handleGetPreKeys(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// parseServiceIdentifier interprets the {identifier} path parameter, returning
+// the identity namespace and the bare lookup value. It accepts:
+//
+//   - "ACI:<uuid>" → (IdentityTypeACI, "<uuid>")
+//   - "PNI:<uuid>" → (IdentityTypePNI, "<uuid>")
+//   - bare UUID or E.164 → (IdentityTypeACI, "<value>") for legacy clients
+//
+// Any other shape is rejected so the handler can return 400 cleanly.
+func parseServiceIdentifier(s string) (accounts.IdentityType, string, error) {
+	switch {
+	case strings.HasPrefix(s, "ACI:"):
+		bare := strings.TrimPrefix(s, "ACI:")
+		if _, err := uuid.Parse(bare); err != nil {
+			return 0, "", errInvalidServiceIdentifier
+		}
+		return accounts.IdentityTypeACI, bare, nil
+	case strings.HasPrefix(s, "PNI:"):
+		bare := strings.TrimPrefix(s, "PNI:")
+		if _, err := uuid.Parse(bare); err != nil {
+			return 0, "", errInvalidServiceIdentifier
+		}
+		return accounts.IdentityTypePNI, bare, nil
+	}
+	// Legacy bare identifier — UUID or E.164. Treat as ACI.
+	if _, err := uuid.Parse(s); err == nil {
+		return accounts.IdentityTypeACI, s, nil
+	}
+	if isValidE164(s) {
+		return accounts.IdentityTypeACI, s, nil
+	}
+	return 0, "", errInvalidServiceIdentifier
+}
+
+// errInvalidServiceIdentifier is returned by parseServiceIdentifier for any
+// shape we cannot interpret as ACI:<uuid>, PNI:<uuid>, bare UUID, or E.164.
+var errInvalidServiceIdentifier = &serviceIdentifierError{}
+
+type serviceIdentifierError struct{}
+
+func (e *serviceIdentifierError) Error() string { return "invalid identifier" }
+
+// resolveAccountForIdentity finds the target account for a parsed
+// ServiceIdentifier. PNI lookups go through GetByPNI; ACI and bare lookups
+// reuse the existing UUID-or-E.164 resolver.
+func (s *Server) resolveAccountForIdentity(r *http.Request, identity accounts.IdentityType, bare string) (*accounts.Account, error) {
+	if identity == accounts.IdentityTypePNI {
+		return s.accounts.GetByPNI(r.Context(), bare)
+	}
+	return s.resolveAccount(r, bare)
+}
+
 // getPreKeyResponseItem retrieves the pre-key bundle for a single device and
 // converts it to an API response entity.
-func (s *Server) getPreKeyResponseItem(r *http.Request, uuid string, dev *accounts.Device) (*PreKeyResponseItemEntity, error) {
-	item, err := s.keys.GetPreKeys(r.Context(), uuid, dev.ID)
+func (s *Server) getPreKeyResponseItem(r *http.Request, target *accounts.Account, identity accounts.IdentityType, dev *accounts.Device) (*PreKeyResponseItemEntity, error) {
+	item, err := s.keys.GetPreKeysForIdentity(r.Context(), target, identity, dev.ID)
 	if err != nil {
 		return nil, err
 	}
 
 	entity := &PreKeyResponseItemEntity{
 		DeviceId:       dev.ID,
-		RegistrationId: dev.RegistrationID,
+		RegistrationId: deviceRegistrationIDForIdentity(dev, identity),
 	}
 
 	if item.SignedPreKey != nil {
@@ -200,6 +356,34 @@ func (s *Server) getPreKeyResponseItem(r *http.Request, uuid string, dev *accoun
 	}
 
 	return entity, nil
+}
+
+// deviceRegistrationIDForIdentity returns the appropriate registration ID
+// for the device in the requested namespace. Java's Device exposes
+// getRegistrationId(IdentityType) which returns the PNI-specific value when
+// identity == PNI; we mirror that so the bundle's registrationId matches the
+// identity the client is establishing a session against.
+func deviceRegistrationIDForIdentity(dev *accounts.Device, identity accounts.IdentityType) uint32 {
+	if dev == nil {
+		return 0
+	}
+	if identity == accounts.IdentityTypePNI {
+		return dev.PhoneNumberIdentityRegistrationID
+	}
+	return dev.RegistrationID
+}
+
+// resolveAccountByServiceIdentifier parses a raw service identifier
+// (ACI:<uuid>, PNI:<uuid>, bare UUID, or E.164) and resolves the matching
+// account, routing PNI identifiers through the by-PNI index. It is used by the
+// optional-auth (sealed-sender) middleware so that UAK lookups succeed for
+// every identifier shape rather than only a bare ACI UUID.
+func (s *Server) resolveAccountByServiceIdentifier(r *http.Request, raw string) (*accounts.Account, error) {
+	identity, bare, err := parseServiceIdentifier(raw)
+	if err != nil {
+		return nil, err
+	}
+	return s.resolveAccountForIdentity(r, identity, bare)
 }
 
 // resolveAccount looks up an account by UUID first, then by phone number.

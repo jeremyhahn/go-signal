@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 
@@ -21,9 +20,9 @@ var listIdentitiesCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
-		identities, err := client.ListIdentities(context.Background())
+		identities, err := client.ListIdentities(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -32,7 +31,7 @@ var listIdentitiesCmd = &cobra.Command{
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(identities)
 		}
 		for _, id := range identities {
-			fmt.Fprintf(cmd.OutOrStdout(), "%s: %s (%s)\n", id.Number, id.Fingerprint, id.TrustLevel)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: %s (%s)\n", id.Number, id.Fingerprint, id.TrustLevel)
 		}
 		return nil
 	},
@@ -47,7 +46,7 @@ var trustCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer client.Close()
-		return client.TrustIdentity(context.Background(), args[0])
+		defer func() { _ = client.Close() }()
+		return client.TrustIdentity(cmd.Context(), args[0])
 	},
 }

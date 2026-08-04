@@ -365,6 +365,7 @@ func TestRecord_GUIDCapPreventsUnboundedGrowth(t *testing.T) {
 
 	if b == nil {
 		t.Fatal("expected bucket to exist")
+		return
 	}
 
 	b.mu.Lock()

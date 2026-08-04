@@ -1,0 +1,62 @@
+// Copyright 2026 Signal Messenger, LLC.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+syntax = "proto3";
+
+package org.signal.cdsi;
+option go_package = "github.com/jeremyhahn/go-signal/pkg/api/grpc/genproto/cdsi;cdsipb";
+
+// CDSI (Contact Discovery Service v2) client wire protocol.
+//
+// Minimum-viable port of the Signal CDSI server protocol per the Phase
+// 4.3 plan: authenticated rate-limited batch lookup with Noise-boxed
+// payloads. Mobile clients connect directly via WebSocket; signald is
+// not on the call path.
+//
+// The numeric wire layouts inside e164s_bytes / aci_uak_pairs /
+// e164_pni_aci_triples match the Rust libsignal FixedLengthSerializable
+// constants (see go-libsignal/pkg/net/cdsi.go for the matching Go
+// serializers).
+
+message ClientRequest {
+  // e164s_bytes is a packed array of E.164 phone numbers to look up.
+  // Each entry is 8 bytes (big-endian uint64). Combined with
+  // prev_e164s_bytes, this is the universe of phone numbers the client
+  // wants resolved to (PNI, ACI) tuples.
+  bytes e164s_bytes = 1;
+
+  // prev_e164s_bytes is the packed E.164 array that was sent in a
+  // previous request whose token the caller now presents. Empty for
+  // the initial request.
+  bytes prev_e164s_bytes = 2;
+
+  // aci_uak_pairs is a packed array of (ACI || access_key) tuples,
+  // 32 bytes each. The server uses these to verify the caller has
+  // the right to learn an ACI's PNI.
+  bytes aci_uak_pairs = 3;
+
+  // token is a continuation token from a prior response. Empty for
+  // the initial request.
+  bytes token = 4;
+
+  // token_ack is true when the client has finished consuming a
+  // previous response and acknowledges the new token. Used by some
+  // CDSI deployments to free server-side state.
+  bool token_ack = 5;
+}
+
+message ClientResponse {
+  // e164_pni_aci_triples is a packed array of 40-byte tuples:
+  // 8 bytes E.164 || 16 bytes PNI || 16 bytes ACI. All-zero UUID
+  // bytes mean "absent" (e.g. number not registered, or caller has
+  // no permission to learn the ACI).
+  bytes e164_pni_aci_triples = 1;
+
+  // token is the continuation token the client can echo in its next
+  // ClientRequest to resume from this position.
+  bytes token = 2;
+
+  // debug_permits_used is the number of rate-limit permits this
+  // lookup consumed. Diagnostic only.
+  int32 debug_permits_used = 3;
+}

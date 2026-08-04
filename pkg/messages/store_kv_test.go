@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -370,4 +371,70 @@ func TestKVMessageStore_DeleteByPrefix_NonKNFDeleteError(t *testing.T) {
 
 func TestKVMessageStore_ImplementsMessageStore(t *testing.T) {
 	var _ MessageStore = &KVMessageStore{}
+}
+
+// scanCountingKVClient wraps store.KVClient and tracks how many entries
+// Scan visited. Used to prove HasMessagesForDevice exits on the
+// first hit instead of iterating the entire queue.
+type scanCountingKVClient struct {
+	store.KVClient
+	scanCallbacks int
+}
+
+func (c *scanCountingKVClient) Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error {
+	return c.KVClient.Scan(ctx, prefix, func(key string, value []byte) error {
+		c.scanCallbacks++
+		return fn(key, value)
+	})
+}
+
+// TestKVMessageStore_HasMessagesForDevice_StopsOnFirstHit verifies
+// the early-exit path: a device with 25 queued envelopes should
+// produce exactly one Scan callback. The earlier implementation used
+// List(), which materialised every key under the prefix.
+func TestKVMessageStore_HasMessagesForDevice_StopsOnFirstHit(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	kv := &scanCountingKVClient{KVClient: store.NewMemoryKVClient()}
+	s := NewKVMessageStore(kv)
+	for i := 0; i < 25; i++ {
+		_, err := s.Insert(ctx, "dest-uuid", 1, testEnvelope("guid-"+time.Duration(i).String()))
+		require.NoError(t, err)
+	}
+	kv.scanCallbacks = 0
+	has, err := s.HasMessagesForDevice(ctx, "dest-uuid", 1)
+	require.NoError(t, err)
+	assert.True(t, has)
+	assert.Equal(t, 1, kv.scanCallbacks, "Scan should stop after first hit")
+}
+
+// TestKVMessageStore_HasMessagesForDevice_EmptyQueue confirms a
+// clean (false, nil) return when nothing is queued.
+func TestKVMessageStore_HasMessagesForDevice_EmptyQueue(t *testing.T) {
+	t.Parallel()
+	s, _ := newTestMessageStore()
+	has, err := s.HasMessagesForDevice(context.Background(), "dest-uuid", 1)
+	require.NoError(t, err)
+	assert.False(t, has)
+}
+
+// TestKVMessageStore_HasMessagesForDevice_ScanError ensures the
+// underlying Scan error (when distinct from the early-exit sentinel)
+// surfaces to the caller.
+func TestKVMessageStore_HasMessagesForDevice_ScanError(t *testing.T) {
+	fkv := store.NewFailingKVClient()
+	fkv.ScanErr = errors.New("scan failure")
+	s := NewKVMessageStore(fkv)
+	_, err := s.HasMessagesForDevice(context.Background(), "dest-uuid", 1)
+	require.Error(t, err)
+	assert.Equal(t, "scan failure", err.Error())
+}
+
+// TestKVMessageStore_RemoveExpired_NoOpReturnsZero documents the KV backend
+// keeps no per-row expiration metadata, so the uniform sweep is a no-op.
+func TestKVMessageStore_RemoveExpired_NoOpReturnsZero(t *testing.T) {
+	s, _ := newTestMessageStore()
+	n, err := s.RemoveExpired(context.Background(), time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), n)
 }

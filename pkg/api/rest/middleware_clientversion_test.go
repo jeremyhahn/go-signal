@@ -129,6 +129,7 @@ func TestClientVersionFromContext_ReturnsStoredVersion(t *testing.T) {
 	got := ClientVersionFromContext(ctx)
 	if got == nil {
 		t.Fatal("expected non-nil ClientVersion from context")
+		return
 	}
 	if got.Version != "5.0.0" {
 		t.Errorf("expected Version '5.0.0', got %q", got.Version)

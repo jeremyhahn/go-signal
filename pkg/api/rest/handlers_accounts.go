@@ -2,10 +2,14 @@ package rest
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
+	"github.com/google/uuid"
+
 	"github.com/jeremyhahn/go-signal/pkg/accounts"
+	"github.com/jeremyhahn/go-signal/pkg/audit"
 )
 
 // handleWhoAmI processes GET /v1/accounts/whoami and returns the authenticated
@@ -20,7 +24,7 @@ func (s *Server) handleWhoAmI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, WhoAmIResponse{
 		UUID:   acct.UUID,
 		Number: acct.Number,
-		PNI:    "PNI:" + acct.UUID,
+		PNI:    accounts.ServiceIdentifierString(accounts.IdentityTypePNI, acct.PNI),
 	})
 }
 
@@ -62,7 +66,7 @@ func (s *Server) handleSetAccountAttributes(w http.ResponseWriter, r *http.Reque
 		attrs.RegistrationID = &regID
 	}
 
-	updatedAcct, err := s.accounts.SetDeviceAttributes(r.Context(), acct.UUID, accounts.PrimaryDeviceID, attrs)
+	updatedAcct, err := s.accounts.SetDeviceAttributes(r.Context(), acct.UUID, deviceIDFromContext(r.Context()), attrs)
 	if err != nil {
 		s.logger.Error("failed to set device attributes",
 			slog.String("uuid", acct.UUID),
@@ -93,7 +97,10 @@ func (s *Server) handleSetAccountAttributes(w http.ResponseWriter, r *http.Reque
 // pattern where the endpoint works regardless of auth state.
 func (s *Server) handleAccountExists(w http.ResponseWriter, r *http.Request) {
 	identifier := r.PathValue("identifier")
-	if identifier == "" {
+	// Validate the identifier shape before touching the store so an
+	// arbitrary string can't be probed against the KV keyspace. Only a UUID
+	// or an E.164 number is a valid account identifier here.
+	if _, err := uuid.Parse(identifier); err != nil && !isValidE164(identifier) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -112,6 +119,9 @@ func (s *Server) handleAccountExists(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
 	acct := accountFromContext(r.Context())
 	if acct == nil {
+		if s.audit != nil {
+			s.audit.Denied(r.Context(), audit.ActionDeleteAccount, "", nil)
+		}
 		writeError(w, http.StatusUnauthorized, "not authenticated")
 		return
 	}
@@ -120,10 +130,17 @@ func (s *Server) handleDeleteAccount(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("failed to delete account",
 			slog.String("uuid", acct.UUID),
 			slog.String("error", err.Error()))
+		if s.audit != nil {
+			s.audit.Failure(r.Context(), audit.ActionDeleteAccount, acct.UUID,
+				map[string]any{"error": err.Error()})
+		}
 		writeError(w, http.StatusInternalServerError, "failed to delete account")
 		return
 	}
 
+	if s.audit != nil {
+		s.audit.Success(r.Context(), audit.ActionDeleteAccount, acct.UUID, nil)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -147,7 +164,7 @@ func (s *Server) handleRegisterGcm(w http.ResponseWriter, r *http.Request) {
 		GcmRegistrationID: req.GcmRegistrationID,
 	}
 
-	if _, err := s.accounts.SetDeviceAttributes(r.Context(), acct.UUID, accounts.PrimaryDeviceID, attrs); err != nil {
+	if _, err := s.accounts.SetDeviceAttributes(r.Context(), acct.UUID, deviceIDFromContext(r.Context()), attrs); err != nil {
 		s.logger.Error("failed to register GCM",
 			slog.String("uuid", acct.UUID),
 			slog.String("error", err.Error()))
@@ -167,14 +184,17 @@ func (s *Server) handleUnregisterGcm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	primary := acct.PrimaryDevice()
-	if primary == nil {
-		writeError(w, http.StatusNotFound, "primary device not found")
+	deviceID := deviceIDFromContext(r.Context())
+	if acct.GetDevice(deviceID) == nil {
+		writeError(w, http.StatusNotFound, "device not found")
 		return
 	}
-
-	primary.GcmRegistrationID = ""
-	if err := s.accounts.Update(r.Context(), acct); err != nil {
+	if _, err := s.accounts.ClearGcmRegistration(r.Context(), acct.UUID, deviceID); err != nil {
+		var notFound *accounts.DeviceNotFoundError
+		if errors.As(err, &notFound) {
+			writeError(w, http.StatusNotFound, "device not found")
+			return
+		}
 		s.logger.Error("failed to unregister GCM",
 			slog.String("uuid", acct.UUID),
 			slog.String("error", err.Error()))
@@ -206,7 +226,7 @@ func (s *Server) handleRegisterApn(w http.ResponseWriter, r *http.Request) {
 		VoipApnRegistrationID: req.VoipRegistrationID,
 	}
 
-	if _, err := s.accounts.SetDeviceAttributes(r.Context(), acct.UUID, accounts.PrimaryDeviceID, attrs); err != nil {
+	if _, err := s.accounts.SetDeviceAttributes(r.Context(), acct.UUID, deviceIDFromContext(r.Context()), attrs); err != nil {
 		s.logger.Error("failed to register APN",
 			slog.String("uuid", acct.UUID),
 			slog.String("error", err.Error()))
@@ -226,15 +246,17 @@ func (s *Server) handleUnregisterApn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	primary := acct.PrimaryDevice()
-	if primary == nil {
-		writeError(w, http.StatusNotFound, "primary device not found")
+	deviceID := deviceIDFromContext(r.Context())
+	if acct.GetDevice(deviceID) == nil {
+		writeError(w, http.StatusNotFound, "device not found")
 		return
 	}
-
-	primary.ApnRegistrationID = ""
-	primary.VoipApnRegistrationID = ""
-	if err := s.accounts.Update(r.Context(), acct); err != nil {
+	if _, err := s.accounts.ClearApnRegistration(r.Context(), acct.UUID, deviceID); err != nil {
+		var notFound *accounts.DeviceNotFoundError
+		if errors.As(err, &notFound) {
+			writeError(w, http.StatusNotFound, "device not found")
+			return
+		}
 		s.logger.Error("failed to unregister APN",
 			slog.String("uuid", acct.UUID),
 			slog.String("error", err.Error()))

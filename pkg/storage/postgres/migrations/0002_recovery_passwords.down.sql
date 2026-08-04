@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS registration_recovery_passwords_expires_idx;
+DROP TABLE IF EXISTS registration_recovery_passwords;

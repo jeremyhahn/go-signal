@@ -2,8 +2,9 @@ package accounts
 
 import (
 	"errors"
-	"fmt"
 	"testing"
+
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
 func TestAccountNotFoundError_Error(t *testing.T) {
@@ -326,13 +327,13 @@ func TestRegistrationLockError_Error(t *testing.T) {
 		{
 			name:        "with cause",
 			accountUUID: "uuid-rl",
-			cause:       fmt.Errorf("entropy exhausted"),
+			cause:       errors.New("entropy exhausted"),
 			want:        "registration lock error for account uuid-rl: entropy exhausted",
 		},
 		{
 			name:        "nested error",
 			accountUUID: "uuid-nested",
-			cause:       fmt.Errorf("inner: %w", fmt.Errorf("root cause")),
+			cause:       signalerrors.Wrap(signalerrors.ErrInternal, "inner", errors.New("root cause")),
 			want:        "registration lock error for account uuid-nested: inner: root cause",
 		},
 	}
@@ -348,7 +349,7 @@ func TestRegistrationLockError_Error(t *testing.T) {
 }
 
 func TestRegistrationLockError_Unwrap(t *testing.T) {
-	cause := fmt.Errorf("underlying error")
+	cause := errors.New("underlying error")
 	e := &RegistrationLockError{AccountUUID: "uuid-1", Cause: cause}
 
 	unwrapped := e.Unwrap()
@@ -358,8 +359,8 @@ func TestRegistrationLockError_Unwrap(t *testing.T) {
 }
 
 func TestRegistrationLockError_ErrorsIs(t *testing.T) {
-	root := fmt.Errorf("root")
-	wrapped := fmt.Errorf("mid: %w", root)
+	root := errors.New("root")
+	wrapped := signalerrors.Wrap(signalerrors.ErrInternal, "mid", root)
 	e := &RegistrationLockError{AccountUUID: "u", Cause: wrapped}
 
 	if !errors.Is(e, root) {
@@ -368,7 +369,7 @@ func TestRegistrationLockError_ErrorsIs(t *testing.T) {
 }
 
 func TestRegistrationLockError_TypeAssertion(t *testing.T) {
-	var err error = &RegistrationLockError{AccountUUID: "acc-rl", Cause: fmt.Errorf("fail")}
+	var err error = &RegistrationLockError{AccountUUID: "acc-rl", Cause: errors.New("fail")}
 
 	var target *RegistrationLockError
 	if !errors.As(err, &target) {
@@ -376,5 +377,85 @@ func TestRegistrationLockError_TypeAssertion(t *testing.T) {
 	}
 	if target.AccountUUID != "acc-rl" {
 		t.Errorf("AccountUUID = %q, want %q", target.AccountUUID, "acc-rl")
+	}
+}
+
+// --- NumberChangeRollbackError ---
+
+func TestNumberChangeRollbackError_Error(t *testing.T) {
+	tests := []struct {
+		name          string
+		displacedUUID string
+		updateErr     error
+		restoreErr    error
+		want          string
+	}{
+		{
+			name:          "both errors populated",
+			displacedUUID: "uuid-displaced",
+			updateErr:     errors.New("update failed"),
+			restoreErr:    errors.New("restore failed"),
+			want:          "number change failed and displaced account uuid-displaced could not be restored: update error: update failed; restore error: restore failed",
+		},
+		{
+			name:          "empty displaced uuid",
+			displacedUUID: "",
+			updateErr:     errors.New("update err"),
+			restoreErr:    errors.New("restore err"),
+			want:          "number change failed and displaced account  could not be restored: update error: update err; restore error: restore err",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := &NumberChangeRollbackError{
+				DisplacedUUID: tt.displacedUUID,
+				UpdateErr:     tt.updateErr,
+				RestoreErr:    tt.restoreErr,
+			}
+			got := e.Error()
+			if got != tt.want {
+				t.Errorf("NumberChangeRollbackError.Error() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNumberChangeRollbackError_Unwrap(t *testing.T) {
+	updateErr := errors.New("the update error")
+	e := &NumberChangeRollbackError{
+		DisplacedUUID: "uuid-1",
+		UpdateErr:     updateErr,
+		RestoreErr:    errors.New("restore err"),
+	}
+	if got := e.Unwrap(); got != updateErr {
+		t.Errorf("Unwrap() = %v, want %v", got, updateErr)
+	}
+}
+
+func TestNumberChangeRollbackError_ErrorsIsUpdateErr(t *testing.T) {
+	root := errors.New("root cause")
+	wrapped := signalerrors.Wrap(signalerrors.ErrInternal, "wrapped", root)
+	e := &NumberChangeRollbackError{
+		DisplacedUUID: "uuid-2",
+		UpdateErr:     wrapped,
+		RestoreErr:    errors.New("restore"),
+	}
+	if !errors.Is(e, root) {
+		t.Error("expected errors.Is to find root cause via Unwrap chain")
+	}
+}
+
+func TestNumberChangeRollbackError_TypeAssertion(t *testing.T) {
+	var err error = &NumberChangeRollbackError{
+		DisplacedUUID: "uuid-3",
+		UpdateErr:     errors.New("up"),
+		RestoreErr:    errors.New("re"),
+	}
+	var target *NumberChangeRollbackError
+	if !errors.As(err, &target) {
+		t.Fatal("expected errors.As to succeed for *NumberChangeRollbackError")
+	}
+	if target.DisplacedUUID != "uuid-3" {
+		t.Errorf("DisplacedUUID = %q, want uuid-3", target.DisplacedUUID)
 	}
 }

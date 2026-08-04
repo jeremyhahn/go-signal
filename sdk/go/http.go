@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
 // doRequest performs an HTTP request to the Signal server and decodes the
@@ -18,14 +20,14 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, r
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("marshal request: %w", err)
+			return signalerrors.Wrap(signalerrors.ErrInternal, "marshal request", err)
 		}
 		bodyReader = bytes.NewReader(data)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "create request", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -50,9 +52,9 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, r
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("request %s %s: %w", method, path, err)
+		return signalerrors.Wrap(signalerrors.ErrUnavailable, "request "+method+" "+path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -64,7 +66,7 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, r
 
 	if result != nil && resp.StatusCode != http.StatusNoContent {
 		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
-			return fmt.Errorf("decode response: %w", err)
+			return signalerrors.Wrap(signalerrors.ErrInternal, "decode response", err)
 		}
 	}
 
@@ -80,14 +82,14 @@ func (c *Client) doRequestWithAuth(ctx context.Context, method, path string, use
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("marshal request: %w", err)
+			return signalerrors.Wrap(signalerrors.ErrInternal, "marshal request", err)
 		}
 		bodyReader = bytes.NewReader(data)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "create request", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -96,9 +98,9 @@ func (c *Client) doRequestWithAuth(ctx context.Context, method, path string, use
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("request %s %s: %w", method, path, err)
+		return signalerrors.Wrap(signalerrors.ErrUnavailable, "request "+method+" "+path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -110,7 +112,7 @@ func (c *Client) doRequestWithAuth(ctx context.Context, method, path string, use
 
 	if result != nil && resp.StatusCode != http.StatusNoContent {
 		if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
-			return fmt.Errorf("decode response: %w", err)
+			return signalerrors.Wrap(signalerrors.ErrInternal, "decode response", err)
 		}
 	}
 

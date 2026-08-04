@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -23,9 +24,10 @@ func (s *Server) handleGetStickerPackForm(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	form, err := s.stickers.GetUploadForm(r.Context(), count)
+	form, err := s.stickers.GetUploadForm(r.Context(), acct.UUID, count)
 	if err != nil {
-		if _, ok := err.(*stickers.InvalidStickerCountError); ok {
+		var invalidCount *stickers.InvalidStickerCountError
+		if errors.As(err, &invalidCount) {
 			writeError(w, http.StatusBadRequest, "invalid sticker count")
 			return
 		}

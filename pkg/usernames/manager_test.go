@@ -2,11 +2,49 @@ package usernames
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"log/slog"
 	"sync"
 	"testing"
+
+	libsignalusernames "github.com/jeremyhahn/go-libsignal/pkg/usernames"
 )
+
+// validHashAndProof returns a 32-byte username hash and a matching ZK proof
+// suitable for ConfirmHash tests. The same nickname is used throughout the
+// suite so tests reading these values are deterministic; freshness comes from
+// the random `randomness` value passed to Username.Proof.
+func validHashAndProof(t *testing.T) ([]byte, []byte) {
+	t.Helper()
+	u, err := libsignalusernames.FromParts("alicetest", "01", libsignalusernames.DefaultNicknameLimits())
+	if err != nil {
+		t.Fatalf("FromParts: %v", err)
+	}
+	hash := u.Hash()
+	var randomness [32]byte
+	if _, err := rand.Read(randomness[:]); err != nil {
+		t.Fatalf("rand.Read: %v", err)
+	}
+	proof, err := u.Proof(randomness)
+	if err != nil {
+		t.Fatalf("Proof: %v", err)
+	}
+	out := make([]byte, 32)
+	copy(out, hash[:])
+	return out, proof
+}
+
+// dummyProof returns 64 arbitrary bytes that are the right size for a ZK
+// proof but won't verify against any hash. Useful for tests that only need
+// non-empty proof bytes to clear the input-validation check.
+func dummyProof() []byte {
+	out := make([]byte, 64)
+	for i := range out {
+		out[i] = byte(i)
+	}
+	return out
+}
 
 // discardWriter is an io.Writer that discards all output.
 type discardWriter struct{}
@@ -136,6 +174,33 @@ func (s *mockUsernameStore) DeleteLink(_ context.Context, uuid string) error {
 	return nil
 }
 
+func (s *mockUsernameStore) HashForUUID(_ context.Context, uuid string) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for hashStr, u := range s.confirmed {
+		if u == uuid {
+			out := []byte(hashStr)
+			return out, nil
+		}
+	}
+	return nil, &UsernameNotFoundError{Hash: []byte(uuid)}
+}
+
+func (s *mockUsernameStore) LinkForUUID(_ context.Context, uuid string) (*UsernameLink, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	link, ok := s.linksByUUID[uuid]
+	if !ok {
+		return nil, &UsernameLinkNotFoundError{Handle: uuid}
+	}
+	out := *link
+	return &out, nil
+}
+
+func (s *mockUsernameStore) DeleteExpiredReservations(_ context.Context) (int, error) {
+	return 0, nil
+}
+
 func TestNewUsernamesManager(t *testing.T) {
 	t.Run("creates manager", func(t *testing.T) {
 		store := newMockUsernameStore()
@@ -263,7 +328,8 @@ func TestConfirmHash_Success(t *testing.T) {
 	m := NewUsernamesManager(store, newTestLogger())
 	ctx := context.Background()
 
-	err := m.ConfirmHash(ctx, "uuid-1", []byte{1, 2, 3}, "token-1")
+	hash, proof := validHashAndProof(t)
+	err := m.ConfirmHash(ctx, "uuid-1", hash, "token-1", proof)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -274,7 +340,7 @@ func TestConfirmHash_EmptyUUID(t *testing.T) {
 	m := NewUsernamesManager(store, newTestLogger())
 	ctx := context.Background()
 
-	err := m.ConfirmHash(ctx, "", []byte{1}, "token")
+	err := m.ConfirmHash(ctx, "", []byte{1}, "token", dummyProof())
 	if err == nil {
 		t.Fatal("expected error for empty UUID")
 	}
@@ -292,7 +358,7 @@ func TestConfirmHash_EmptyHash(t *testing.T) {
 	m := NewUsernamesManager(store, newTestLogger())
 	ctx := context.Background()
 
-	err := m.ConfirmHash(ctx, "uuid-1", []byte{}, "token")
+	err := m.ConfirmHash(ctx, "uuid-1", []byte{}, "token", dummyProof())
 	if err == nil {
 		t.Fatal("expected error for empty hash")
 	}
@@ -310,7 +376,7 @@ func TestConfirmHash_NilHash(t *testing.T) {
 	m := NewUsernamesManager(store, newTestLogger())
 	ctx := context.Background()
 
-	err := m.ConfirmHash(ctx, "uuid-1", nil, "token")
+	err := m.ConfirmHash(ctx, "uuid-1", nil, "token", dummyProof())
 	if err == nil {
 		t.Fatal("expected error for nil hash")
 	}
@@ -325,7 +391,7 @@ func TestConfirmHash_EmptyToken(t *testing.T) {
 	m := NewUsernamesManager(store, newTestLogger())
 	ctx := context.Background()
 
-	err := m.ConfirmHash(ctx, "uuid-1", []byte{1}, "")
+	err := m.ConfirmHash(ctx, "uuid-1", []byte{1}, "", dummyProof())
 	if err == nil {
 		t.Fatal("expected error for empty token")
 	}
@@ -338,13 +404,53 @@ func TestConfirmHash_EmptyToken(t *testing.T) {
 	}
 }
 
+func TestConfirmHash_EmptyProof(t *testing.T) {
+	m := NewUsernamesManager(newMockUsernameStore(), newTestLogger())
+	hash, _ := validHashAndProof(t)
+	err := m.ConfirmHash(context.Background(), "uuid-1", hash, "tok", nil)
+	if err == nil {
+		t.Fatal("expected error for empty proof")
+	}
+	var target *InvalidArgumentError
+	if !errors.As(err, &target) || target.Field != "zkProof" {
+		t.Errorf("expected InvalidArgumentError on zkProof, got %v", err)
+	}
+}
+
+func TestConfirmHash_HashWrongLength(t *testing.T) {
+	m := NewUsernamesManager(newMockUsernameStore(), newTestLogger())
+	err := m.ConfirmHash(context.Background(), "uuid-1", []byte{1, 2, 3}, "tok", dummyProof())
+	if err == nil {
+		t.Fatal("expected error for wrong-length hash")
+	}
+	var target *InvalidArgumentError
+	if !errors.As(err, &target) || target.Field != "hash" {
+		t.Errorf("expected InvalidArgumentError on hash, got %v", err)
+	}
+}
+
+func TestConfirmHash_InvalidProof_Rejected(t *testing.T) {
+	m := NewUsernamesManager(newMockUsernameStore(), newTestLogger())
+	hash, _ := validHashAndProof(t)
+	// dummyProof() is non-empty but won't verify against `hash`.
+	err := m.ConfirmHash(context.Background(), "uuid-1", hash, "tok", dummyProof())
+	if err == nil {
+		t.Fatal("expected error for unverifiable proof")
+	}
+	var target *InvalidProofError
+	if !errors.As(err, &target) {
+		t.Errorf("expected *InvalidProofError, got %T: %v", err, err)
+	}
+}
+
 func TestConfirmHash_StoreError(t *testing.T) {
 	store := newMockUsernameStore()
 	store.confirmErr = errors.New("confirm failure")
 	m := NewUsernamesManager(store, newTestLogger())
 	ctx := context.Background()
+	hash, proof := validHashAndProof(t)
 
-	err := m.ConfirmHash(ctx, "uuid-1", []byte{1}, "token")
+	err := m.ConfirmHash(ctx, "uuid-1", hash, "token", proof)
 	if err == nil {
 		t.Fatal("expected error from store")
 	}
@@ -356,8 +462,8 @@ func TestLookupByHash_Success(t *testing.T) {
 	ctx := context.Background()
 
 	// First confirm a hash.
-	hashBytes := []byte{10, 20, 30}
-	if err := m.ConfirmHash(ctx, "uuid-lookup", hashBytes, "token"); err != nil {
+	hashBytes, proof := validHashAndProof(t)
+	if err := m.ConfirmHash(ctx, "uuid-lookup", hashBytes, "token", proof); err != nil {
 		t.Fatalf("setup failed: %v", err)
 	}
 
@@ -450,6 +556,8 @@ func TestDeleteHash_StoreError(t *testing.T) {
 
 func TestSetLink_Success(t *testing.T) {
 	store := newMockUsernameStore()
+	// SetLink now requires a confirmed username hash on the account.
+	store.confirmed["seed-hash"] = "uuid-link"
 	m := NewUsernamesManager(store, newTestLogger())
 	ctx := context.Background()
 
@@ -460,6 +568,25 @@ func TestSetLink_Success(t *testing.T) {
 	}
 	if err := m.SetLink(ctx, link); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestSetLink_RequiresConfirmedHash documents the new Java-parity guard:
+// an account without a confirmed username hash cannot publish a link.
+func TestSetLink_RequiresConfirmedHash(t *testing.T) {
+	store := newMockUsernameStore()
+	m := NewUsernamesManager(store, newTestLogger())
+	ctx := context.Background()
+
+	link := &UsernameLink{
+		UUID:               "uuid-no-hash",
+		UsernameLinkHandle: "handle-x",
+		EncryptedUsername:  []byte{1, 2, 3},
+	}
+	err := m.SetLink(ctx, link)
+	var notFound *UsernameNotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("expected *UsernameNotFoundError, got %T: %v", err, err)
 	}
 }
 
@@ -565,6 +692,7 @@ func TestSetLink_NilEncryptedUsername(t *testing.T) {
 
 func TestSetLink_StoreError(t *testing.T) {
 	store := newMockUsernameStore()
+	store.confirmed["seed-hash-store-err"] = "uuid"
 	store.setLinkErr = errors.New("set link failure")
 	m := NewUsernamesManager(store, newTestLogger())
 	ctx := context.Background()
@@ -582,6 +710,7 @@ func TestSetLink_StoreError(t *testing.T) {
 
 func TestGetLink_Success(t *testing.T) {
 	store := newMockUsernameStore()
+	store.confirmed["seed-hash-get"] = "uuid-get"
 	m := NewUsernamesManager(store, newTestLogger())
 	ctx := context.Background()
 
@@ -687,13 +816,14 @@ func TestReserveAndConfirmAndLookup_Integration(t *testing.T) {
 	m := NewUsernamesManager(store, newTestLogger())
 	ctx := context.Background()
 
-	hashes := [][]byte{{0xAA, 0xBB}}
+	realHash, proof := validHashAndProof(t)
+	hashes := [][]byte{realHash}
 	hash, token, err := m.ReserveHash(ctx, "uuid-int", hashes)
 	if err != nil {
 		t.Fatalf("ReserveHash failed: %v", err)
 	}
 
-	if err := m.ConfirmHash(ctx, "uuid-int", hash, token); err != nil {
+	if err := m.ConfirmHash(ctx, "uuid-int", hash, token, proof); err != nil {
 		t.Fatalf("ConfirmHash failed: %v", err)
 	}
 
@@ -708,6 +838,7 @@ func TestReserveAndConfirmAndLookup_Integration(t *testing.T) {
 
 func TestSetAndGetAndDeleteLink_Integration(t *testing.T) {
 	store := newMockUsernameStore()
+	store.confirmed["seed-hash-int2"] = "uuid-int2"
 	m := NewUsernamesManager(store, newTestLogger())
 	ctx := context.Background()
 
@@ -736,5 +867,63 @@ func TestSetAndGetAndDeleteLink_Integration(t *testing.T) {
 	_, err = m.GetLink(ctx, "handle-int2")
 	if err == nil {
 		t.Fatal("expected error after deleting link")
+	}
+}
+
+func TestInvalidProofError_Error(t *testing.T) {
+	e := &InvalidProofError{Reason: "verify failed"}
+	want := "invalid zero-knowledge proof: verify failed"
+	if got := e.Error(); got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+}
+
+func TestExistingLinkHandle_Success(t *testing.T) {
+	store := newMockUsernameStore()
+	store.confirmed["seed"] = "uuid-elh"
+	m := NewUsernamesManager(store, newTestLogger())
+	ctx := context.Background()
+
+	link := &UsernameLink{
+		UUID:               "uuid-elh",
+		UsernameLinkHandle: "handle-elh",
+		EncryptedUsername:  []byte("enc"),
+	}
+	if err := m.SetLink(ctx, link); err != nil {
+		t.Fatalf("SetLink: %v", err)
+	}
+
+	handle, err := m.ExistingLinkHandle(ctx, "uuid-elh")
+	if err != nil {
+		t.Fatalf("ExistingLinkHandle: unexpected error: %v", err)
+	}
+	if handle != "handle-elh" {
+		t.Errorf("handle = %q, want %q", handle, "handle-elh")
+	}
+}
+
+func TestExistingLinkHandle_EmptyUUID(t *testing.T) {
+	store := newMockUsernameStore()
+	m := NewUsernamesManager(store, newTestLogger())
+	_, err := m.ExistingLinkHandle(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error for empty UUID")
+	}
+	var iae *InvalidArgumentError
+	if !errors.As(err, &iae) {
+		t.Errorf("expected *InvalidArgumentError, got %T", err)
+	}
+}
+
+func TestExistingLinkHandle_NotFound(t *testing.T) {
+	store := newMockUsernameStore()
+	m := NewUsernamesManager(store, newTestLogger())
+	_, err := m.ExistingLinkHandle(context.Background(), "uuid-missing")
+	if err == nil {
+		t.Fatal("expected error for missing link")
+	}
+	var nf *UsernameLinkNotFoundError
+	if !errors.As(err, &nf) {
+		t.Errorf("expected *UsernameLinkNotFoundError, got %T", err)
 	}
 }

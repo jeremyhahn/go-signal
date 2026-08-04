@@ -39,8 +39,8 @@ func TestE2E_FullRegistrationAndMessaging(t *testing.T) {
 	// Set profile for User A.
 	profileA := map[string]any{
 		"version":    "v1",
-		"name":       base64.StdEncoding.EncodeToString([]byte("Alice")),
-		"commitment": base64.StdEncoding.EncodeToString([]byte("commitment-value-alice-padding!")),
+		"name":       validProfileName(),
+		"commitment": validProfileCommitment(),
 	}
 	resp = env.doAuthRequest(t, "PUT", "/v1/profile", profileA, uuidA, "passwordA")
 	require.Equal(t, http.StatusOK, resp.StatusCode)

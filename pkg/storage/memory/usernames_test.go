@@ -5,6 +5,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-signal/pkg/usernames"
 )
@@ -15,6 +16,7 @@ func TestNewMemoryUsernameStore(t *testing.T) {
 	store := NewMemoryUsernameStore()
 	if store == nil {
 		t.Fatal("expected non-nil store")
+		return
 	}
 	if store.hashToUUID == nil {
 		t.Fatal("expected hashToUUID map to be initialized")
@@ -359,17 +361,14 @@ func TestDeleteHash_Success(t *testing.T) {
 	}
 }
 
-func TestDeleteHash_NotFound(t *testing.T) {
+func TestDeleteHash_NotFound_Idempotent(t *testing.T) {
 	store := NewMemoryUsernameStore()
 	ctx := context.Background()
 
+	// Deleting a hash for a UUID with no confirmed hash is idempotent.
 	err := store.DeleteHash(ctx, "nonexistent")
-	if err == nil {
-		t.Fatal("expected error for nonexistent UUID")
-	}
-
-	if _, ok := err.(*usernames.UsernameNotFoundError); !ok {
-		t.Fatalf("expected *UsernameNotFoundError, got %T", err)
+	if err != nil {
+		t.Fatalf("expected nil for nonexistent UUID delete, got %v", err)
 	}
 }
 
@@ -559,17 +558,14 @@ func TestDeleteLink_Success(t *testing.T) {
 	}
 }
 
-func TestDeleteLink_NotFound(t *testing.T) {
+func TestDeleteLink_NotFound_Idempotent(t *testing.T) {
 	store := NewMemoryUsernameStore()
 	ctx := context.Background()
 
+	// Deleting a link for a UUID with no link is idempotent.
 	err := store.DeleteLink(ctx, "nonexistent")
-	if err == nil {
-		t.Fatal("expected error for nonexistent UUID")
-	}
-
-	if _, ok := err.(*usernames.UsernameLinkNotFoundError); !ok {
-		t.Fatalf("expected *UsernameLinkNotFoundError, got %T", err)
+	if err != nil {
+		t.Fatalf("expected nil for nonexistent UUID delete, got %v", err)
 	}
 }
 
@@ -658,4 +654,249 @@ func TestMemoryUsernameStoreImplementsInterface(t *testing.T) {
 func TestMemoryUsernameStoreInterfaceNonNil(t *testing.T) {
 	var store usernames.UsernameStore = NewMemoryUsernameStore()
 	_ = store
+}
+
+// --- Reservation TTL tests ---
+
+// TestSetClock confirms the clock injection hook overrides the default clock.
+func TestSetClock(t *testing.T) {
+	store := NewMemoryUsernameStore()
+	fixed := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	store.SetClock(func() time.Time { return fixed })
+
+	store.mu.RLock()
+	got := store.now()
+	store.mu.RUnlock()
+
+	if !got.Equal(fixed) {
+		t.Fatalf("expected injected clock to return %v, got %v", fixed, got)
+	}
+}
+
+// TestConfirmHash_RejectsExpiredReservation verifies that ConfirmHash rejects
+// a reservation once the TTL has elapsed, matching qrdb/Java parity.
+func TestConfirmHash_RejectsExpiredReservation(t *testing.T) {
+	store := NewMemoryUsernameStore()
+	ctx := context.Background()
+
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	store.SetClock(func() time.Time { return now })
+
+	hashes := [][]byte{[]byte("hash-expire")}
+	selected, token, err := store.ReserveHash(ctx, "uuid-expire", hashes)
+	if err != nil {
+		t.Fatalf("ReserveHash: unexpected error: %v", err)
+	}
+
+	// Advance the clock past the reservation TTL.
+	expired := now.Add(reservationTTL).Add(time.Second)
+	store.SetClock(func() time.Time { return expired })
+
+	err = store.ConfirmHash(ctx, "uuid-expire", selected, token)
+	if err == nil {
+		t.Fatal("expected expired reservation to be rejected")
+	}
+	if _, ok := err.(*usernames.InvalidReservationTokenError); !ok {
+		t.Fatalf("expected *InvalidReservationTokenError, got %T", err)
+	}
+
+	// The expired reservation should have been purged.
+	store.mu.RLock()
+	_, exists := store.reservations["uuid-expire"]
+	store.mu.RUnlock()
+	if exists {
+		t.Fatal("expected expired reservation to be purged from store")
+	}
+}
+
+// TestReserveHash_ReplacesExpiredReservation verifies that a UUID's stale
+// reservation is purged so a new ReserveHash call succeeds.
+func TestReserveHash_ReplacesExpiredReservation(t *testing.T) {
+	store := NewMemoryUsernameStore()
+	ctx := context.Background()
+
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	store.SetClock(func() time.Time { return now })
+
+	if _, _, err := store.ReserveHash(ctx, "uuid-stale", [][]byte{[]byte("h-old")}); err != nil {
+		t.Fatalf("ReserveHash: unexpected error: %v", err)
+	}
+
+	// Advance past the TTL and reserve again.
+	store.SetClock(func() time.Time { return now.Add(reservationTTL).Add(time.Second) })
+
+	selected, token, err := store.ReserveHash(ctx, "uuid-stale", [][]byte{[]byte("h-new")})
+	if err != nil {
+		t.Fatalf("ReserveHash after expiry: unexpected error: %v", err)
+	}
+	if !bytes.Equal(selected, []byte("h-new")) {
+		t.Fatalf("expected fresh hash to be selected, got %v", selected)
+	}
+	if token == "" {
+		t.Fatal("expected non-empty token")
+	}
+}
+
+// TestReserveHash_SkipsHashHeldByOtherActiveReservation verifies that a
+// non-expired reservation held by a different UUID blocks reuse of that hash.
+func TestReserveHash_SkipsHashHeldByOtherActiveReservation(t *testing.T) {
+	store := NewMemoryUsernameStore()
+	ctx := context.Background()
+
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	store.SetClock(func() time.Time { return now })
+
+	// uuid-A reserves hash-shared but never confirms.
+	if _, _, err := store.ReserveHash(ctx, "uuid-A", [][]byte{[]byte("hash-shared")}); err != nil {
+		t.Fatalf("first ReserveHash: %v", err)
+	}
+
+	// uuid-B tries to reserve only hash-shared while A's reservation is still valid.
+	_, _, err := store.ReserveHash(ctx, "uuid-B", [][]byte{[]byte("hash-shared")})
+	if err == nil {
+		t.Fatal("expected conflict when hash is held by another active reservation")
+	}
+	if _, ok := err.(*usernames.UsernameHashConflictError); !ok {
+		t.Fatalf("expected *UsernameHashConflictError, got %T", err)
+	}
+
+	// Once A's reservation expires, B should succeed.
+	store.SetClock(func() time.Time { return now.Add(reservationTTL).Add(time.Second) })
+	selected, _, err := store.ReserveHash(ctx, "uuid-B", [][]byte{[]byte("hash-shared")})
+	if err != nil {
+		t.Fatalf("ReserveHash after expiry: unexpected error: %v", err)
+	}
+	if !bytes.Equal(selected, []byte("hash-shared")) {
+		t.Fatalf("expected hash-shared to be selected, got %v", selected)
+	}
+}
+
+// ─── HashForUUID ────────────────────────────────────────────────────────────
+
+func TestMemoryUsernameStore_HashForUUID_Found(t *testing.T) {
+	store := NewMemoryUsernameStore()
+	ctx := context.Background()
+
+	// Seed a confirmed hash directly.
+	store.uuidToHash["u-hash-1"] = []byte("confirmed-hash")
+	store.hashToUUID[string([]byte("confirmed-hash"))] = "u-hash-1"
+
+	got, err := store.HashForUUID(ctx, "u-hash-1")
+	if err != nil {
+		t.Fatalf("HashForUUID: unexpected error: %v", err)
+	}
+	if !bytes.Equal(got, []byte("confirmed-hash")) {
+		t.Errorf("HashForUUID: got %q, want 'confirmed-hash'", got)
+	}
+}
+
+func TestMemoryUsernameStore_HashForUUID_NotFound(t *testing.T) {
+	store := NewMemoryUsernameStore()
+	_, err := store.HashForUUID(context.Background(), "u-hash-missing")
+	if err == nil {
+		t.Fatal("HashForUUID: expected error for missing UUID")
+	}
+	if _, ok := err.(*usernames.UsernameNotFoundError); !ok {
+		t.Errorf("HashForUUID: expected *UsernameNotFoundError, got %T", err)
+	}
+}
+
+// ─── LinkForUUID ────────────────────────────────────────────────────────────
+
+func TestMemoryUsernameStore_LinkForUUID_Found(t *testing.T) {
+	store := NewMemoryUsernameStore()
+	ctx := context.Background()
+
+	// Seed confirmed hash so SetLink won't reject.
+	store.uuidToHash["u-link-1"] = []byte("some-hash")
+	store.hashToUUID[string([]byte("some-hash"))] = "u-link-1"
+
+	link := &usernames.UsernameLink{
+		UUID:               "u-link-1",
+		UsernameLinkHandle: "handle-xyz",
+		EncryptedUsername:  []byte("enc"),
+	}
+	if err := store.SetLink(ctx, link); err != nil {
+		t.Fatalf("SetLink: %v", err)
+	}
+
+	got, err := store.LinkForUUID(ctx, "u-link-1")
+	if err != nil {
+		t.Fatalf("LinkForUUID: unexpected error: %v", err)
+	}
+	if got.UsernameLinkHandle != "handle-xyz" {
+		t.Errorf("LinkForUUID: expected handle-xyz, got %q", got.UsernameLinkHandle)
+	}
+}
+
+func TestMemoryUsernameStore_LinkForUUID_NotFound(t *testing.T) {
+	store := NewMemoryUsernameStore()
+	_, err := store.LinkForUUID(context.Background(), "u-link-missing")
+	if err == nil {
+		t.Fatal("LinkForUUID: expected error for missing UUID")
+	}
+	if _, ok := err.(*usernames.UsernameLinkNotFoundError); !ok {
+		t.Errorf("LinkForUUID: expected *UsernameLinkNotFoundError, got %T", err)
+	}
+}
+
+// ─── DeleteExpiredReservations ──────────────────────────────────────────────
+
+func TestMemoryUsernameStore_DeleteExpiredReservations_Empty(t *testing.T) {
+	store := NewMemoryUsernameStore()
+	n, err := store.DeleteExpiredReservations(context.Background())
+	if err != nil {
+		t.Fatalf("DeleteExpiredReservations: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 deleted, got %d", n)
+	}
+}
+
+func TestMemoryUsernameStore_DeleteExpiredReservations_RemovesExpired(t *testing.T) {
+	store := NewMemoryUsernameStore()
+	ctx := context.Background()
+
+	past := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	store.SetClock(func() time.Time { return past })
+
+	// Create reservation at past.
+	_, _, err := store.ReserveHash(ctx, "u-exp-1", [][]byte{[]byte("exp-hash")})
+	if err != nil {
+		t.Fatalf("ReserveHash: %v", err)
+	}
+
+	// Advance clock beyond TTL so the reservation is expired.
+	future := past.Add(reservationTTL + time.Second)
+	store.SetClock(func() time.Time { return future })
+
+	n, err := store.DeleteExpiredReservations(ctx)
+	if err != nil {
+		t.Fatalf("DeleteExpiredReservations: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("expected 1 deleted, got %d", n)
+	}
+}
+
+func TestMemoryUsernameStore_DeleteExpiredReservations_PreservesActive(t *testing.T) {
+	store := NewMemoryUsernameStore()
+	ctx := context.Background()
+
+	now := time.Now().UTC()
+	store.SetClock(func() time.Time { return now })
+
+	// Reserve hash — reservation is active (not yet expired).
+	if _, _, err := store.ReserveHash(ctx, "u-active-1", [][]byte{[]byte("active-hash")}); err != nil {
+		t.Fatalf("ReserveHash: %v", err)
+	}
+
+	// Don't advance clock — reservation still live.
+	n, err := store.DeleteExpiredReservations(ctx)
+	if err != nil {
+		t.Fatalf("DeleteExpiredReservations: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("expected 0 deleted (reservation still active), got %d", n)
+	}
 }

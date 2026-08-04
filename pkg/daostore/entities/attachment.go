@@ -18,4 +18,4 @@ type AttachmentEntity struct {
 }
 
 func (a *AttachmentEntity) EntityID() uint64      { return a.ID }
-func (a *AttachmentEntity) SetEntityID(id uint64)  { a.ID = id }
+func (a *AttachmentEntity) SetEntityID(id uint64) { a.ID = id }

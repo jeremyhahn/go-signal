@@ -8,12 +8,12 @@ package jobs
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"sync"
 	"time"
 
 	"github.com/jeremyhahn/go-qrdb/pkg/dao"
 	"github.com/jeremyhahn/go-signal/pkg/daostore/entities"
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
 // JobFunc processes a job. Return nil on success, error to retry.
@@ -22,11 +22,11 @@ type JobFunc func(ctx context.Context, data json.RawMessage) error
 // Queue is a persistent job queue backed by the JobEntity DAO.
 // Job types are registered via map-based dispatch.
 type Queue struct {
-	dao       dao.GenericDAO[*entities.JobEntity]
-	handlers  map[string]JobFunc
-	mu        sync.RWMutex
-	ctx       context.Context
-	cancel    context.CancelFunc
+	dao          dao.GenericDAO[*entities.JobEntity]
+	handlers     map[string]JobFunc
+	mu           sync.RWMutex
+	ctx          context.Context
+	cancel       context.CancelFunc
 	pollInterval time.Duration
 }
 
@@ -50,7 +50,7 @@ func (q *Queue) Register(queueType string, handler JobFunc) {
 func (q *Queue) Enqueue(ctx context.Context, queueType string, data interface{}) error {
 	dataBytes, err := json.Marshal(data)
 	if err != nil {
-		return fmt.Errorf("jobs: marshal data: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "jobs: marshal data", err)
 	}
 
 	job := &entities.JobEntity{

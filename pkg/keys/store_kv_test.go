@@ -771,6 +771,64 @@ func TestKVPreKeyStore_GetPreKeyCount_KEMListError(t *testing.T) {
 	assert.Equal(t, "kem list failure", err.Error())
 }
 
+// --- ListAccountUUIDs ---
+
+func TestKVPreKeyStore_ListAccountUUIDs_Empty(t *testing.T) {
+	s, _ := newTestPreKeyStore()
+	uuids, err := s.ListAccountUUIDs(context.Background())
+	require.NoError(t, err)
+	assert.Empty(t, uuids)
+}
+
+func TestKVPreKeyStore_ListAccountUUIDs_MultipleAccounts(t *testing.T) {
+	s, _ := newTestPreKeyStore()
+	ctx := context.Background()
+
+	// Store keys for different accounts and devices.
+	require.NoError(t, s.StoreECPreKeys(ctx, "account-1", 1, testECPreKeys(1, 2)))
+	require.NoError(t, s.StoreECPreKeys(ctx, "account-2", 1, testECPreKeys(10, 1)))
+	require.NoError(t, s.StoreSignedPreKey(ctx, "account-1", 2, testSignedPreKey(100)))
+	require.NoError(t, s.StoreKEMLastResortPreKey(ctx, "account-3", 1, testKEMPreKeys(1, 1)[0]))
+
+	uuids, err := s.ListAccountUUIDs(ctx)
+	require.NoError(t, err)
+	// Should see account-1, account-2, account-3.
+	assert.Len(t, uuids, 3)
+
+	seen := make(map[string]bool)
+	for _, u := range uuids {
+		seen[u] = true
+	}
+	assert.True(t, seen["account-1"], "account-1 missing from ListAccountUUIDs")
+	assert.True(t, seen["account-2"], "account-2 missing from ListAccountUUIDs")
+	assert.True(t, seen["account-3"], "account-3 missing from ListAccountUUIDs")
+}
+
+func TestKVPreKeyStore_ListAccountUUIDs_NoDuplicates(t *testing.T) {
+	// One account with keys across multiple prefixes should appear exactly once.
+	s, _ := newTestPreKeyStore()
+	ctx := context.Background()
+
+	require.NoError(t, s.StoreECPreKeys(ctx, "solo-account", 1, testECPreKeys(1, 3)))
+	require.NoError(t, s.StoreKEMPreKeys(ctx, "solo-account", 1, testKEMPreKeys(1, 2)))
+	require.NoError(t, s.StoreSignedPreKey(ctx, "solo-account", 1, testSignedPreKey(1)))
+
+	uuids, err := s.ListAccountUUIDs(ctx)
+	require.NoError(t, err)
+	assert.Len(t, uuids, 1)
+	assert.Equal(t, "solo-account", uuids[0])
+}
+
+func TestKVPreKeyStore_ListAccountUUIDs_ListError(t *testing.T) {
+	fkv := store.NewFailingKVClient()
+	fkv.ListErr = errors.New("list failure")
+	s := NewKVPreKeyStore(fkv)
+
+	_, err := s.ListAccountUUIDs(context.Background())
+	require.Error(t, err)
+	assert.Equal(t, "list failure", err.Error())
+}
+
 // --- Interface compliance ---
 
 func TestKVPreKeyStore_ImplementsPreKeyStore(t *testing.T) {

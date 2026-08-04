@@ -21,6 +21,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/auth"
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 	"github.com/jeremyhahn/go-signal/pkg/limits"
+	"github.com/jeremyhahn/go-signal/pkg/service"
 )
 
 const (
@@ -36,6 +37,7 @@ type contextKey int
 const (
 	accountContextKey contextKey = iota
 	unidentifiedSenderContextKey
+	deviceContextKey
 )
 
 // contextWithAccount stores the authenticated account in the context.
@@ -48,6 +50,23 @@ func contextWithAccount(ctx context.Context, acct *accounts.Account) context.Con
 func accountFromContext(ctx context.Context) *accounts.Account {
 	acct, _ := ctx.Value(accountContextKey).(*accounts.Account)
 	return acct
+}
+
+// contextWithDevice stores the authenticated device ID in the context. It is
+// set by authMiddleware once the per-device credential has been verified.
+func contextWithDevice(ctx context.Context, deviceID uint64) context.Context {
+	return context.WithValue(ctx, deviceContextKey, deviceID)
+}
+
+// deviceIDFromContext returns the authenticated device ID for the request. It
+// returns accounts.PrimaryDeviceID when no device principal is present (for
+// example on sealed-sender or unauthenticated paths) so that callers always
+// observe a valid device ID.
+func deviceIDFromContext(ctx context.Context) uint64 {
+	if id, ok := ctx.Value(deviceContextKey).(uint64); ok {
+		return id
+	}
+	return accounts.PrimaryDeviceID
 }
 
 // contextWithUnidentifiedSender marks the request context as carrying a
@@ -169,7 +188,7 @@ func redactQueryParams(rawQuery string) string {
 //   - When the UUID is not found a pre-computed dummy SaltedTokenHash.Verify
 //     call is performed so that the response time is indistinguishable from a
 //     real verification, preventing UUID existence oracle attacks via timing.
-func authMiddleware(am *accounts.AccountsManager, next http.HandlerFunc) http.HandlerFunc {
+func authMiddleware(am service.AccountService, next http.HandlerFunc) http.HandlerFunc {
 	// Pre-compute a dummy hash at middleware initialisation. On account-not-found
 	// paths we call dummyHash.Verify to perform the same HKDF derivation as a
 	// real auth check, equalising response timing regardless of UUID existence.
@@ -183,10 +202,22 @@ func authMiddleware(am *accounts.AccountsManager, next http.HandlerFunc) http.Ha
 			return
 		}
 
-		// The username may be "uuid.deviceId" or just "uuid".
+		// The username may be "uuid.deviceId" or just "uuid". When the
+		// device suffix is absent the credential targets the primary device.
 		acctUUID := username
+		deviceID := accounts.PrimaryDeviceID
 		if idx := strings.IndexByte(username, '.'); idx >= 0 {
 			acctUUID = username[:idx]
+			parsed, perr := strconv.ParseUint(username[idx+1:], 10, 64)
+			if perr != nil || parsed == 0 {
+				// Equalise timing so an invalid device suffix is
+				// indistinguishable from a wrong password.
+				dummyHash.Verify(password)
+				w.Header().Set("WWW-Authenticate", `Basic realm="signal"`)
+				writeError(w, http.StatusUnauthorized, "invalid credentials")
+				return
+			}
+			deviceID = parsed
 		}
 
 		acct, err := am.Get(r.Context(), acctUUID)
@@ -199,17 +230,27 @@ func authMiddleware(am *accounts.AccountsManager, next http.HandlerFunc) http.Ha
 			return
 		}
 
-		// Verify the password against the primary device's stored token hash.
-		// The constant-time comparison is encapsulated inside AuthTokenHash.Verify,
-		// which uses crypto/subtle.ConstantTimeCompare internally.
-		primary := acct.PrimaryDevice()
-		if primary == nil || !primary.AuthTokenHash.Verify(password) {
+		// Verify the password against the *authenticated device's* stored
+		// token hash — not the primary device's — so that linked devices
+		// authenticate as themselves and device-scoped authorization is
+		// enforceable downstream. The constant-time comparison is
+		// encapsulated inside AuthTokenHash.Verify (crypto/subtle).
+		device := acct.GetDevice(deviceID)
+		if device == nil || device.AuthTokenHash == nil {
+			// Equalise timing for a missing/credential-less device.
+			dummyHash.Verify(password)
+			w.Header().Set("WWW-Authenticate", `Basic realm="signal"`)
+			writeError(w, http.StatusUnauthorized, "invalid credentials")
+			return
+		}
+		if !device.AuthTokenHash.Verify(password) {
 			w.Header().Set("WWW-Authenticate", `Basic realm="signal"`)
 			writeError(w, http.StatusUnauthorized, "invalid credentials")
 			return
 		}
 
 		ctx := contextWithAccount(r.Context(), acct)
+		ctx = contextWithDevice(ctx, deviceID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}
 }
@@ -228,15 +269,22 @@ func authMiddleware(am *accounts.AccountsManager, next http.HandlerFunc) http.Ha
 // parameter (typically extracted from the URL path before the middleware
 // wraps the handler).
 //
+// The destination account is located via resolveDest, which must understand
+// the same identifier shapes the handler does (ACI:<uuid>, PNI:<uuid>, bare
+// UUID, or E.164) so that sealed-sender lookups succeed for every identifier
+// form, not just a bare ACI UUID.
+//
 // Security properties:
 //   - UAK comparison always uses crypto/subtle.ConstantTimeCompare to prevent
 //     timing oracle attacks.
-//   - When the destination UUID does not exist a constant-time dummy
-//     comparison is still performed so that account existence cannot be inferred
-//     from response timing.
+//   - When the destination does not exist a constant-time dummy comparison is
+//     still performed so that account existence cannot be inferred from
+//     response timing.
 //   - Accounts with a nil or zero-length UnidentifiedAccessKey reject UAK
-//     authentication; the account must opt in by having a non-empty key.
-func optionalAuthMiddleware(am *accounts.AccountsManager, destUUID string, next http.HandlerFunc) http.HandlerFunc {
+//     authentication unconditionally; the account must opt in by having a
+//     non-empty key. A caller cannot authenticate by supplying an all-zero
+//     key against a UAK-less account.
+func optionalAuthMiddleware(am service.AccountService, resolveDest func(*http.Request) (*accounts.Account, error), next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Fast path: Basic auth present — delegate entirely to the existing
 		// constant-time auth middleware.
@@ -263,20 +311,21 @@ func optionalAuthMiddleware(am *accounts.AccountsManager, destUUID string, next 
 			}
 		}
 
-		destAcct, lookupErr := am.Get(r.Context(), destUUID)
+		destAcct, lookupErr := resolveDest(r)
 
-		// Always perform a constant-time comparison even when the account was
-		// not found or has no UAK, to prevent timing-based oracle attacks.
-		var storedKey []byte
-		if lookupErr == nil && len(destAcct.UnidentifiedAccessKey) > 0 {
+		// hasUAK is true only when the destination account exists AND has a
+		// non-empty UnidentifiedAccessKey. A constant-time comparison is always
+		// performed (against a fixed 16-byte zero buffer when there is no real
+		// key) so the accept/reject branch — and thus account/key existence —
+		// is not revealed by control flow; the request is accepted only when a
+		// real key was present and matched.
+		hasUAK := lookupErr == nil && destAcct != nil && len(destAcct.UnidentifiedAccessKey) > 0
+		storedKey := make([]byte, 16)
+		if hasUAK {
 			storedKey = destAcct.UnidentifiedAccessKey
-		} else {
-			// Dummy value: same length as a typical UAK (16 bytes) so the
-			// comparison time is representative regardless of outcome.
-			storedKey = make([]byte, 16)
 		}
-
-		if subtle.ConstantTimeCompare(providedKey, storedKey) != 1 || lookupErr != nil {
+		matched := subtle.ConstantTimeCompare(providedKey, storedKey) == 1
+		if !hasUAK || !matched {
 			writeError(w, http.StatusUnauthorized, "invalid unidentified access key")
 			return
 		}

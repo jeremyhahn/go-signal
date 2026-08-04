@@ -18,7 +18,7 @@ or simply:
 uuid:password
 ```
 
-The auth middleware extracts the UUID (stripping the `.deviceId` suffix if present), looks up the account, and verifies the password against the primary device's auth token. On failure, a `401 Unauthorized` response is returned with `WWW-Authenticate: Basic realm="signal"`.
+The auth middleware extracts the UUID and device ID, looks up the account, and verifies the password against the **addressed device's** stored token hash (HKDF-SHA256, constant-time) — not always the primary device. A credential of the form `uuid:password` targets the primary device. On failure, a `401 Unauthorized` response is returned with `WWW-Authenticate: Basic realm="signal"`. See [../auth/authentication.md](../auth/authentication.md) for the full model, including the timing-equalisation and sealed-sender (`Unidentified-Access-Key`) paths.
 
 ## Error Responses
 
@@ -229,9 +229,16 @@ Enhanced account operations including phone number changes and privacy settings.
 | PUT | `/v2/accounts/phone_number_discoverability` | Yes | Set phone number discoverability |
 | GET | `/v2/accounts/data_report` | Yes | Get data report |
 
-### PUT /v2/accounts/number (auth)
+### PUT /v2/accounts/number (auth, primary device only)
 
-Change the phone number associated with the account.
+Change the phone number associated with the account. Only the primary device may call this — a request authenticated as a linked device is rejected with `403`.
+
+**Proof of ownership of the new number is mandatory.** The caller must supply exactly one of:
+
+- `sessionId` — a verification session that has been verified for the *new* `number`, or
+- `recoveryPassword` — the registration recovery password that matches the *new* `number`.
+
+Supplying both is a `400`; supplying neither is a `403`. This prevents an authenticated account from seizing an arbitrary victim's number. The change rotates the account's PNI; when per-device PNI pre-keys are included they are validated against `pniIdentityKey` *before* any state is mutated and then re-published into the rotated PNI namespace. `pniIdentityKey` is required whenever `devicePniSignedPrekeys` or `devicePniPqLastResortPrekeys` are present.
 
 **Request:**
 
@@ -239,6 +246,7 @@ Change the phone number associated with the account.
 {
   "number": "+14155559876",
   "sessionId": "verification-session-id",
+  "recoveryPassword": "base64-recovery-password",
   "pniIdentityKey": "base64-new-pni-key",
   "deviceMessages": [],
   "devicePniSignedPrekeys": {},
@@ -257,6 +265,12 @@ Change the phone number associated with the account.
   "storageCapable": true
 }
 ```
+
+| Status | Meaning |
+|--------|---------|
+| 400 | `sessionId` and `recoveryPassword` both supplied, or invalid encoding |
+| 403 | Non-primary device, or no proof of ownership supplied / proof did not match the new number |
+| 422 | Empty `number` |
 
 ### PUT /v1/accounts/registration_lock (auth)
 
@@ -648,7 +662,17 @@ Update the authenticated account's profile.
 }
 ```
 
-When `avatar` is `true` and `sameAvatar` is `false`, the response includes upload attributes:
+Each encrypted field is decoded from base64 and must match one of its allowed exact ciphertext byte lengths (empty/omitted fields are accepted as "not provided"); a present field of any other size is rejected with `400`:
+
+| Field | Allowed decoded byte lengths |
+|-------|------------------------------|
+| `name` | 81, 285 |
+| `about` | 156, 282, 540 |
+| `aboutEmoji` | 60 |
+| `paymentAddress` | 582 |
+| `commitment` | 97 (zkgroup `ProfileKeyCommitment`) |
+
+When `avatar` is `true` and `sameAvatar` is `false`, the response includes real AWS SigV4 S3 POST-policy upload attributes signed with the configured CDN credentials:
 
 **Response (200):**
 
@@ -664,7 +688,7 @@ When `avatar` is `true` and `sameAvatar` is `false`, the response includes uploa
 }
 ```
 
-When no avatar upload is needed, the response is `200 OK` with an empty JSON object.
+If an avatar upload is requested but no CDN credentials are configured, the endpoint fails closed with `503 Service Unavailable` rather than returning a non-functional placeholder signature. When no avatar upload is needed, the response is `200 OK` with an empty JSON object.
 
 ### GET /v1/profile/{identifier}
 
@@ -692,7 +716,12 @@ Get the latest profile for an account. The `identifier` is a UUID.
 
 ### GET /v1/profile/{identifier}/{version}/{credentialRequest}
 
-Same as versioned profile, but also returns a profile credential for the given request.
+Same as the versioned profile, but also returns an `ExpiringProfileKeyCredential`. The `credentialRequest` path parameter is a hex-encoded zkgroup `ProfileKeyCredentialRequest`. The server deserializes it, loads the stored profile-key commitment for that version, and issues a real credential via go-libsignal's zkgroup. Issuance fails closed: a request whose zero-knowledge proof does not match the stored commitment is rejected with `400`, never a usable-but-wrong credential. The credential expires at a UTC day boundary seven days out (matching the Java server's `EXPIRING_PROFILE_KEY_CREDENTIAL_EXPIRATION`).
+
+| Status | Meaning |
+|--------|---------|
+| 400 | Malformed `credentialRequest`, or the proof did not match the stored commitment |
+| 404 | Account or profile version not found, or no stored commitment |
 
 ### POST /v1/profile/identity_check/batch (auth)
 
@@ -984,16 +1013,21 @@ Contact discovery service integration.
 
 ## Secure Storage
 
-Encrypted storage service for syncing contacts, groups, and settings across devices.
+Encrypted storage service for syncing contacts, groups, and settings across devices. The embedded storage-service is enabled by default in monolithic deployments (when `storageService.remoteUrl` is empty); when an external `storage-service` binary is configured, clients are pointed at it instead and these in-process routes return a `204` stub. The wire protocol is protobuf (`pkg/securestorage/proto/storage.proto`, generated into `pkg/securestorage/storagepb`) and is validated wire-compatible with `libsignal-service-java`.
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/v1/storage/auth` | Yes | Get storage auth token |
-| GET | `/storage/manifest` | No | Get storage manifest |
-| GET | `/storage/manifest/version/{version}` | No | Get manifest by version |
-| PUT | `/storage/manifest` | No | Write storage manifest |
+All storage routes require authentication.
 
-The storage routes support multiple path variants (`/storage/v1/storage/manifest/...`, `/storage/manifest/...`) for compatibility with different client implementations.
+| Method | Path | Auth | Operation |
+|--------|------|------|-----------|
+| GET | `/v1/storage/auth` | Yes | Get storage auth token (HMAC credential) |
+| GET | `/storage/manifest` | Yes | Fetch the current `StorageManifest` |
+| GET | `/storage/manifest/version/{version}` | Yes | Conditional fetch: returns the manifest only if newer than `{version}`, else `204` |
+| PUT | `/storage/manifest` | Yes | Apply a `WriteOperation` |
+| PUT | `/storage/read` | Yes | Resolve a `ReadOperation` into `StorageItems` |
+
+Request and response bodies are serialized protobuf, not JSON. The routes also accept the `/storage/v1/storage/...` prefix variants and a catch-all (`/storage/{rest...}`) so that the path shapes used by different clients (signal-cli rewrites against a `/storage` base URL) all resolve. A single handler dispatches by method and path: a `GET` whose path contains `manifest` fetches the manifest, a `PUT` ending in `/read` resolves a read, and any other `PUT` applies a write.
+
+A write that loses the optimistic-concurrency race returns `409 Conflict` with the current `StorageManifest` so the client can rebase and retry. Manifest versions are monotonic.
 
 ---
 
@@ -1101,7 +1135,7 @@ Apple DeviceCheck attestation and assertion for iOS clients.
 
 FIDO2/WebAuthn endpoints for passwordless authentication and MFA enrollment. These routes are only available when the server is built with the `fido2` build tag.
 
-See [../api-fido2.md](../api-fido2.md) for detailed FIDO2 flow documentation.
+See [../auth/fido2.md](../auth/fido2.md) for detailed FIDO2 flow documentation.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|

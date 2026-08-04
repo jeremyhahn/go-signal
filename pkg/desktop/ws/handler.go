@@ -6,9 +6,9 @@ import (
 	"context"
 	"time"
 
-	signal "github.com/jeremyhahn/go-signal/sdk/go"
 	"github.com/jeremyhahn/go-signal/pkg/daostore"
 	"github.com/jeremyhahn/go-signal/pkg/daostore/entities"
+	signal "github.com/jeremyhahn/go-signal/sdk/go"
 )
 
 // DefaultHandler decrypts incoming WebSocket messages, persists them
@@ -30,16 +30,16 @@ func (h *DefaultHandler) HandleMessage(msg signal.ReceivedMessage) {
 
 	// Persist the message.
 	entity := &entities.MessageEntity{
-		GUID:           msg.GUID,
-		ConversationID: msg.Source,
-		SourceUUID:     msg.Source,
-		SourceDevice:   uint32(msg.SourceDevice),
-		Timestamp:      msg.Timestamp,
+		GUID:            msg.GUID,
+		ConversationID:  msg.Source,
+		SourceUUID:      msg.Source,
+		SourceDevice:    uint32(msg.SourceDevice),
+		Timestamp:       msg.Timestamp,
 		ServerTimestamp: msg.ServerTimestamp,
-		Type:           1, // incoming
-		Body:           msg.Body,
-		IsRead:         false,
-		SendState:      3, // delivered
+		Type:            1, // incoming
+		Body:            msg.Body,
+		IsRead:          false,
+		SendState:       3, // delivered
 	}
 	_ = h.daoFactory.Messages.Save(ctx, entity)
 
@@ -54,7 +54,7 @@ func (h *DefaultHandler) HandleMessage(msg signal.ReceivedMessage) {
 			Type:                 entities.ConversationTypeDirect,
 			Name:                 msg.Source,
 			UnreadCount:          1,
-			LastMessageTimestamp:  msg.Timestamp,
+			LastMessageTimestamp: msg.Timestamp,
 			LastMessageBody:      msg.Body,
 			ActiveAt:             time.Now().UnixMilli(),
 		}

@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"time"
 
-	signal "github.com/jeremyhahn/go-signal/sdk/go"
 	"github.com/jeremyhahn/go-signal/pkg/daostore"
 	"github.com/jeremyhahn/go-signal/pkg/daostore/entities"
+	signal "github.com/jeremyhahn/go-signal/sdk/go"
 )
 
 // SafetyBindings provides safety number and identity operations.
@@ -25,9 +25,9 @@ func NewSafetyBindings(client *signal.Client, f *daostore.Factory) *SafetyBindin
 
 // SafetyNumberResult holds a generated safety number for display.
 type SafetyNumberResult struct {
-	Number      string `json:"number"`
-	QRCodeData  string `json:"qrCodeData"`
-	IsVerified  bool   `json:"isVerified"`
+	Number     string `json:"number"`
+	QRCodeData string `json:"qrCodeData"`
+	IsVerified bool   `json:"isVerified"`
 }
 
 // GetSafetyNumber generates the safety number for a contact.

@@ -196,6 +196,7 @@ func TestCreateCallLinkAuth_ValidSerializedRequest(t *testing.T) {
 	}
 	if resp == nil {
 		t.Fatal("expected non-nil response")
+		return
 	}
 	if len(resp.Credential) == 0 {
 		t.Error("expected non-empty credential")

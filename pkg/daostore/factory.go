@@ -16,6 +16,7 @@ type Factory struct {
 	Reactions     dao.GenericDAO[*entities.ReactionEntity]
 	Attachments   dao.GenericDAO[*entities.AttachmentEntity]
 	Stickers      dao.GenericDAO[*entities.StickerEntity]
+	StickerPacks  dao.GenericDAO[*entities.StickerPackEntity]
 	Jobs          dao.GenericDAO[*entities.JobEntity]
 	Sessions      dao.GenericDAO[*entities.CryptoSessionEntity]
 	PreKeys       dao.GenericDAO[*entities.PreKeyEntity]
@@ -58,6 +59,11 @@ func NewFactory(store kvstore.KVStore) (*Factory, error) {
 	}
 
 	stickers, err := dao.New(store, "stickers", func() *entities.StickerEntity { return &entities.StickerEntity{} })
+	if err != nil {
+		return nil, err
+	}
+
+	stickerPacks, err := dao.New(store, "sticker_packs", func() *entities.StickerPackEntity { return &entities.StickerPackEntity{} })
 	if err != nil {
 		return nil, err
 	}
@@ -105,6 +111,7 @@ func NewFactory(store kvstore.KVStore) (*Factory, error) {
 		Reactions:     reactions,
 		Attachments:   attachments,
 		Stickers:      stickers,
+		StickerPacks:  stickerPacks,
 		Jobs:          jobs,
 		Sessions:      sessions,
 		PreKeys:       preKeys,

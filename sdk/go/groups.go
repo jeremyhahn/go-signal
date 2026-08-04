@@ -2,7 +2,8 @@ package signal
 
 import (
 	"context"
-	"fmt"
+
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
 // CreateGroupOptions configures group creation.
@@ -23,7 +24,7 @@ func (c *Client) CreateGroup(ctx context.Context, opts CreateGroupOptions) (*Gro
 		Members:     opts.Members,
 	}
 	if err := c.store.SaveGroup(group); err != nil {
-		return nil, fmt.Errorf("save group: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "save group", err)
 	}
 	return group, nil
 }
@@ -53,7 +54,7 @@ func (c *Client) UpdateGroup(ctx context.Context, groupID string, opts CreateGro
 			return &groups[i], nil
 		}
 	}
-	return nil, fmt.Errorf("group not found: %s", groupID)
+	return nil, signalerrors.New(signalerrors.ErrNotFound, "group not found: "+groupID)
 }
 
 // QuitGroup leaves a group and removes it from local storage.

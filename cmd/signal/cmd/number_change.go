@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -29,19 +28,19 @@ var startChangeNumberCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
-		session, err := client.CreateVerificationSession(context.Background(), args[0])
+		session, err := client.CreateVerificationSession(cmd.Context(), args[0])
 		if err != nil {
 			return err
 		}
 
-		_, err = client.RequestVerificationCode(context.Background(), session.ID)
+		_, err = client.RequestVerificationCode(cmd.Context(), session.ID)
 		if err != nil {
 			return err
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "Verification code sent to %s. Session: %s\n", args[0], session.ID)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Verification code sent to %s. Session: %s\n", args[0], session.ID)
 		return nil
 	},
 }
@@ -52,30 +51,30 @@ var finishChangeNumberCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if changeNumberCode == "" {
-			return fmt.Errorf("--verification-code is required")
+			return &UsageError{Message: "--verification-code is required"}
 		}
 
 		client, err := newClient()
 		if err != nil {
 			return err
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
 		// Create new session, verify, and update.
-		session, err := client.CreateVerificationSession(context.Background(), args[0])
+		session, err := client.CreateVerificationSession(cmd.Context(), args[0])
 		if err != nil {
 			return err
 		}
-		_, err = client.RequestVerificationCode(context.Background(), session.ID)
+		_, err = client.RequestVerificationCode(cmd.Context(), session.ID)
 		if err != nil {
 			return err
 		}
-		_, err = client.SubmitVerificationCode(context.Background(), session.ID, changeNumberCode)
+		_, err = client.SubmitVerificationCode(cmd.Context(), session.ID, changeNumberCode)
 		if err != nil {
 			return err
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "Number changed to %s\n", args[0])
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Number changed to %s\n", args[0])
 		return nil
 	},
 }

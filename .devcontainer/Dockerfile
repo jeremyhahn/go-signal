@@ -1,4 +1,4 @@
-FROM golang:1.26-bookworm
+FROM golang:1.26.3-bookworm
 
 # Install JRE 21 from Eclipse Temurin for signal-cli compatibility
 RUN apt-get update && apt-get install -y --no-install-recommends \

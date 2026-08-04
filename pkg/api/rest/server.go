@@ -12,11 +12,12 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-signal/pkg/accounts"
-	"github.com/jeremyhahn/go-signal/pkg/attachments"
 	apiws "github.com/jeremyhahn/go-signal/pkg/api/websocket"
+	"github.com/jeremyhahn/go-signal/pkg/attachments"
+	"github.com/jeremyhahn/go-signal/pkg/audit"
+	"github.com/jeremyhahn/go-signal/pkg/auth/external"
 	"github.com/jeremyhahn/go-signal/pkg/calling"
 	"github.com/jeremyhahn/go-signal/pkg/captcha"
-	"github.com/jeremyhahn/go-signal/pkg/service"
 	"github.com/jeremyhahn/go-signal/pkg/certificates"
 	"github.com/jeremyhahn/go-signal/pkg/devices"
 	"github.com/jeremyhahn/go-signal/pkg/directory"
@@ -25,12 +26,15 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/limits"
 	"github.com/jeremyhahn/go-signal/pkg/messages"
 	"github.com/jeremyhahn/go-signal/pkg/profiles"
+	"github.com/jeremyhahn/go-signal/pkg/registration/recoverypassword"
+	"github.com/jeremyhahn/go-signal/pkg/registration/sessionshim"
+	"github.com/jeremyhahn/go-signal/pkg/remoteconfig"
 	"github.com/jeremyhahn/go-signal/pkg/securestorage"
 	"github.com/jeremyhahn/go-signal/pkg/securevaluerecovery"
+	"github.com/jeremyhahn/go-signal/pkg/service"
 	"github.com/jeremyhahn/go-signal/pkg/spam"
 	"github.com/jeremyhahn/go-signal/pkg/stickers"
 	"github.com/jeremyhahn/go-signal/pkg/usernames"
-	"github.com/jeremyhahn/go-signal/pkg/verification"
 	signalws "github.com/jeremyhahn/go-signal/pkg/websocket"
 )
 
@@ -41,38 +45,60 @@ type Server struct {
 	// listener is the active network listener. Access is protected by
 	// listenerMu to prevent data races when Start() sets the listener
 	// concurrently with Addr() reading it.
-	listener        net.Listener
-	listenerMu      sync.RWMutex
-	logger          *slog.Logger
-	tlsCertFile     string
-	tlsKeyFile      string
-	accounts        *accounts.AccountsManager
-	captcha         *captcha.CaptchaManager
-	certificates    *certificates.CertificatesManager
-	keys            *keys.KeysManager
-	messages        *messages.MessagesManager
-	profiles        *profiles.ProfilesManager
-	stickers        *stickers.StickersManager
-	directory       *directory.DirectoryManager
-	secureStorage   *securestorage.SecureStorageManager
-	svr             *securevaluerecovery.SVRManager
-	calling         *calling.CallingManager
-	callSignaling   service.CallSignalingService
-	keyTransparency *keytransparency.KeyTransparencyManager
-	usernames       *usernames.UsernamesManager
-	devices         *devices.DevicesManager
-	wsHandler       *apiws.Handler
-	wsSessions      *signalws.SessionManager
-	verification    *verification.Manager
-	rateLimits      *limits.Registry
-	spamChecker     spam.SpamChecker
-	fraudChecker    spam.RegistrationFraudChecker
-	reportStore     messages.ReportStore
-	loopDetector    *messages.DeliveryLoopDetector
+	listener          net.Listener
+	listenerMu        sync.RWMutex
+	logger            *slog.Logger
+	audit             *audit.Logger
+	tlsCertFile       string
+	tlsKeyFile        string
+	accounts          service.AccountService
+	captcha           *captcha.CaptchaManager
+	captchaChecker    *captcha.Checker
+	regCaptcha        *captcha.RegistrationCaptchaManager
+	remoteConfig      *remoteconfig.Manager
+	certificates      service.CertificateService
+	keys              service.KeyService
+	messages          service.MessageService
+	profiles          service.ProfileService
+	stickers          service.StickersService
+	directory         service.DirectoryService
+	secureStorage     service.SecureStorageService
+	svr               *securevaluerecovery.SVRManager
+	calling           service.CallingService
+	callSignaling     service.CallSignalingService
+	backups           service.BackupService
+	keyTransparency   service.KeyTransparencyService
+	usernames         service.UsernameService
+	recoveryPasswords service.RecoveryPasswordService
+	devices           service.DeviceService
+	wsHandler         *apiws.Handler
+	wsSessions        *signalws.SessionManager
+	verification      *sessionshim.Shim
+	rateLimits        *limits.Registry
+	spamChecker       spam.SpamChecker
+	fraudChecker      spam.RegistrationFraudChecker
+	reportStore       messages.ReportStore
+	loopDetector      *messages.DeliveryLoopDetector
+	// mrmCache is the multi-recipient message shared-payload cache. When nil,
+	// the binary multi-recipient endpoint falls back to per-recipient inline
+	// content (legacy/test behavior). Production deployments should always
+	// supply a real cache so MRM sends benefit from shared-payload storage.
+	mrmCache *messages.MRMCache
 
 	// attachmentStore persists CDN attachment uploads.
 	attachmentStore    attachments.Store
 	staticResourcesDir string
+
+	// tusGenerator + tusURI drive the external-TUS upload form for the
+	// v4 attachment endpoint. When tusGenerator is nil, the v4 handler
+	// emits a descriptor pointing at the embedded /cdn3 route (dev mode).
+	tusGenerator *external.Generator
+	tusURI       string
+
+	// avatarCDN holds the S3 credentials used to sign profile-avatar upload
+	// POST policies. When unset (no bucket/credentials), avatar-upload requests
+	// fail closed rather than returning a non-functional placeholder signature.
+	avatarCDN AvatarCDNConfig
 
 	// frontendFS is the embedded file system for the React SPA. When non-nil
 	// a catch-all handler is registered at GET / that serves the SPA with
@@ -112,34 +138,81 @@ type Server struct {
 	trustedProxies []*net.IPNet
 }
 
+// AvatarCDNConfig holds the S3 settings used to sign profile-avatar upload
+// POST policies. All fields are required for avatar upload to be enabled; when
+// any is empty the avatar-upload path fails closed.
+type AvatarCDNConfig struct {
+	Bucket    string
+	Region    string
+	AccessKey string
+	SecretKey string
+}
+
+// Enabled reports whether enough is configured to sign avatar uploads.
+func (c AvatarCDNConfig) Enabled() bool {
+	return c.Bucket != "" && c.Region != "" && c.AccessKey != "" && c.SecretKey != ""
+}
+
 // ServerConfig holds the configuration required to create a new Server.
 type ServerConfig struct {
-	Host            string
-	Port            int
-	TLSCertFile     string
-	TLSKeyFile      string
-	Logger          *slog.Logger
-	Accounts        *accounts.AccountsManager
-	Captcha         *captcha.CaptchaManager
-	Certificates    *certificates.CertificatesManager
-	Keys            *keys.KeysManager
-	Messages        *messages.MessagesManager
-	Profiles        *profiles.ProfilesManager
-	Stickers        *stickers.StickersManager
-	Directory       *directory.DirectoryManager
-	SecureStorage   *securestorage.SecureStorageManager
-	SVR             *securevaluerecovery.SVRManager
-	Calling         *calling.CallingManager
-	CallSignaling   service.CallSignalingService
+	Host        string
+	Port        int
+	TLSCertFile string
+	TLSKeyFile  string
+	Logger      *slog.Logger
+	// Audit is the structured event sink for sensitive ops
+	// (ChangeNumber / DeleteAccount / LinkDevice /
+	// SetRegistrationLock). Optional — when nil, handlers skip
+	// emission. Production deployments wire a *audit.Logger backed by
+	// a dedicated sink so audit records outlive normal log rotation.
+	Audit    *audit.Logger
+	Accounts *accounts.AccountsManager
+	Captcha  *captcha.CaptchaManager
+	// CaptchaChecker is the multi-provider dispatcher used by PATCH
+	// /v1/verification/session/{id} (challenge action) and by the
+	// registration captcha manager. Optional — when nil, captcha
+	// submissions are not accepted.
+	CaptchaChecker *captcha.Checker
+	// RemoteConfig backs GET /v2/config with per-account dynamic feature
+	// flag evaluation. Optional — when nil the endpoint returns an empty
+	// config object.
+	RemoteConfig  *remoteconfig.Manager
+	Certificates  *certificates.CertificatesManager
+	Keys          *keys.KeysManager
+	Messages      *messages.MessagesManager
+	Profiles      *profiles.ProfilesManager
+	Stickers      *stickers.StickersManager
+	Directory     *directory.DirectoryManager
+	SecureStorage *securestorage.SecureStorageManager
+	SVR           *securevaluerecovery.SVRManager
+	Calling       *calling.CallingManager
+	CallSignaling service.CallSignalingService
+	// AvatarCDN supplies the S3 credentials used to sign profile-avatar upload
+	// POST policies. When zero-valued, avatar uploads fail closed.
+	AvatarCDN AvatarCDNConfig
+	// Backups is the message-archive service. When nil, the /v1/archives/*
+	// endpoints return 501. Required for the backup subsystem.
+	Backups         service.BackupService
 	KeyTransparency *keytransparency.KeyTransparencyManager
 	Usernames       *usernames.UsernamesManager
-	Devices         *devices.DevicesManager
-	WSSessions      *signalws.SessionManager
-	Verification    *verification.Manager
+	// RecoveryPasswords manages registration recovery password storage and
+	// verification. When nil, the registration handler treats any inbound
+	// `recoveryPassword` field as unsupported and returns 400; the
+	// session-based registration path is unaffected.
+	RecoveryPasswords *recoverypassword.Manager
+	Devices           *devices.DevicesManager
+	WSSessions        *signalws.SessionManager
+	Verification      *sessionshim.Shim
 	// RateLimits is the rate limiter registry applied to critical routes.
 	// When nil, rate limiting is disabled. Production deployments should
 	// always supply a registry; use limits.NewDefaultRegistry().
 	RateLimits *limits.Registry
+	// IsProduction selects the fail mode for missing abuse checkers. In
+	// development (false) a nil SpamChecker/FraudChecker falls back to the
+	// allow-all NoOp policy. In production (true) the fallback is the
+	// fail-closed DenyAll policy, so a misconfiguration blocks traffic
+	// loudly rather than silently admitting unfiltered traffic.
+	IsProduction bool
 	// SpamChecker is the spam detection policy applied before each message
 	// send. When nil, a NoOpChecker is used and all messages are allowed.
 	SpamChecker spam.SpamChecker
@@ -154,6 +227,12 @@ type ServerConfig struct {
 	// consulted before each message store operation. When nil, loop detection is
 	// disabled.
 	LoopDetector *messages.DeliveryLoopDetector
+	// MRMCache holds shared multi-recipient message payloads. When non-nil,
+	// the binary multi-recipient endpoint stores the SSv2 ciphertext once
+	// and per-recipient envelopes reference it via SharedMrmKey. When nil,
+	// the binary endpoint returns 503; the legacy JSON multi-recipient path
+	// is unaffected.
+	MRMCache *messages.MRMCache
 	// ReadTimeout is the maximum duration for reading the entire request,
 	// including the body. Zero uses DefaultReadTimeout (30s).
 	ReadTimeout time.Duration
@@ -224,14 +303,24 @@ func NewServer(cfg ServerConfig) *Server {
 
 	spamChecker := cfg.SpamChecker
 	if spamChecker == nil {
-		cfg.Logger.Warn("no spam checker configured — all messages will be allowed (fail-open)")
-		spamChecker = &spam.NoOpChecker{}
+		if cfg.IsProduction {
+			cfg.Logger.Error("no spam checker configured in production — failing CLOSED (all messages blocked); this is a misconfiguration")
+			spamChecker = spam.DenyAllChecker{}
+		} else {
+			cfg.Logger.Warn("no spam checker configured — all messages will be allowed (fail-open)")
+			spamChecker = &spam.NoOpChecker{}
+		}
 	}
 
 	fraudChecker := cfg.FraudChecker
 	if fraudChecker == nil {
-		cfg.Logger.Warn("no fraud checker configured — all registrations will be allowed")
-		fraudChecker = spam.NoOpFraudChecker{}
+		if cfg.IsProduction {
+			cfg.Logger.Error("no fraud checker configured in production — failing CLOSED (all registrations blocked); this is a misconfiguration")
+			fraudChecker = spam.DenyAllFraudChecker{}
+		} else {
+			cfg.Logger.Warn("no fraud checker configured — all registrations will be allowed")
+			fraudChecker = spam.NoOpFraudChecker{}
+		}
 	}
 
 	// Parse trusted proxy CIDRs.
@@ -254,33 +343,45 @@ func NewServer(cfg ServerConfig) *Server {
 		}
 	}
 
+	var regCaptcha *captcha.RegistrationCaptchaManager
+	if cfg.CaptchaChecker != nil {
+		regCaptcha = captcha.NewRegistrationCaptchaManager(cfg.CaptchaChecker)
+	}
 	s := &Server{
-		logger:          cfg.Logger,
-		tlsCertFile:     cfg.TLSCertFile,
-		tlsKeyFile:      cfg.TLSKeyFile,
-		accounts:        cfg.Accounts,
-		captcha:         cfg.Captcha,
-		certificates:    cfg.Certificates,
-		keys:            cfg.Keys,
-		messages:        cfg.Messages,
-		profiles:        cfg.Profiles,
-		stickers:        cfg.Stickers,
-		directory:       cfg.Directory,
-		secureStorage:   cfg.SecureStorage,
-		svr:             cfg.SVR,
-		calling:         cfg.Calling,
-		callSignaling:   cfg.CallSignaling,
-		keyTransparency: cfg.KeyTransparency,
-		usernames:       cfg.Usernames,
-		devices:         cfg.Devices,
-		wsSessions:      cfg.WSSessions,
-		verification:    cfg.Verification,
-		rateLimits:      cfg.RateLimits,
-		spamChecker:     spamChecker,
-		fraudChecker:    fraudChecker,
-		reportStore:     cfg.ReportStore,
-		loopDetector:    cfg.LoopDetector,
+		logger:             cfg.Logger,
+		audit:              cfg.Audit,
+		tlsCertFile:        cfg.TLSCertFile,
+		tlsKeyFile:         cfg.TLSKeyFile,
+		accounts:           cfg.Accounts,
+		captcha:            cfg.Captcha,
+		captchaChecker:     cfg.CaptchaChecker,
+		regCaptcha:         regCaptcha,
+		remoteConfig:       cfg.RemoteConfig,
+		certificates:       cfg.Certificates,
+		keys:               cfg.Keys,
+		messages:           cfg.Messages,
+		profiles:           cfg.Profiles,
+		stickers:           cfg.Stickers,
+		directory:          cfg.Directory,
+		secureStorage:      cfg.SecureStorage,
+		svr:                cfg.SVR,
+		calling:            cfg.Calling,
+		callSignaling:      cfg.CallSignaling,
+		backups:            cfg.Backups,
+		keyTransparency:    cfg.KeyTransparency,
+		usernames:          cfg.Usernames,
+		recoveryPasswords:  cfg.RecoveryPasswords,
+		devices:            cfg.Devices,
+		wsSessions:         cfg.WSSessions,
+		verification:       cfg.Verification,
+		rateLimits:         cfg.RateLimits,
+		spamChecker:        spamChecker,
+		fraudChecker:       fraudChecker,
+		reportStore:        cfg.ReportStore,
+		loopDetector:       cfg.LoopDetector,
+		mrmCache:           cfg.MRMCache,
 		attachmentStore:    cfg.Attachments,
+		avatarCDN:          cfg.AvatarCDN,
 		staticResourcesDir: cfg.StaticResourcesDir,
 		allowedOrigins:     cfg.AllowedOrigins,
 		clientVersion:      cfg.ClientVersion,
@@ -288,6 +389,12 @@ func NewServer(cfg ServerConfig) *Server {
 		frontendFS:         cfg.FrontendFS,
 		webUIHandler:       cfg.WebUIHandler,
 		webUIEventHub:      cfg.WebUIEventHub,
+	}
+
+	// Propagate the configured WebSocket origin allow-list to the event hub so
+	// the /api/v1/events upgrade is origin-checked rather than open to all.
+	if s.webUIEventHub != nil {
+		s.webUIEventHub.SetAllowedOrigins(cfg.AllowedOrigins)
 	}
 
 	mux := http.NewServeMux()
@@ -359,7 +466,10 @@ func (s *Server) routes(mux *http.ServeMux) {
 	optionalAuth := func(h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			dest := r.PathValue("destination")
-			optionalAuthMiddleware(s.accounts, dest, h).ServeHTTP(w, r)
+			resolve := func(req *http.Request) (*accounts.Account, error) {
+				return s.resolveAccountByServiceIdentifier(req, dest)
+			}
+			optionalAuthMiddleware(s.accounts, resolve, h).ServeHTTP(w, r)
 		}
 	}
 
@@ -373,22 +483,26 @@ func (s *Server) routes(mux *http.ServeMux) {
 	optionalAuthByIdentifier := func(h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			dest := r.PathValue("identifier")
-			optionalAuthMiddleware(s.accounts, dest, h).ServeHTTP(w, r)
+			resolve := func(req *http.Request) (*accounts.Account, error) {
+				return s.resolveAccountByServiceIdentifier(req, dest)
+			}
+			optionalAuthMiddleware(s.accounts, resolve, h).ServeHTTP(w, r)
 		}
 	}
 
 	// Rate limiter aliases; nil when registry is not configured.
 	var (
-		rlReg       limits.RateLimiter
-		rlVer       limits.RateLimiter
-		rlMsg       limits.RateLimiter
-		rlKeys      limits.RateLimiter
-		rlProf      limits.RateLimiter
-		rlAtt       limits.RateLimiter
-		rlUser      limits.RateLimiter
-		rlAcctCheck limits.RateLimiter
-		rlDevAlloc  limits.RateLimiter
-		rlDevVerify limits.RateLimiter
+		rlReg          limits.RateLimiter
+		rlVer          limits.RateLimiter
+		rlMsg          limits.RateLimiter
+		rlKeys         limits.RateLimiter
+		rlProf         limits.RateLimiter
+		rlAtt          limits.RateLimiter
+		rlUser         limits.RateLimiter
+		rlAcctCheck    limits.RateLimiter
+		rlDevAlloc     limits.RateLimiter
+		rlDevVerify    limits.RateLimiter
+		rlCreateCallLk limits.RateLimiter
 	)
 	if s.rateLimits != nil {
 		rlReg = s.rateLimits.ForRegistration()
@@ -401,6 +515,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 		rlAcctCheck = s.rateLimits.ForAccountCheck()
 		rlDevAlloc = s.rateLimits.ForDeviceAllocate()
 		rlDevVerify = s.rateLimits.ForDeviceVerify()
+		rlCreateCallLk = s.rateLimits.ForCreateCallLink()
 	}
 
 	// Registration
@@ -412,6 +527,8 @@ func (s *Server) routes(mux *http.ServeMux) {
 		rateLimit(rlVer, ipKey, http.HandlerFunc(s.handleCreateVerificationSession)))
 	mux.Handle("GET /v1/verification/session/{id}",
 		rateLimit(rlVer, ipKey, http.HandlerFunc(s.handleGetVerificationSession)))
+	mux.Handle("PATCH /v1/verification/session/{id}",
+		rateLimit(rlVer, ipKey, http.HandlerFunc(s.handleUpdateVerificationSession)))
 	mux.Handle("POST /v1/verification/session/{id}/code",
 		rateLimit(rlVer, ipKey, http.HandlerFunc(s.handleRequestVerificationCode)))
 	mux.Handle("PUT /v1/verification/session/{id}/code",
@@ -545,10 +662,11 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.Handle("POST /cdn3/{rest...}", rateLimit(rlAtt, ipKey, http.HandlerFunc(s.handleCDNUpload)))
 	mux.Handle("PATCH /cdn3/{rest...}", rateLimit(rlAtt, ipKey, http.HandlerFunc(s.handleCDNUpload)))
 	mux.Handle("HEAD /cdn3/{rest...}", rateLimit(rlAtt, ipKey, http.HandlerFunc(s.handleCDNUpload)))
-	// CDN download
-	mux.HandleFunc("GET /cdn/{rest...}", s.handleCDNDownload)
-	mux.HandleFunc("GET /cdn2/{rest...}", s.handleCDNDownload)
-	mux.HandleFunc("GET /cdn3/{rest...}", s.handleCDNDownload)
+	// CDN download — rate-limited by IP to prevent unauthenticated download
+	// flooding of the attachment store.
+	mux.Handle("GET /cdn/{rest...}", rateLimit(rlAtt, ipKey, http.HandlerFunc(s.handleCDNDownload)))
+	mux.Handle("GET /cdn2/{rest...}", rateLimit(rlAtt, ipKey, http.HandlerFunc(s.handleCDNDownload)))
+	mux.Handle("GET /cdn3/{rest...}", rateLimit(rlAtt, ipKey, http.HandlerFunc(s.handleCDNDownload)))
 
 	// Static resources (emoji, dictionaries, release notes)
 	if s.staticResourcesDir != "" {
@@ -579,11 +697,10 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /storage/{rest...}", auth(s.handleGetStorageManifestVersion))
 	mux.HandleFunc("GET /storage/{rest...}", auth(s.handleGetStorageManifestVersion))
 
-	// SVR2 (Secure Value Recovery v2 - WebSocket)
-	// Catch-all for any SVR2 request path; signal-cli's SVR2 client may use
-	// various subpaths (/v1/{mrenclave}, /{enclaveId}, etc.)
-	mux.HandleFunc("GET /svr2/{rest...}", s.handleSVR2WebSocket)
-	mux.HandleFunc("PUT /svr2/{rest...}", s.handleSVR2WebSocket)
+	// SVR2 WebSocket lives in cmd/svr2 as of Phase 4.2. Per Java's
+	// architecture the mobile client connects there directly; signald
+	// only issues credentials at /v2/svr/auth and calls cmd/svr2's
+	// admin DELETE /v1/delete on account deletion.
 
 	// SVR (Secure Value Recovery)
 	mux.HandleFunc("GET /v2/backup/auth", auth(s.handleGetSVRBackupAuth))
@@ -597,7 +714,9 @@ func (s *Server) routes(mux *http.ServeMux) {
 
 	// Calling
 	mux.HandleFunc("GET /v2/calling/relays", auth(s.handleGetCallingRelays))
-	mux.HandleFunc("POST /v1/call-link/create-auth", auth(s.handleGetCallLinkAuth))
+	mux.Handle("POST /v1/call-link/create-auth",
+		authMiddleware(s.accounts,
+			rateLimit(rlCreateCallLk, uuidKey, http.HandlerFunc(s.handleGetCallLinkAuth)).ServeHTTP))
 	mux.HandleFunc("PUT /v1/call_quality_survey", s.handleSubmitCallQualitySurvey)
 
 	// Call signaling relay (1:1 audio/video)
@@ -620,12 +739,24 @@ func (s *Server) routes(mux *http.ServeMux) {
 	// Donations
 	mux.HandleFunc("POST /v1/donation/redeem-receipt", auth(s.handleRedeemDonationReceipt))
 
-	// Archives/Backup
-	mux.HandleFunc("GET /v1/archives/auth", auth(s.handleGetBackupAuth))
-	mux.HandleFunc("GET /v1/archives/upload/form", auth(s.handleGetBackupUploadForm))
+	// Archives/Backup — account-authenticated (Signal session)
 	mux.HandleFunc("PUT /v1/archives/backupid", auth(s.handleSetBackupId))
-	mux.HandleFunc("POST /v1/archives", auth(s.handleRefreshBackup))
-	mux.HandleFunc("GET /v1/archives", auth(s.handleGetBackupInfo))
+	mux.HandleFunc("GET /v1/archives/backupid/limits", auth(s.handleGetBackupIdLimits))
+	mux.HandleFunc("POST /v1/archives/redeem-receipt", auth(s.handleRedeemReceipt))
+	mux.HandleFunc("GET /v1/archives/auth", auth(s.handleGetBackupAuth))
+	// Archives/Backup — ZK-authenticated (X-Signal-ZK-Auth headers, no Signal session)
+	mux.HandleFunc("GET /v1/archives", s.handleGetBackupInfo)
+	mux.HandleFunc("POST /v1/archives", s.handleRefreshBackup)
+	mux.HandleFunc("DELETE /v1/archives", s.handleDeleteBackup)
+	mux.HandleFunc("PUT /v1/archives/keys", s.handleSetBackupPublicKey)
+	mux.HandleFunc("GET /v1/archives/upload/form", s.handleGetBackupUploadForm)
+	mux.HandleFunc("GET /v1/archives/media/upload/form", s.handleGetMediaUploadForm)
+	mux.HandleFunc("PUT /v1/archives/media", s.handleCopyMedia)
+	mux.HandleFunc("PUT /v1/archives/media/batch", s.handleCopyMediaBatch)
+	mux.HandleFunc("GET /v1/archives/media", s.handleListMedia)
+	mux.HandleFunc("POST /v1/archives/media/delete", s.handleDeleteMedia)
+	mux.HandleFunc("GET /v1/archives/auth/read", s.handleGetCDNReadAuth)
+	mux.HandleFunc("GET /v1/archives/auth/svrb", s.handleGetSVRBAuth)
 
 	// Device Check
 	mux.HandleFunc("GET /v1/devicecheck/attest", s.handleDeviceCheckAttestChallenge)
@@ -657,6 +788,14 @@ func (s *Server) routes(mux *http.ServeMux) {
 // This allows wiring attachment storage separately from the main server config.
 func (s *Server) SetAttachmentStore(store attachments.Store) {
 	s.attachmentStore = store
+}
+
+// SetAttachmentTus wires the external TUS server URI + credentials generator
+// used by GET /v4/attachments/form/upload. Pass an empty uri or a nil
+// generator to fall back to the embedded /cdn3 path.
+func (s *Server) SetAttachmentTus(uri string, gen *external.Generator) {
+	s.tusURI = uri
+	s.tusGenerator = gen
 }
 
 // Listen binds the network listener without starting to serve requests. This

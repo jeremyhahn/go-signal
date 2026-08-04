@@ -2,9 +2,10 @@ package daostore
 
 import (
 	"context"
-	"fmt"
 	"path/filepath"
 	"strings"
+
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 
 	"github.com/jeremyhahn/go-qrdb/pkg/engine"
 	"github.com/jeremyhahn/go-qrdb/pkg/index"
@@ -19,7 +20,7 @@ func NewEmbeddedKVStore(dataDir string) (kvstore.KVStore, error) {
 	pebbleCfg := pebble.DefaultConfig(filepath.Join(dataDir, "pebble"))
 	stg, err := pebble.New(pebbleCfg)
 	if err != nil {
-		return nil, fmt.Errorf("create pebble storage: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "create pebble storage", err)
 	}
 
 	eng := engine.NewKVEngine(stg)

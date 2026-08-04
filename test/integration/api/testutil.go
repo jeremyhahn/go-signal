@@ -29,10 +29,14 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	"github.com/jeremyhahn/go-signal/pkg/devices"
 	"github.com/jeremyhahn/go-signal/pkg/directory"
+	"github.com/jeremyhahn/go-signal/pkg/extservice/registration/inprocess"
 	"github.com/jeremyhahn/go-signal/pkg/keys"
 	"github.com/jeremyhahn/go-signal/pkg/keytransparency"
 	"github.com/jeremyhahn/go-signal/pkg/messages"
 	"github.com/jeremyhahn/go-signal/pkg/profiles"
+	"github.com/jeremyhahn/go-signal/pkg/registration/core"
+	"github.com/jeremyhahn/go-signal/pkg/registration/sessionshim"
+	"github.com/jeremyhahn/go-signal/pkg/remoteconfig"
 	"github.com/jeremyhahn/go-signal/pkg/securestorage"
 	"github.com/jeremyhahn/go-signal/pkg/securevaluerecovery"
 	"github.com/jeremyhahn/go-signal/pkg/stickers"
@@ -123,7 +127,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	stickersMgr := stickers.NewStickersManager(logger)
+	stickersMgr := stickers.NewStickersManager(stickers.ManagerConfig{Logger: logger})
 	directoryMgr := directory.NewDirectoryManager(logger)
 	secureStorageMgr := securestorage.NewSecureStorageManager(logger)
 	svrMgr := securevaluerecovery.NewSVRManager(logger)
@@ -147,16 +151,40 @@ func setupTestEnv(t *testing.T) *testEnv {
 	wsSessions := signalws.NewSessionManager(logger)
 	verificationStore := verification.NewMemoryVerificationSessionStore()
 	verificationTransport := verification.NewStubTransport(logger)
-	verificationMgr := verification.NewManager(verificationStore, verificationTransport, verification.ManagerConfig{
-		// FixedCode enables deterministic verification in tests: registerTestAccount
-		// always submits "123456" and the stub transport will match it.
+	coreSvc := core.NewService(verificationStore, verificationTransport, core.Config{
+		// FixedCode enables deterministic verification in tests:
+		// registerTestAccount always submits "123456" and the stub
+		// transport will match it.
 		FixedCode: "123456",
+	})
+	t.Cleanup(coreSvc.Shutdown)
+	verificationMgr := sessionshim.NewShim(sessionshim.Config{
+		Client:       inprocess.New(coreSvc),
+		CaptchaStore: sessionshim.NewMemoryCaptchaStore(),
 	})
 
 	// Wire real-time WebSocket delivery.
 	messagesMgr.SetDeliveryCallback(func(uuid string, deviceID uint64, env *messages.Envelope) {
 		wsSessions.DeliverMessage(uuid, deviceID, env)
 	})
+
+	// Seed remote (dynamic) configuration so GET /v2/config exercises the
+	// real evaluation pipeline. The global.* flags ship to every platform
+	// at 100% so every account receives value "TRUE".
+	rcStore := remoteconfig.NewMemoryStore()
+	for _, name := range []string{
+		"global.calling", "global.groupsv2", "global.storage",
+		"global.senderKey", "global.stories", "global.giftBadges",
+	} {
+		require.NoError(t, rcStore.Put(context.Background(), remoteconfig.Config{
+			Name:       name,
+			Percentage: 100,
+			Value:      "TRUE",
+		}))
+	}
+	remoteConfigMgr, err := remoteconfig.NewManager(context.Background(), remoteconfig.ManagerConfig{Store: rcStore})
+	require.NoError(t, err)
+	t.Cleanup(remoteConfigMgr.Stop)
 
 	srv := rest.NewServer(rest.ServerConfig{
 		Host:            "127.0.0.1",
@@ -178,9 +206,10 @@ func setupTestEnv(t *testing.T) *testEnv {
 		Devices:         devicesMgr,
 		WSSessions:      wsSessions,
 		Verification:    verificationMgr,
+		RemoteConfig:    remoteConfigMgr,
 	})
 
-	err := srv.Listen()
+	err = srv.Listen()
 	require.NoError(t, err)
 
 	addr := srv.Addr()

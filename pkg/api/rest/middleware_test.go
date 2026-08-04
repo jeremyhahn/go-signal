@@ -436,6 +436,7 @@ func TestContextWithAccount_RoundTrip(t *testing.T) {
 	got := accountFromContext(ctx)
 	if got == nil {
 		t.Fatal("expected account from context")
+		return
 	}
 	if got.UUID != acct.UUID {
 		t.Errorf("expected UUID %s, got %s", acct.UUID, got.UUID)

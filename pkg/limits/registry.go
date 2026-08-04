@@ -18,6 +18,10 @@ type Registry struct {
 	deviceAllocate  RateLimiter
 	deviceVerify    RateLimiter
 	inboundMsgBytes RateLimiter
+	setBackupID     RateLimiter
+	setPaidMediaID  RateLimiter
+	backupAttach    RateLimiter
+	createCallLink  RateLimiter
 }
 
 // NewRegistry creates a Registry using the supplied Config.  For each
@@ -42,6 +46,10 @@ func NewRegistry(cfg Config) *Registry {
 		deviceAllocate:  NewTokenBucketLimiter(mergeConfig(cfg.DeviceAllocate, def.DeviceAllocate)),
 		deviceVerify:    NewTokenBucketLimiter(mergeConfig(cfg.DeviceVerify, def.DeviceVerify)),
 		inboundMsgBytes: NewTokenBucketLimiter(mergeConfig(cfg.InboundMessageBytes, def.InboundMessageBytes)),
+		setBackupID:     NewTokenBucketLimiter(mergeConfig(cfg.SetBackupID, def.SetBackupID)),
+		setPaidMediaID:  NewTokenBucketLimiter(mergeConfig(cfg.SetPaidMediaBackupID, def.SetPaidMediaBackupID)),
+		backupAttach:    NewTokenBucketLimiter(mergeConfig(cfg.BackupAttachment, def.BackupAttachment)),
+		createCallLink:  NewTokenBucketLimiter(mergeConfig(cfg.CreateCallLink, def.CreateCallLink)),
 	}
 }
 
@@ -111,12 +119,30 @@ func (r *Registry) ForDeviceVerify() RateLimiter { return r.deviceVerify }
 // Key: authenticated account UUID.
 func (r *Registry) ForInboundMessageBytes() RateLimiter { return r.inboundMsgBytes }
 
+// ForSetBackupID returns the rate limiter for PUT /v1/archives/backupid
+// rotations of the message backup-id slot. Key: authenticated account UUID.
+func (r *Registry) ForSetBackupID() RateLimiter { return r.setBackupID }
+
+// ForSetPaidMediaBackupID returns the rate limiter for PUT /v1/archives/backupid
+// rotations of the media backup-id slot on paid accounts. Key: authenticated
+// account UUID.
+func (r *Registry) ForSetPaidMediaBackupID() RateLimiter { return r.setPaidMediaID }
+
+// ForBackupAttachment returns the rate limiter for temporary-attachment
+// upload-form requests against the backup CDN. Key: base64 of the hashed
+// backup-id (per Java BackupManager.rateLimitKey).
+func (r *Registry) ForBackupAttachment() RateLimiter { return r.backupAttach }
+
+// ForCreateCallLink returns the rate limiter for POST /v1/call-link/create-auth.
+// Mirrors Java's `createCallLink` limiter — key: authenticated account UUID.
+func (r *Registry) ForCreateCallLink() RateLimiter { return r.createCallLink }
+
 // stopper is a private interface satisfied by any limiter that exposes a
 // Stop method.  Using a local interface avoids widening the public RateLimiter
 // contract while still supporting type-safe dispatch.
 type stopper interface{ Stop() }
 
-// Stop halts the background goroutines of all 15 limiter fields.
+// Stop halts the background goroutines of all limiter fields.
 // It is safe to call Stop multiple times; each underlying TokenBucketLimiter
 // uses sync.Once so subsequent calls on an already-stopped limiter are no-ops.
 func (r *Registry) Stop() {
@@ -136,6 +162,10 @@ func (r *Registry) Stop() {
 		r.deviceAllocate,
 		r.deviceVerify,
 		r.inboundMsgBytes,
+		r.setBackupID,
+		r.setPaidMediaID,
+		r.backupAttach,
+		r.createCallLink,
 	} {
 		if s, ok := rl.(stopper); ok {
 			s.Stop()

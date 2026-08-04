@@ -12,6 +12,7 @@ type memoryStore struct {
 	mu        sync.RWMutex
 	accounts  map[string]*Account
 	byNumber  map[string]string // number -> uuid
+	byPNI     map[string]string // PNI -> uuid
 	createErr error
 	updateErr error
 }
@@ -20,6 +21,7 @@ func newMemoryStore() *memoryStore {
 	return &memoryStore{
 		accounts: make(map[string]*Account),
 		byNumber: make(map[string]string),
+		byPNI:    make(map[string]string),
 	}
 }
 
@@ -40,6 +42,9 @@ func (s *memoryStore) Create(_ context.Context, account *Account) error {
 	cp := copyAccount(account)
 	s.accounts[account.UUID] = cp
 	s.byNumber[account.Number] = account.UUID
+	if account.PNI != "" {
+		s.byPNI[account.PNI] = account.UUID
+	}
 	return nil
 }
 
@@ -61,6 +66,19 @@ func (s *memoryStore) GetByNumber(_ context.Context, number string) (*Account, e
 	uuid, ok := s.byNumber[number]
 	if !ok {
 		return nil, &AccountNotFoundError{Identifier: number}
+	}
+	return copyAccount(s.accounts[uuid]), nil
+}
+
+// GetByPNI is a minimal implementation for the manager_test memory
+// store. Tests that care about PNI lookup can populate byPNI directly.
+func (s *memoryStore) GetByPNI(_ context.Context, pni string) (*Account, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	uuid, ok := s.byPNI[pni]
+	if !ok {
+		return nil, &AccountNotFoundError{Identifier: pni}
 	}
 	return copyAccount(s.accounts[uuid]), nil
 }
@@ -89,6 +107,21 @@ func (s *memoryStore) Delete(_ context.Context, uuid string) error {
 	}
 	delete(s.byNumber, a.Number)
 	delete(s.accounts, uuid)
+	return nil
+}
+
+func (s *memoryStore) ListAll(_ context.Context, fn func(*Account) error) error {
+	s.mu.Lock()
+	snap := make([]*Account, 0, len(s.accounts))
+	for _, a := range s.accounts {
+		snap = append(snap, copyAccount(a))
+	}
+	s.mu.Unlock()
+	for _, a := range snap {
+		if err := fn(a); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -576,6 +609,7 @@ func TestAddDevice_Success(t *testing.T) {
 	added := result.GetDevice(2)
 	if added == nil {
 		t.Fatal("expected device with ID 2")
+		return
 	}
 	if added.AuthToken != "new-token" {
 		t.Errorf("AuthToken = %q, want %q", added.AuthToken, "new-token")
@@ -886,6 +920,7 @@ func TestSetDeviceAttributes_Success(t *testing.T) {
 	dev := result.GetDevice(PrimaryDeviceID)
 	if dev == nil {
 		t.Fatal("primary device not found")
+		return
 	}
 	if dev.Name != "My Phone" {
 		t.Errorf("Name = %q, want %q", dev.Name, "My Phone")
@@ -1768,6 +1803,200 @@ func TestHashDeviceAuthToken_AuthTokenPreserved(t *testing.T) {
 	}
 	if d.AuthToken != token {
 		t.Errorf("AuthToken = %q, want %q", d.AuthToken, token)
+	}
+}
+
+// --- RecreatePreserving ---
+
+func TestRecreatePreserving_NilAccount(t *testing.T) {
+	m := NewAccountsManager(newMemoryStore(), 0)
+	err := m.RecreatePreserving(context.Background(), nil)
+	assertInvalidArgErr(t, err, "account")
+}
+
+func TestRecreatePreserving_EmptyUUID(t *testing.T) {
+	m := NewAccountsManager(newMemoryStore(), 0)
+	err := m.RecreatePreserving(context.Background(), &Account{})
+	assertInvalidArgErr(t, err, "uuid")
+}
+
+func TestRecreatePreserving_Success(t *testing.T) {
+	store := newMemoryStore()
+	m := NewAccountsManager(store, 0)
+	ctx := context.Background()
+
+	acct := &Account{
+		UUID:    "preserve-uuid",
+		Number:  "+15550000001",
+		Version: 42,
+	}
+	if err := m.RecreatePreserving(ctx, acct); err != nil {
+		t.Fatalf("RecreatePreserving: %v", err)
+	}
+	got, err := store.Get(ctx, "preserve-uuid")
+	if err != nil {
+		t.Fatalf("Get after RecreatePreserving: %v", err)
+	}
+	if got.Version != 42 {
+		t.Errorf("Version = %d, want 42", got.Version)
+	}
+}
+
+func TestRecreatePreserving_StoreError(t *testing.T) {
+	store := newMemoryStore()
+	store.createErr = errors.New("store create error")
+	m := NewAccountsManager(store, 0)
+
+	err := m.RecreatePreserving(context.Background(), &Account{UUID: "some-uuid"})
+	if err == nil || err.Error() != "store create error" {
+		t.Errorf("expected store error, got: %v", err)
+	}
+}
+
+// --- ClearGcmRegistration / ClearApnRegistration / clearDevicePush ---
+
+func TestClearGcmRegistration_Success(t *testing.T) {
+	store := newMemoryStore()
+	m := NewAccountsManager(store, 0)
+	ctx := context.Background()
+
+	acct := validAccount()
+	acct.Devices[0].GcmRegistrationID = "gcm-token-123"
+	if err := m.Create(ctx, acct); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := m.ClearGcmRegistration(ctx, acct.UUID, PrimaryDeviceID)
+	if err != nil {
+		t.Fatalf("ClearGcmRegistration: %v", err)
+	}
+	if got.GetDevice(PrimaryDeviceID).GcmRegistrationID != "" {
+		t.Error("expected GcmRegistrationID to be cleared")
+	}
+}
+
+func TestClearGcmRegistration_EmptyUUID(t *testing.T) {
+	m := NewAccountsManager(newMemoryStore(), 0)
+	_, err := m.ClearGcmRegistration(context.Background(), "", 1)
+	assertInvalidArgErr(t, err, "uuid")
+}
+
+func TestClearGcmRegistration_DeviceNotFound(t *testing.T) {
+	store := newMemoryStore()
+	m := NewAccountsManager(store, 0)
+	ctx := context.Background()
+
+	acct := validAccount()
+	if err := m.Create(ctx, acct); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	_, err := m.ClearGcmRegistration(ctx, acct.UUID, 999)
+	var target *DeviceNotFoundError
+	if !errors.As(err, &target) {
+		t.Errorf("expected DeviceNotFoundError, got: %v", err)
+	}
+}
+
+func TestClearApnRegistration_Success(t *testing.T) {
+	store := newMemoryStore()
+	m := NewAccountsManager(store, 0)
+	ctx := context.Background()
+
+	acct := validAccount()
+	acct.Devices[0].ApnRegistrationID = "apn-token"
+	acct.Devices[0].VoipApnRegistrationID = "voip-apn-token"
+	if err := m.Create(ctx, acct); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := m.ClearApnRegistration(ctx, acct.UUID, PrimaryDeviceID)
+	if err != nil {
+		t.Fatalf("ClearApnRegistration: %v", err)
+	}
+	dev := got.GetDevice(PrimaryDeviceID)
+	if dev.ApnRegistrationID != "" || dev.VoipApnRegistrationID != "" {
+		t.Errorf("expected APN tokens cleared, got ApnRegistrationID=%q VoipApnRegistrationID=%q",
+			dev.ApnRegistrationID, dev.VoipApnRegistrationID)
+	}
+}
+
+func TestClearApnRegistration_EmptyUUID(t *testing.T) {
+	m := NewAccountsManager(newMemoryStore(), 0)
+	_, err := m.ClearApnRegistration(context.Background(), "", 1)
+	assertInvalidArgErr(t, err, "uuid")
+}
+
+func TestClearGcmRegistration_AccountNotFound(t *testing.T) {
+	m := NewAccountsManager(newMemoryStore(), 0)
+	_, err := m.ClearGcmRegistration(context.Background(), "nonexistent-uuid", 1)
+	var target *AccountNotFoundError
+	if !errors.As(err, &target) {
+		t.Errorf("expected AccountNotFoundError, got: %v", err)
+	}
+}
+
+// --- ListAll ---
+
+func TestListAll_Empty(t *testing.T) {
+	m := NewAccountsManager(newMemoryStore(), 0)
+	var visited []*Account
+	err := m.ListAll(context.Background(), func(a *Account) error {
+		visited = append(visited, a)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ListAll on empty store: %v", err)
+	}
+	if len(visited) != 0 {
+		t.Errorf("expected 0 accounts, got %d", len(visited))
+	}
+}
+
+func TestListAll_MultipleAccounts(t *testing.T) {
+	store := newMemoryStore()
+	m := NewAccountsManager(store, 0)
+	ctx := context.Background()
+
+	for i, n := range []string{"+15550000001", "+15550000002", "+15550000003"} {
+		a := validAccount()
+		a.UUID = "uuid-" + n
+		a.Number = n
+		_ = i
+		if err := m.Create(ctx, a); err != nil {
+			t.Fatalf("Create %s: %v", n, err)
+		}
+	}
+
+	var uuids []string
+	err := m.ListAll(ctx, func(a *Account) error {
+		uuids = append(uuids, a.UUID)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ListAll: %v", err)
+	}
+	if len(uuids) != 3 {
+		t.Errorf("expected 3 accounts, got %d", len(uuids))
+	}
+}
+
+func TestListAll_CallbackError(t *testing.T) {
+	store := newMemoryStore()
+	m := NewAccountsManager(store, 0)
+	ctx := context.Background()
+
+	acct := validAccount()
+	if err := m.Create(ctx, acct); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	sentinel := errors.New("callback error")
+	err := m.ListAll(ctx, func(_ *Account) error {
+		return sentinel
+	})
+	if !errors.Is(err, sentinel) {
+		t.Errorf("expected sentinel error, got: %v", err)
 	}
 }
 

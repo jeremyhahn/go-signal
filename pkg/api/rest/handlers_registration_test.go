@@ -12,6 +12,10 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-signal/pkg/auth"
+	"github.com/jeremyhahn/go-signal/pkg/captcha"
+	"github.com/jeremyhahn/go-signal/pkg/extservice/registration/inprocess"
+	"github.com/jeremyhahn/go-signal/pkg/registration/core"
+	"github.com/jeremyhahn/go-signal/pkg/registration/sessionshim"
 	"github.com/jeremyhahn/go-signal/pkg/verification"
 )
 
@@ -56,15 +60,19 @@ func newTestServerForExpiredSession(t *testing.T, number string) (*Server, strin
 
 	transport := newNoopVerificationTransport()
 	store := verification.NewMemoryVerificationSessionStore()
-	verificationMgr := verification.NewManager(store, transport, verification.ManagerConfig{
+	coreSvc := core.NewService(store, transport, core.Config{
 		CodeLength:  6,
 		CodeTTL:     time.Millisecond,
 		SessionTTL:  time.Millisecond,
 		MaxAttempts: 3,
 	})
+	t.Cleanup(coreSvc.Shutdown)
+	verificationMgr := sessionshim.NewShim(sessionshim.Config{
+		Client:       inprocess.New(coreSvc),
+		CaptchaStore: sessionshim.NewMemoryCaptchaStore(),
+	})
 
 	s := buildTestServerWithVerificationMgr(t, verificationMgr)
-	t.Cleanup(verificationMgr.Shutdown)
 
 	session, err := verificationMgr.CreateSession(ctx, number)
 	if err != nil {
@@ -952,4 +960,134 @@ func TestEnforceVerifiedSession_SessionNotVerifiedError(t *testing.T) {
 // encodeB64 is a test helper to base64-encode bytes using standard encoding.
 func encodeB64(b []byte) string {
 	return base64.StdEncoding.EncodeToString(b)
+}
+
+// --- Registration captcha wiring -----------------------------------------
+
+// registrationBodyWithCaptcha appends a top-level captcha field to the
+// standard registration body for handler-level captcha tests.
+func registrationBodyWithCaptcha(km *signalKeyMaterial, sessionID, captchaToken string) string {
+	return `{
+		"sessionId": "` + sessionID + `",
+		"captcha": "` + captchaToken + `",
+		"accountAttributes":{
+			"fetchesMessages":true,
+			"registrationId":111,
+			"capabilities":{}
+		},
+		"aciIdentityKey":"` + km.ACIIdentityKeyB64 + `",
+		"pniIdentityKey":"` + km.PNIIdentityKeyB64 + `",
+		"aciSignedPreKey":{"keyId":1,"publicKey":"` + km.ACISignedPreKeyPubB64 + `","signature":"` + km.ACISignedPreKeySigB64 + `"},
+		"pniSignedPreKey":{"keyId":2,"publicKey":"` + km.PNISignedPreKeyPubB64 + `","signature":"` + km.PNISignedPreKeySigB64 + `"},
+		"aciPqLastResortPreKey":{"keyId":3,"publicKey":"` + km.ACIPqPubB64 + `","signature":"` + km.ACIPqSigB64 + `"},
+		"pniPqLastResortPreKey":{"keyId":4,"publicKey":"` + km.PNIPqPubB64 + `","signature":"` + km.PNIPqSigB64 + `"}
+	}`
+}
+
+func TestHandleRegistration_CaptchaAccepted(t *testing.T) {
+	s, transport := newTestServerWithVerification(t)
+	checker := buildCaptchaCheckerWithProvider(&captchaStubVerifier{success: true, score: 0.9})
+	s.captchaChecker = checker
+	s.regCaptcha = captcha.NewRegistrationCaptchaManager(checker)
+
+	km := getTestKeyMaterial(t)
+	const number = "+15555550600"
+	sessionID := createVerifiedSession(t, s, transport, number)
+	body := registrationBodyWithCaptcha(km, sessionID, "recaptcha.sk.registration.opaque")
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/registration", strings.NewReader(body))
+	req.SetBasicAuth(number, "password123")
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandleRegistration_CaptchaRejected(t *testing.T) {
+	s, transport := newTestServerWithVerification(t)
+	checker := buildCaptchaCheckerWithProvider(&captchaStubVerifier{success: false})
+	s.captchaChecker = checker
+	s.regCaptcha = captcha.NewRegistrationCaptchaManager(checker)
+
+	km := getTestKeyMaterial(t)
+	const number = "+15555550601"
+	sessionID := createVerifiedSession(t, s, transport, number)
+	body := registrationBodyWithCaptcha(km, sessionID, "recaptcha.sk.registration.opaque")
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/registration", strings.NewReader(body))
+	req.SetBasicAuth(number, "password123")
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 when captcha fails, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandleRegistration_CaptchaActionMismatchRejected(t *testing.T) {
+	// Token has action=challenge but the registration handler expects
+	// action=registration. RegistrationCaptchaManager.Assess must reject.
+	s, transport := newTestServerWithVerification(t)
+	checker := buildCaptchaCheckerWithProvider(&captchaStubVerifier{success: true})
+	s.captchaChecker = checker
+	s.regCaptcha = captcha.NewRegistrationCaptchaManager(checker)
+
+	km := getTestKeyMaterial(t)
+	const number = "+15555550602"
+	sessionID := createVerifiedSession(t, s, transport, number)
+	body := registrationBodyWithCaptcha(km, sessionID, "recaptcha.sk.challenge.opaque")
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/registration", strings.NewReader(body))
+	req.SetBasicAuth(number, "password123")
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 on action mismatch, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandleRegistration_CaptchaWithoutCheckerReturns503(t *testing.T) {
+	s, transport := newTestServerWithVerification(t)
+	// Intentionally leave s.regCaptcha == nil.
+	km := getTestKeyMaterial(t)
+	const number = "+15555550603"
+	sessionID := createVerifiedSession(t, s, transport, number)
+	body := registrationBodyWithCaptcha(km, sessionID, "recaptcha.sk.registration.opaque")
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/registration", strings.NewReader(body))
+	req.SetBasicAuth(number, "password123")
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// --------------------------------------------------------------------------
+// recoveryPasswordSentinel
+// --------------------------------------------------------------------------
+
+func TestRecoveryPasswordSentinel_Error(t *testing.T) {
+	tests := []struct {
+		reason   string
+		expected string
+	}{
+		{"unsupported", "recovery password unsupported"},
+		{"mismatch", "recovery password mismatch"},
+		{"expired", "recovery password expired"},
+		{"", "recovery password "},
+	}
+	for _, tc := range tests {
+		t.Run(tc.reason, func(t *testing.T) {
+			e := &recoveryPasswordSentinel{Reason: tc.reason}
+			got := e.Error()
+			if got != tc.expected {
+				t.Errorf("expected %q, got %q", tc.expected, got)
+			}
+		})
+	}
 }

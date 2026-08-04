@@ -5,8 +5,8 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
-	"github.com/jeremyhahn/go-signal/pkg/errors"
 	"github.com/jeremyhahn/go-signal/pkg/messages"
 )
 
@@ -29,6 +29,7 @@ func TestNewMemoryMessageStore(t *testing.T) {
 	store := NewMemoryMessageStore()
 	if store == nil {
 		t.Fatal("expected non-nil store")
+		return
 	}
 	if store.byDevice == nil {
 		t.Fatal("expected byDevice map to be initialized")
@@ -126,22 +127,38 @@ func TestInsertDeepCopy(t *testing.T) {
 	}
 }
 
-func TestInsertWithEmptyServerGUID(t *testing.T) {
+func TestInsert_NilEnvelope_InvalidArgumentError(t *testing.T) {
+	store := NewMemoryMessageStore()
+	ctx := context.Background()
+
+	_, err := store.Insert(ctx, "dest-uuid", 1, nil)
+	if err == nil {
+		t.Fatal("expected error for nil envelope")
+	}
+	iae, ok := err.(*messages.InvalidArgumentError)
+	if !ok {
+		t.Fatalf("expected *messages.InvalidArgumentError, got %T: %v", err, err)
+	}
+	if iae.Field != "envelope" {
+		t.Fatalf("expected Field %q, got %q", "envelope", iae.Field)
+	}
+}
+
+func TestInsert_EmptyServerGUID_InvalidArgumentError(t *testing.T) {
 	store := NewMemoryMessageStore()
 	ctx := context.Background()
 
 	env := testEnvelope("")
-	id, err := store.Insert(ctx, "dest-uuid", 1, env)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err := store.Insert(ctx, "dest-uuid", 1, env)
+	if err == nil {
+		t.Fatal("expected error for empty ServerGUID")
 	}
-	if id == 0 {
-		t.Fatal("expected non-zero ID")
+	iae, ok := err.(*messages.InvalidArgumentError)
+	if !ok {
+		t.Fatalf("expected *messages.InvalidArgumentError, got %T: %v", err, err)
 	}
-
-	// Should not be in GUID index.
-	if len(store.byGUID) != 0 {
-		t.Fatalf("expected empty GUID index for empty ServerGUID, got %d", len(store.byGUID))
+	if iae.Field != "serverGuid" {
+		t.Fatalf("expected Field %q, got %q", "serverGuid", iae.Field)
 	}
 }
 
@@ -252,7 +269,7 @@ func TestMessageStore_Delete(t *testing.T) {
 	}
 }
 
-func TestMessageStore_DeleteNotFound(t *testing.T) {
+func TestMessageStore_DeleteNotFound_MessageNotFoundError(t *testing.T) {
 	store := NewMemoryMessageStore()
 	ctx := context.Background()
 
@@ -261,16 +278,16 @@ func TestMessageStore_DeleteNotFound(t *testing.T) {
 		t.Fatal("expected error for nonexistent GUID")
 	}
 
-	se, ok := err.(*errors.SignalError)
+	mnfe, ok := err.(*messages.MessageNotFoundError)
 	if !ok {
-		t.Fatalf("expected *errors.SignalError, got %T", err)
+		t.Fatalf("expected *messages.MessageNotFoundError, got %T", err)
 	}
-	if se.Code != errors.ErrNotFound {
-		t.Fatalf("expected ErrNotFound, got %v", se.Code)
+	if mnfe.ServerGUID != "nonexistent-guid" {
+		t.Fatalf("expected ServerGUID %q, got %q", "nonexistent-guid", mnfe.ServerGUID)
 	}
 }
 
-func TestDeleteWrongAccount(t *testing.T) {
+func TestDeleteWrongAccount_MessageNotFoundError(t *testing.T) {
 	store := NewMemoryMessageStore()
 	ctx := context.Background()
 
@@ -283,12 +300,12 @@ func TestDeleteWrongAccount(t *testing.T) {
 		t.Fatal("expected error for wrong account UUID")
 	}
 
-	se, ok := err.(*errors.SignalError)
+	mnfe, ok := err.(*messages.MessageNotFoundError)
 	if !ok {
-		t.Fatalf("expected *errors.SignalError, got %T", err)
+		t.Fatalf("expected *messages.MessageNotFoundError, got %T", err)
 	}
-	if se.Code != errors.ErrNotFound {
-		t.Fatalf("expected ErrNotFound, got %v", se.Code)
+	if mnfe.ServerGUID != "guid-wrong" {
+		t.Fatalf("expected ServerGUID %q, got %q", "guid-wrong", mnfe.ServerGUID)
 	}
 }
 
@@ -453,11 +470,11 @@ func TestDeleteForAccountNonexistent(t *testing.T) {
 	}
 }
 
-func TestDeleteForAccountWithEmptyGUID(t *testing.T) {
+func TestDeleteForAccountWithValidGUID(t *testing.T) {
 	store := NewMemoryMessageStore()
 	ctx := context.Background()
 
-	env := testEnvelope("")
+	env := testEnvelope("guid-valid-eg")
 	if _, err := store.Insert(ctx, "uuid-eg", 1, env); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -680,5 +697,49 @@ func TestInsertPreservesContent(t *testing.T) {
 	}
 	if !bytes.Equal(msgs[0].ReportSpamToken, []byte{0xAA, 0xBB}) {
 		t.Fatal("ReportSpamToken not preserved")
+	}
+}
+
+// TestMemoryMessageStore_RemoveExpired_NoOpReturnsZero documents that the
+// memory backend has no per-row expires_at concept, so the sweep is a
+// uniform no-op rather than an error — lets the worker run cleanly against
+// every backend.
+func TestMemoryMessageStore_RemoveExpired_NoOpReturnsZero(t *testing.T) {
+	s := NewMemoryMessageStore()
+	n, err := s.RemoveExpired(context.Background(), time.Now())
+	if err != nil {
+		t.Fatalf("RemoveExpired: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("removed = %d; want 0", n)
+	}
+}
+
+func TestMemoryMessageStore_HasMessagesForDevice_Empty(t *testing.T) {
+	s := NewMemoryMessageStore()
+	has, err := s.HasMessagesForDevice(context.Background(), "uuid-has-1", 1)
+	if err != nil {
+		t.Fatalf("HasMessagesForDevice: %v", err)
+	}
+	if has {
+		t.Error("HasMessagesForDevice: expected false for empty store")
+	}
+}
+
+func TestMemoryMessageStore_HasMessagesForDevice_WithMessages(t *testing.T) {
+	s := NewMemoryMessageStore()
+	ctx := context.Background()
+
+	env := testEnvelope("guid-hmd-1")
+	if _, err := s.Insert(ctx, "uuid-has-2", 1, env); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	has, err := s.HasMessagesForDevice(ctx, "uuid-has-2", 1)
+	if err != nil {
+		t.Fatalf("HasMessagesForDevice: %v", err)
+	}
+	if !has {
+		t.Error("HasMessagesForDevice: expected true after inserting message")
 	}
 }

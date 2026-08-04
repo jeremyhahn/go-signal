@@ -79,20 +79,20 @@ type Profile struct {
 
 // Device represents a linked Signal device.
 type Device struct {
-	ID      int       `json:"id"`
-	Name    string    `json:"name,omitempty"`
-	Created time.Time `json:"created"`
+	ID       int       `json:"id"`
+	Name     string    `json:"name,omitempty"`
+	Created  time.Time `json:"created"`
 	LastSeen time.Time `json:"lastSeen"`
 }
 
 // Identity represents a contact's identity key.
 type Identity struct {
-	Number      string    `json:"number"`
-	UUID        string    `json:"uuid,omitempty"`
-	Fingerprint string    `json:"fingerprint"`
-	SafetyNumber string   `json:"safetyNumber"`
-	TrustLevel  string    `json:"trustLevel"`
-	Added       time.Time `json:"addedDate"`
+	Number       string    `json:"number"`
+	UUID         string    `json:"uuid,omitempty"`
+	Fingerprint  string    `json:"fingerprint"`
+	SafetyNumber string    `json:"safetyNumber"`
+	TrustLevel   string    `json:"trustLevel"`
+	Added        time.Time `json:"addedDate"`
 }
 
 // FIDO2Credential represents a registered security key.
@@ -106,21 +106,21 @@ type FIDO2Credential struct {
 
 // SendOptions configures how a message is sent.
 type SendOptions struct {
-	Attachments  []string // local file paths
-	NoteToSelf   bool
-	EndSession   bool
-	GroupID      string
+	Attachments    []string // local file paths
+	NoteToSelf     bool
+	EndSession     bool
+	GroupID        string
 	QuoteTimestamp int64
-	QuoteAuthor  string
-	QuoteMessage string
-	PreviewURL   string
-	PreviewTitle string
-	EditTimestamp int64
+	QuoteAuthor    string
+	QuoteMessage   string
+	PreviewURL     string
+	PreviewTitle   string
+	EditTimestamp  int64
 }
 
 // ReceiveOptions configures message receiving.
 type ReceiveOptions struct {
-	Timeout           int  // seconds
+	Timeout           int // seconds
 	IgnoreAttachments bool
 	IgnoreStories     bool
 	SendReadReceipts  bool

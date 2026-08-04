@@ -58,13 +58,13 @@ func (h *WebUIHandler) ctx() (context.Context, context.CancelFunc) {
 
 func (h *WebUIHandler) writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 func (h *WebUIHandler) writeError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
 func (h *WebUIHandler) readJSON(r *http.Request, v interface{}) error {

@@ -15,7 +15,7 @@ type StickerEntity struct {
 }
 
 func (s *StickerEntity) EntityID() uint64      { return s.ID }
-func (s *StickerEntity) SetEntityID(id uint64)  { s.ID = id }
+func (s *StickerEntity) SetEntityID(id uint64) { s.ID = id }
 
 // CompoundIndexes declares a compound index on (PackID, StickerID).
 func (s StickerEntity) CompoundIndexes() []index.CompoundIndexDef {

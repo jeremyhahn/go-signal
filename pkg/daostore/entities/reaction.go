@@ -12,7 +12,7 @@ type ReactionEntity struct {
 }
 
 func (r *ReactionEntity) EntityID() uint64      { return r.ID }
-func (r *ReactionEntity) SetEntityID(id uint64)  { r.ID = id }
+func (r *ReactionEntity) SetEntityID(id uint64) { r.ID = id }
 
 // CompoundIndexes declares a unique compound index on (MessageID, AuthorUUID)
 // since each author can have at most one reaction per message.

@@ -205,6 +205,39 @@ func (s *mockPreKeyStore) DeleteAllForAccount(_ context.Context, uuid string) er
 	return nil
 }
 
+func (s *mockPreKeyStore) ListAccountUUIDs(_ context.Context) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	seen := make(map[string]struct{})
+	collect := func(k string) {
+		for i := 0; i < len(k); i++ {
+			if k[i] == '/' {
+				if i > 0 {
+					seen[k[:i]] = struct{}{}
+				}
+				return
+			}
+		}
+		if k != "" {
+			seen[k] = struct{}{}
+		}
+	}
+	for k := range s.ecKeys {
+		collect(k)
+	}
+	for k := range s.kemKeys {
+		collect(k)
+	}
+	for k := range s.signedKeys {
+		collect(k)
+	}
+	out := make([]string, 0, len(seen))
+	for u := range seen {
+		out = append(out, u)
+	}
+	return out, nil
+}
+
 // --- NewKeysManager tests ---
 
 func TestNewKeysManager_ReturnsNonNil(t *testing.T) {
@@ -685,6 +718,7 @@ func TestStoreSignedPreKey_Success(t *testing.T) {
 	stored := store.signedKeys[deviceKey("uuid", 1)]
 	if stored == nil {
 		t.Fatal("expected signed pre-key to be stored")
+		return
 	}
 	if stored.KeyID != 42 {
 		t.Errorf("expected KeyID 42, got %d", stored.KeyID)
@@ -914,5 +948,86 @@ func TestStoreKEMPreKeys_StoreError(t *testing.T) {
 	}
 	if sigErr.Code != signalerrors.ErrInternal {
 		t.Errorf("expected ErrInternal, got %d", sigErr.Code)
+	}
+}
+
+// --- ListAccountUUIDs ---
+
+func TestListAccountUUIDs_Empty(t *testing.T) {
+	mgr := NewKeysManager(newMockPreKeyStore())
+	uuids, err := mgr.ListAccountUUIDs(context.Background())
+	if err != nil {
+		t.Fatalf("ListAccountUUIDs: %v", err)
+	}
+	if len(uuids) != 0 {
+		t.Errorf("expected empty result, got %v", uuids)
+	}
+}
+
+func TestListAccountUUIDs_NonEmpty(t *testing.T) {
+	store := newMockPreKeyStore()
+	mgr := NewKeysManager(store)
+	ctx := context.Background()
+
+	// Store keys for two different accounts.
+	req1 := &SetKeysRequest{
+		PreKeys: []*PreKey{{KeyID: 1, PublicKey: []byte("pk1")}},
+	}
+	if err := mgr.StoreKeys(ctx, "account-aaa", 1, req1); err != nil {
+		t.Fatalf("StoreKeys account-aaa: %v", err)
+	}
+	req2 := &SetKeysRequest{
+		PreKeys: []*PreKey{{KeyID: 2, PublicKey: []byte("pk2")}},
+	}
+	if err := mgr.StoreKeys(ctx, "account-bbb", 1, req2); err != nil {
+		t.Fatalf("StoreKeys account-bbb: %v", err)
+	}
+
+	uuids, err := mgr.ListAccountUUIDs(ctx)
+	if err != nil {
+		t.Fatalf("ListAccountUUIDs: %v", err)
+	}
+	if len(uuids) < 2 {
+		t.Errorf("expected at least 2 UUIDs, got %v", uuids)
+	}
+}
+
+// --- DeleteAllForAccount ---
+
+func TestDeleteAllForAccount_Success(t *testing.T) {
+	store := newMockPreKeyStore()
+	mgr := NewKeysManager(store)
+	ctx := context.Background()
+
+	// Seed some keys for an account.
+	req := &SetKeysRequest{
+		PreKeys: []*PreKey{{KeyID: 1, PublicKey: []byte("pk")}},
+	}
+	if err := mgr.StoreKeys(ctx, "del-account", 1, req); err != nil {
+		t.Fatalf("StoreKeys: %v", err)
+	}
+
+	if err := mgr.DeleteAllForAccount(ctx, "del-account"); err != nil {
+		t.Fatalf("DeleteAllForAccount: %v", err)
+	}
+
+	// Keys must be gone.
+	state, err := mgr.GetPreKeyCount(ctx, "del-account", 1)
+	if err != nil {
+		t.Fatalf("GetPreKeyCount: %v", err)
+	}
+	if state.ECCount != 0 {
+		t.Errorf("expected 0 EC keys after DeleteAllForAccount, got %d", state.ECCount)
+	}
+}
+
+func TestDeleteAllForAccount_StoreError(t *testing.T) {
+	store := newMockPreKeyStore()
+	store.deleteAccErr = errors.New("delete all error")
+	mgr := NewKeysManager(store)
+
+	err := mgr.DeleteAllForAccount(context.Background(), "some-uuid")
+	if err == nil || err.Error() != "delete all error" {
+		t.Errorf("expected delete all error, got: %v", err)
 	}
 }

@@ -130,7 +130,8 @@ func TestHandleAccountExists_Found(t *testing.T) {
 func TestHandleAccountExists_NotFound(t *testing.T) {
 	s := newTestServer(t)
 
-	req := httptest.NewRequest(http.MethodHead, "/v1/accounts/account/nonexistent-uuid", nil)
+	// A well-formed but unregistered UUID must resolve to 404 (not 400).
+	req := httptest.NewRequest(http.MethodHead, "/v1/accounts/account/00000000-0000-4000-8000-000000000000", nil)
 	rr := httptest.NewRecorder()
 	s.httpServer.Handler.ServeHTTP(rr, req)
 

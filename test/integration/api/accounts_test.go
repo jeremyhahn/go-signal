@@ -43,7 +43,11 @@ func TestAccounts_CheckAccountExists(t *testing.T) {
 
 func TestAccounts_CheckAccountNotExists(t *testing.T) {
 	env := setupTestEnv(t)
-	resp := env.doRequest(t, "HEAD", "/v1/accounts/account/nonexistent-uuid", nil, nil)
+	// Use a well-formed UUID that is guaranteed not to exist. A malformed
+	// identifier (e.g. "nonexistent-uuid") now returns 400 because the server
+	// validates the shape before touching the store; a legitimate-looking but
+	// unregistered UUID correctly yields 404.
+	resp := env.doRequest(t, "HEAD", "/v1/accounts/account/00000000-0000-0000-0000-000000000001", nil, nil)
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	resp.Body.Close()
 }

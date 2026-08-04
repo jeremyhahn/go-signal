@@ -73,7 +73,7 @@ type ClientConfig struct {
 type CryptoStoreConfig struct {
 	SessionStore      store.Session
 	PreKeyStore       store.PreKey
-	SignedPreKeyStore  store.SignedPreKey
+	SignedPreKeyStore store.SignedPreKey
 	IdentityStore     store.IdentityKey
 	SenderKeyStore    groupstore.SenderKey
 }

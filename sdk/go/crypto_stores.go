@@ -1,6 +1,7 @@
 package signal
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 
 	groupRecord "github.com/jeremyhahn/go-libsignal/pkg/groups/state/record"
 	"github.com/jeremyhahn/go-libsignal/pkg/keys/identity"
@@ -67,35 +70,42 @@ func (s *fileSessionStore) path(key string) string {
 	return filepath.Join(s.dir, key+".bin")
 }
 
-func (s *fileSessionStore) LoadSession(address *protocol.SignalAddress) *record.Session {
+func (s *fileSessionStore) LoadSession(address *protocol.SignalAddress) (*record.Session, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	key := addressKey(address)
 	if sess, ok := s.sessions[key]; ok {
-		return sess
+		return sess, nil
 	}
-	sess := record.NewSession(s.serializer.Session, s.serializer.State)
-	return sess
+	// Return a fresh empty session record so the session builder can populate
+	// it during a new session handshake — matches the existing libsignal
+	// SessionBuilder expectation that LoadSession is always non-nil.
+	return record.NewSession(s.serializer.Session, s.serializer.State), nil
 }
 
-func (s *fileSessionStore) StoreSession(address *protocol.SignalAddress, sess *record.Session) {
+func (s *fileSessionStore) StoreSession(address *protocol.SignalAddress, sess *record.Session) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := addressKey(address)
 	s.sessions[key] = sess
-	if data, err := sess.Serialize(); err == nil {
-		_ = os.WriteFile(s.path(key), data, 0600)
+	data, err := sess.Serialize()
+	if err != nil {
+		return signalerrors.Wrap(signalerrors.ErrInternal, "serialize session", err)
 	}
+	if err := os.WriteFile(s.path(key), data, 0600); err != nil {
+		return signalerrors.Wrap(signalerrors.ErrInternal, "persist session", err)
+	}
+	return nil
 }
 
-func (s *fileSessionStore) ContainsSession(address *protocol.SignalAddress) bool {
+func (s *fileSessionStore) ContainsSession(address *protocol.SignalAddress) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	_, ok := s.sessions[addressKey(address)]
-	return ok
+	return ok, nil
 }
 
-func (s *fileSessionStore) GetSubDeviceSessions(name string) []uint32 {
+func (s *fileSessionStore) GetSubDeviceSessions(name string) ([]uint32, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var ids []uint32
@@ -107,24 +117,30 @@ func (s *fileSessionStore) GetSubDeviceSessions(name string) []uint32 {
 			}
 		}
 	}
-	return ids
+	return ids, nil
 }
 
-func (s *fileSessionStore) DeleteSession(address *protocol.SignalAddress) {
+func (s *fileSessionStore) DeleteSession(address *protocol.SignalAddress) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := addressKey(address)
 	delete(s.sessions, key)
-	_ = os.Remove(s.path(key))
+	if err := os.Remove(s.path(key)); err != nil && !os.IsNotExist(err) {
+		return signalerrors.Wrap(signalerrors.ErrInternal, "remove session file", err)
+	}
+	return nil
 }
 
-func (s *fileSessionStore) DeleteAllSessions() {
+func (s *fileSessionStore) DeleteAllSessions() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for k := range s.sessions {
-		_ = os.Remove(s.path(k))
+		if err := os.Remove(s.path(k)); err != nil && !os.IsNotExist(err) {
+			return signalerrors.Wrap(signalerrors.ErrInternal, "remove session file "+strconv.Quote(k), err)
+		}
 	}
 	s.sessions = make(map[string]*record.Session)
+	return nil
 }
 
 // =============================================================================
@@ -148,29 +164,31 @@ func newFilePreKeyStore(dir string) (*filePreKeyStore, error) {
 	}, nil
 }
 
-func (s *filePreKeyStore) LoadPreKey(preKeyID uint32) *record.PreKey {
+func (s *filePreKeyStore) LoadPreKey(preKeyID uint32) (*record.PreKey, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.store[preKeyID]
+	return s.store[preKeyID], nil
 }
 
-func (s *filePreKeyStore) StorePreKey(preKeyID uint32, preKeyRecord *record.PreKey) {
+func (s *filePreKeyStore) StorePreKey(preKeyID uint32, preKeyRecord *record.PreKey) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.store[preKeyID] = preKeyRecord
+	return nil
 }
 
-func (s *filePreKeyStore) ContainsPreKey(preKeyID uint32) bool {
+func (s *filePreKeyStore) ContainsPreKey(preKeyID uint32) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	_, ok := s.store[preKeyID]
-	return ok
+	return ok, nil
 }
 
-func (s *filePreKeyStore) RemovePreKey(preKeyID uint32) {
+func (s *filePreKeyStore) RemovePreKey(preKeyID uint32) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.store, preKeyID)
+	return nil
 }
 
 // =============================================================================
@@ -194,39 +212,41 @@ func newFileSignedPreKeyStore(dir string) (*fileSignedPreKeyStore, error) {
 	}, nil
 }
 
-func (s *fileSignedPreKeyStore) LoadSignedPreKey(signedPreKeyID uint32) *record.SignedPreKey {
+func (s *fileSignedPreKeyStore) LoadSignedPreKey(signedPreKeyID uint32) (*record.SignedPreKey, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.store[signedPreKeyID]
+	return s.store[signedPreKeyID], nil
 }
 
-func (s *fileSignedPreKeyStore) LoadSignedPreKeys() []*record.SignedPreKey {
+func (s *fileSignedPreKeyStore) LoadSignedPreKeys() ([]*record.SignedPreKey, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var keys []*record.SignedPreKey
 	for _, k := range s.store {
 		keys = append(keys, k)
 	}
-	return keys
+	return keys, nil
 }
 
-func (s *fileSignedPreKeyStore) StoreSignedPreKey(signedPreKeyID uint32, rec *record.SignedPreKey) {
+func (s *fileSignedPreKeyStore) StoreSignedPreKey(signedPreKeyID uint32, rec *record.SignedPreKey) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.store[signedPreKeyID] = rec
+	return nil
 }
 
-func (s *fileSignedPreKeyStore) ContainsSignedPreKey(signedPreKeyID uint32) bool {
+func (s *fileSignedPreKeyStore) ContainsSignedPreKey(signedPreKeyID uint32) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	_, ok := s.store[signedPreKeyID]
-	return ok
+	return ok, nil
 }
 
-func (s *fileSignedPreKeyStore) RemoveSignedPreKey(signedPreKeyID uint32) {
+func (s *fileSignedPreKeyStore) RemoveSignedPreKey(signedPreKeyID uint32) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.store, signedPreKeyID)
+	return nil
 }
 
 // =============================================================================
@@ -287,27 +307,36 @@ func (s *fileIdentityStore) GetLocalRegistrationId() uint32 {
 	return s.registrationID
 }
 
-func (s *fileIdentityStore) SaveIdentity(address *protocol.SignalAddress, identityKey *identity.Key) {
+func (s *fileIdentityStore) SaveIdentity(address *protocol.SignalAddress, identityKey *identity.Key) (store.IdentityChange, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := addressKey(address)
+	prev, existed := s.trustedKeys[key]
 	s.trustedKeys[key] = identityKey
-	// Persist.
-	data, _ := json.Marshal(identityData{
+	data, err := json.Marshal(identityData{
 		Fingerprint: fmt.Sprintf("%x", identityKey.Fingerprint()),
 		KeyBytes:    identityKey.Serialize(),
 	})
-	_ = os.WriteFile(filepath.Join(s.dir, key+".json"), data, 0600)
+	if err != nil {
+		return store.IdentityChangeNewOrUnchanged, signalerrors.Wrap(signalerrors.ErrInternal, "marshal identity", err)
+	}
+	if err := os.WriteFile(filepath.Join(s.dir, key+".json"), data, 0600); err != nil {
+		return store.IdentityChangeNewOrUnchanged, signalerrors.Wrap(signalerrors.ErrInternal, "persist identity", err)
+	}
+	if existed && prev != identityKey && !bytes.Equal(prev.Serialize(), identityKey.Serialize()) {
+		return store.IdentityChangeReplacedExisting, nil
+	}
+	return store.IdentityChangeNewOrUnchanged, nil
 }
 
-func (s *fileIdentityStore) IsTrustedIdentity(address *protocol.SignalAddress, identityKey *identity.Key, _ store.Direction) bool {
+func (s *fileIdentityStore) IsTrustedIdentity(address *protocol.SignalAddress, identityKey *identity.Key, _ store.Direction) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	trusted, ok := s.trustedKeys[addressKey(address)]
 	if !ok {
-		return true // Trust on first use (TOFU).
+		return true, nil // Trust on first use (TOFU).
 	}
-	return trusted.Fingerprint() == identityKey.Fingerprint()
+	return trusted.Fingerprint() == identityKey.Fingerprint(), nil
 }
 
 func (s *fileIdentityStore) GetIdentity(address *protocol.SignalAddress) (*identity.Key, error) {

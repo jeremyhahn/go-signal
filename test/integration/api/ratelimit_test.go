@@ -83,7 +83,7 @@ func setupRateLimitedTestServer(t *testing.T) (*rest.Server, string) {
 	messagesMgr := messages.NewMessagesManager(messageStore)
 	profilesMgr := profiles.NewProfilesManager(profileStore)
 	usernamesMgr := usernames.NewUsernamesManager(usernameStore, logger)
-	stickersMgr := stickers.NewStickersManager(logger)
+	stickersMgr := stickers.NewStickersManager(stickers.ManagerConfig{Logger: logger})
 	directoryMgr := directory.NewDirectoryManager(logger)
 	secureStorageMgr := securestorage.NewSecureStorageManager(logger)
 	svrMgr := securevaluerecovery.NewSVRManager(logger)

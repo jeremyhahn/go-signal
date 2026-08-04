@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"fmt"
 
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
+
 	"github.com/jeremyhahn/go-libsignal/pkg/ecc"
 	groupstore "github.com/jeremyhahn/go-libsignal/pkg/groups/state/store"
 	"github.com/jeremyhahn/go-libsignal/pkg/keys/identity"
@@ -55,22 +57,22 @@ func (c *Client) initCrypto() error {
 	// Fall back to file-based stores.
 	sessStore, err := newFileSessionStore(c.config.DataDir, serializer)
 	if err != nil {
-		return fmt.Errorf("init session store: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "init session store", err)
 	}
 
 	preKeyStore, err := newFilePreKeyStore(c.config.DataDir)
 	if err != nil {
-		return fmt.Errorf("init pre-key store: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "init pre-key store", err)
 	}
 
 	signedPreKeyStore, err := newFileSignedPreKeyStore(c.config.DataDir)
 	if err != nil {
-		return fmt.Errorf("init signed pre-key store: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "init signed pre-key store", err)
 	}
 
 	senderKeyStore, err := newFileSenderKeyStore(c.config.DataDir)
 	if err != nil {
-		return fmt.Errorf("init sender key store: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "init sender key store", err)
 	}
 
 	// Load identity key pair from the identity store. If none exists yet
@@ -90,7 +92,7 @@ func (c *Client) initCrypto() error {
 
 	identityStore, err := newFileIdentityStore(c.config.DataDir, identityKeyPair, regID)
 	if err != nil {
-		return fmt.Errorf("init identity store: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "init identity store", err)
 	}
 
 	c.crypto = &cryptoState{
@@ -115,7 +117,11 @@ func (c *Client) ensureSession(ctx context.Context, recipientUUID string, device
 	addr := protocol.NewSignalAddress(recipientUUID, deviceID)
 
 	// Check if session already exists.
-	if c.crypto.sessionStore.ContainsSession(addr) {
+	hasSession, err := c.crypto.sessionStore.ContainsSession(addr)
+	if err != nil {
+		return signalerrors.Wrap(signalerrors.ErrInternal, "check session", err)
+	}
+	if hasSession {
 		return nil
 	}
 
@@ -139,11 +145,11 @@ func (c *Client) ensureSession(ctx context.Context, recipientUUID string, device
 
 	path := fmt.Sprintf("/v2/keys/%s/%d", recipientUUID, deviceID)
 	if err := c.doRequest(ctx, "GET", path, nil, &bundleResp); err != nil {
-		return fmt.Errorf("fetch pre-key bundle: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "fetch pre-key bundle", err)
 	}
 
 	if len(bundleResp.Devices) == 0 {
-		return fmt.Errorf("no devices found for %s", recipientUUID)
+		return signalerrors.New(signalerrors.ErrNotFound, "no devices found for "+recipientUUID)
 	}
 
 	dev := bundleResp.Devices[0]
@@ -151,26 +157,26 @@ func (c *Client) ensureSession(ctx context.Context, recipientUUID string, device
 	// Decode identity key.
 	identityKeyBytes, err := base64.StdEncoding.DecodeString(bundleResp.IdentityKey)
 	if err != nil {
-		return fmt.Errorf("decode identity key: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "decode identity key", err)
 	}
 	identityPubKey, err := ecc.DecodePoint(identityKeyBytes, 0)
 	if err != nil {
-		return fmt.Errorf("decode identity public key: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "decode identity public key", err)
 	}
 	remoteIdentity := identity.NewKey(identityPubKey)
 
 	// Decode signed pre-key.
 	signedPKBytes, err := base64.StdEncoding.DecodeString(dev.SignedPreKey.PublicKey)
 	if err != nil {
-		return fmt.Errorf("decode signed pre-key: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "decode signed pre-key", err)
 	}
 	signedPK, err := ecc.DecodePoint(signedPKBytes, 0)
 	if err != nil {
-		return fmt.Errorf("decode signed pre-key point: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "decode signed pre-key point", err)
 	}
 	sigBytes, err := base64.StdEncoding.DecodeString(dev.SignedPreKey.Signature)
 	if err != nil {
-		return fmt.Errorf("decode signature: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "decode signature", err)
 	}
 	var sig [64]byte
 	copy(sig[:], sigBytes)
@@ -210,10 +216,25 @@ func (c *Client) ensureSession(ctx context.Context, recipientUUID string, device
 	)
 
 	if err := builder.ProcessBundle(bundle); err != nil {
-		return fmt.Errorf("process pre-key bundle: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "process pre-key bundle", err)
 	}
 
 	return nil
+}
+
+// localAddress returns the SignalAddress identifying *this* client, derived
+// from the persisted credentials. session.NewCipher needs both the local and
+// the remote address since libsignal v4 — the local address is used to
+// stamp identity-key material into the session record.
+func (c *Client) localAddress() (*protocol.SignalAddress, error) {
+	creds, err := c.store.GetCredentials()
+	if err != nil {
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "read credentials", err)
+	}
+	if creds == nil || creds.UUID == "" {
+		return nil, signalerrors.New(signalerrors.ErrUnauthenticated, "client is not registered: no UUID in credentials")
+	}
+	return protocol.NewSignalAddress(creds.UUID, creds.DeviceID), nil
 }
 
 // encryptMessage encrypts plaintext for the given recipient using
@@ -223,21 +244,25 @@ func (c *Client) encryptMessage(recipientUUID string, deviceID uint32, plaintext
 		return nil, err
 	}
 
-	addr := protocol.NewSignalAddress(recipientUUID, deviceID)
+	localAddr, err := c.localAddress()
+	if err != nil {
+		return nil, err
+	}
+	remoteAddr := protocol.NewSignalAddress(recipientUUID, deviceID)
 
 	builder := session.NewBuilder(
 		c.crypto.sessionStore,
 		c.crypto.preKeyStore,
 		c.crypto.signedPreKeyStore,
 		c.crypto.identityStore,
-		addr,
+		remoteAddr,
 		c.crypto.serializer,
 	)
 
-	cipher := session.NewCipher(builder, addr)
+	cipher := session.NewCipherWithLocalAddress(builder, localAddr, remoteAddr)
 	ciphertext, err := cipher.Encrypt(plaintext)
 	if err != nil {
-		return nil, fmt.Errorf("encrypt: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "encrypt", err)
 	}
 
 	return ciphertext, nil
@@ -249,18 +274,22 @@ func (c *Client) decryptMessage(senderUUID string, deviceID uint32, msgType int,
 		return nil, err
 	}
 
-	addr := protocol.NewSignalAddress(senderUUID, deviceID)
+	localAddr, err := c.localAddress()
+	if err != nil {
+		return nil, err
+	}
+	remoteAddr := protocol.NewSignalAddress(senderUUID, deviceID)
 
 	builder := session.NewBuilder(
 		c.crypto.sessionStore,
 		c.crypto.preKeyStore,
 		c.crypto.signedPreKeyStore,
 		c.crypto.identityStore,
-		addr,
+		remoteAddr,
 		c.crypto.serializer,
 	)
 
-	cipher := session.NewCipher(builder, addr)
+	cipher := session.NewCipherWithLocalAddress(builder, localAddr, remoteAddr)
 
 	switch msgType {
 	case protocol.PREKEY_TYPE:
@@ -271,11 +300,11 @@ func (c *Client) decryptMessage(senderUUID string, deviceID uint32, msgType int,
 			c.crypto.serializer.SignalMessage,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("deserialize pre-key message: %w", err)
+			return nil, signalerrors.Wrap(signalerrors.ErrInternal, "deserialize pre-key message", err)
 		}
 		plaintext, _, err := cipher.DecryptPreKeyMessage(builder, preKeyMsg)
 		if err != nil {
-			return nil, fmt.Errorf("decrypt pre-key message: %w", err)
+			return nil, signalerrors.Wrap(signalerrors.ErrInternal, "decrypt pre-key message", err)
 		}
 		return plaintext, nil
 
@@ -286,11 +315,11 @@ func (c *Client) decryptMessage(senderUUID string, deviceID uint32, msgType int,
 			c.crypto.serializer.SignalMessage,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("deserialize signal message: %w", err)
+			return nil, signalerrors.Wrap(signalerrors.ErrInternal, "deserialize signal message", err)
 		}
 		plaintext, err := cipher.Decrypt(signalMsg)
 		if err != nil {
-			return nil, fmt.Errorf("decrypt signal message: %w", err)
+			return nil, signalerrors.Wrap(signalerrors.ErrInternal, "decrypt signal message", err)
 		}
 		return plaintext, nil
 

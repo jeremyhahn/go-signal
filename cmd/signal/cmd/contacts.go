@@ -35,7 +35,7 @@ var listContactsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
 		contacts, err := client.ListContacts(context.Background())
 		if err != nil {
@@ -54,7 +54,7 @@ var listContactsCmd = &cobra.Command{
 			if c.Blocked {
 				blocked = " [BLOCKED]"
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s %s%s\n", c.Number, name, blocked)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s %s%s\n", c.Number, name, blocked)
 		}
 		return nil
 	},
@@ -69,7 +69,7 @@ var updateContactCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
 		return client.UpdateContact(context.Background(), signal.Contact{
 			Number:     args[0],
@@ -88,7 +88,7 @@ var removeContactCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 		return client.RemoveContact(context.Background(), args[0])
 	},
 }
@@ -102,7 +102,7 @@ var blockCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 		return client.Block(context.Background(), args[0])
 	},
 }
@@ -116,7 +116,7 @@ var unblockCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 		return client.Unblock(context.Background(), args[0])
 	},
 }

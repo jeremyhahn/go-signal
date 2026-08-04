@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 	signal "github.com/jeremyhahn/go-signal/sdk/go"
 )
 
@@ -52,7 +53,7 @@ func (b *DeviceBindings) GenerateProvisioningURI() (string, error) {
 	// Get account info for the provisioning URI.
 	account, err := b.client.WhoAmI(ctx)
 	if err != nil {
-		return "", fmt.Errorf("generate provisioning URI: %w", err)
+		return "", signalerrors.Wrap(signalerrors.ErrInternal, "generate provisioning URI", err)
 	}
 
 	// The provisioning URI encodes the account UUID and a temporary public

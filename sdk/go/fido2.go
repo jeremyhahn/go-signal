@@ -2,14 +2,15 @@ package signal
 
 import (
 	"context"
-	"fmt"
+
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
 // FIDO2Capabilities returns the server's FIDO2/WebAuthn configuration.
 func (c *Client) FIDO2Capabilities(ctx context.Context) (map[string]any, error) {
 	var result map[string]any
 	if err := c.doRequest(ctx, "GET", "/v1/fido2/capabilities", nil, &result); err != nil {
-		return nil, fmt.Errorf("fido2 capabilities: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "fido2 capabilities", err)
 	}
 	return result, nil
 }
@@ -20,7 +21,7 @@ func (c *Client) FIDO2ListCredentials(ctx context.Context) ([]FIDO2Credential, e
 		Credentials []FIDO2Credential `json:"credentials"`
 	}
 	if err := c.doRequest(ctx, "GET", "/v1/fido2/credentials", nil, &result); err != nil {
-		return nil, fmt.Errorf("list fido2 credentials: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "list fido2 credentials", err)
 	}
 	return result.Credentials, nil
 }
@@ -45,7 +46,7 @@ func (c *Client) FIDO2RegisterKey(ctx context.Context, username string) (map[str
 	err := c.doRequest(ctx, "POST", "/v1/fido2/session",
 		map[string]string{"username": username}, &result)
 	if err != nil {
-		return nil, fmt.Errorf("fido2 register: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "fido2 register", err)
 	}
 	return result, nil
 }
@@ -64,7 +65,7 @@ func (c *Client) FIDO2BeginLogin(ctx context.Context) (map[string]any, error) {
 	var result map[string]any
 	err := c.doRequest(ctx, "POST", "/v1/fido2/login/begin", nil, &result)
 	if err != nil {
-		return nil, fmt.Errorf("fido2 begin login: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "fido2 begin login", err)
 	}
 	return result, nil
 }

@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-
 	"github.com/jeremyhahn/go-signal/pkg/config"
 	"github.com/spf13/cobra"
 )
@@ -25,7 +23,7 @@ var rootCmd = &cobra.Command{
 
 		loaded, err := config.Load(cfgPath)
 		if err != nil {
-			return fmt.Errorf("loading configuration: %w", err)
+			return &StartupError{Stage: "loading configuration", Cause: err}
 		}
 		cfg = loaded
 		return nil

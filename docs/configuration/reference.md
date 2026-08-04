@@ -61,11 +61,34 @@ Persistent backend selection. The `backend` field determines which nested sectio
 
 | Field | YAML Key | Type | Required | Default | Description |
 |---|---|---|---|---|---|
-| Backend | `backend` | string | Yes | - | One of: `"dynamodb"`, `"postgres"`, `"memory"` |
+| Backend | `backend` | string | No | `"memory"` | One of: `"memory"` (default), `"file"`, `"postgres"`, `"qrdb"` |
+
+The `signald` daemon wires these backends in `cmd/signald` (see the storage-backend
+switch): `"memory"` (ephemeral, the default), `"file"` (KV-backed, persists under
+`storage.file.dataDir`), `"postgres"` (the `storage.postgres` section), and `"qrdb"`
+(the production KV backend; currently an in-process transport with no dedicated config
+section). An unrecognized value falls back to `"memory"`.
+
+### storage.file
+
+Used when `backend: "file"`.
+
+| Field | YAML Key | Type | Required | Default | Description |
+|---|---|---|---|---|---|
+| DataDir | `dataDir` | string | No | `"data"` | Root directory for the file-system KV store |
+
+```yaml
+storage:
+  backend: "file"
+  file:
+    dataDir: "/var/lib/signald/data"
+```
 
 ### storage.dynamodb
 
-Used when `backend: "dynamodb"`.
+DynamoDB configuration is declared in the config schema but is **not wired into the
+`signald` daemon's backend switch** in the current build (selecting `"dynamodb"` falls
+back to `"memory"`). The fields below are retained for forward compatibility.
 
 | Field | YAML Key | Type | Required | Default | Description |
 |---|---|---|---|---|---|
@@ -311,6 +334,34 @@ Contact discovery settings.
 directory:
   enabled: true
 ```
+
+---
+
+## storageService
+
+Encrypted contact/settings sync storage. signald can either run this in-process (monolithic deployments) or talk to a standalone `storage-service` binary. The mode is selected by `remoteUrl`: when it is **empty**, signald enables the embedded storage-service and serves the `/storage/...` routes itself; when it is set, signald only acts as a privileged admin client (DELETE-on-account-deletion) and the in-process routes fall back to a `204` stub.
+
+| Field | YAML Key | Type | Required | Default | Description |
+|---|---|---|---|---|---|
+| HTTPListen | `httpListen` | string | No | `0.0.0.0:8096` | Bind address for the standalone `storage-service` binary |
+| SharedSecret | `sharedSecret` | string | No* | - | HMAC secret shared between signald and storage-service for credential derivation (supports secret URIs) |
+| RemoteURL | `remoteUrl` | string | No | `""` (embedded) | storage-service admin endpoint. Empty enables the in-process storage-service |
+| RemoteInsecure | `remoteInsecure` | bool | No | `false` | Permit a plaintext HTTP channel to storage-service (development only; production requires TLS 1.3) |
+
+\* Not enforced at config-load time, but required in practice: it is the HMAC key that signald uses to mint `/v1/storage/auth` credentials and that storage-service uses to verify them.
+
+```yaml
+# Monolithic: embedded storage-service (default)
+storageService:
+  sharedSecret: "kms://secrets/storage-shared-secret"
+
+# Distributed: external storage-service binary
+storageService:
+  sharedSecret: "kms://secrets/storage-shared-secret"
+  remoteUrl: "https://storage-service.internal:8096"
+```
+
+Source: `pkg/config/config.go` (`StorageServiceConfig`)
 
 ---
 

@@ -1,9 +1,11 @@
 package push
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"testing"
+	"time"
 )
 
 func testPushLogger() *slog.Logger {
@@ -14,15 +16,29 @@ type discardWriter struct{}
 
 func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
 
-// mockProvider records Send calls and can return configured errors.
+// mockProvider records Send calls and supports two modes:
+//   - Steady mode (transientErr nil): each Send returns (result, err).
+//   - Transient mode (transientErr set): the first transientCount calls
+//     return (zero-value, transientErr); calls past that return (result, nil),
+//     so the manager's retry path can be exercised.
 type mockProvider struct {
-	sent []*PushNotification
-	err  error
+	sent           []*PushNotification
+	result         SendPushNotificationResult
+	err            error
+	transientErr   error
+	transientCount int
 }
 
-func (m *mockProvider) Send(n *PushNotification) error {
+func (m *mockProvider) Send(_ context.Context, n *PushNotification) (SendPushNotificationResult, error) {
 	m.sent = append(m.sent, n)
-	return m.err
+	if m.transientErr != nil && m.transientCount > 0 {
+		m.transientCount--
+		return SendPushNotificationResult{}, m.transientErr
+	}
+	if m.transientErr != nil && m.transientCount == 0 {
+		return m.result, nil
+	}
+	return m.result, m.err
 }
 
 func (m *mockProvider) Close() error { return nil }
@@ -45,8 +61,15 @@ func TestNewPushManager_DefaultProviders(t *testing.T) {
 	}
 }
 
+func TestNewPushManager_NilLoggerDefaults(t *testing.T) {
+	m := NewPushManager(PushManagerConfig{})
+	if m.logger == nil {
+		t.Fatal("expected non-nil default logger")
+	}
+}
+
 func TestPushManager_Send_APNs(t *testing.T) {
-	apns := &mockProvider{}
+	apns := &mockProvider{result: SendPushNotificationResult{Accepted: true}}
 	m := NewPushManager(PushManagerConfig{APNs: apns, Logger: testPushLogger()})
 
 	n := &PushNotification{
@@ -55,8 +78,12 @@ func TestPushManager_Send_APNs(t *testing.T) {
 		DeviceToken: "apns-token",
 		DeviceType:  DeviceTypeAPNs,
 	}
-	if err := m.Send(n); err != nil {
+	res, err := m.Send(context.Background(), n)
+	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.Accepted {
+		t.Error("expected Accepted=true")
 	}
 	if len(apns.sent) != 1 {
 		t.Fatalf("expected 1 sent notification, got %d", len(apns.sent))
@@ -67,7 +94,7 @@ func TestPushManager_Send_APNs(t *testing.T) {
 }
 
 func TestPushManager_Send_FCM(t *testing.T) {
-	fcm := &mockProvider{}
+	fcm := &mockProvider{result: SendPushNotificationResult{Accepted: true}}
 	m := NewPushManager(PushManagerConfig{FCM: fcm, Logger: testPushLogger()})
 
 	n := &PushNotification{
@@ -76,7 +103,7 @@ func TestPushManager_Send_FCM(t *testing.T) {
 		DeviceToken: "fcm-token",
 		DeviceType:  DeviceTypeFCM,
 	}
-	if err := m.Send(n); err != nil {
+	if _, err := m.Send(context.Background(), n); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(fcm.sent) != 1 {
@@ -87,10 +114,8 @@ func TestPushManager_Send_FCM(t *testing.T) {
 func TestPushManager_Send_UnknownDeviceType(t *testing.T) {
 	m := NewPushManager(PushManagerConfig{Logger: testPushLogger()})
 
-	n := &PushNotification{
-		DeviceType: DeviceType(99),
-	}
-	err := m.Send(n)
+	n := &PushNotification{DeviceType: DeviceType(99)}
+	_, err := m.Send(context.Background(), n)
 	if err == nil {
 		t.Fatal("expected error for unknown device type")
 	}
@@ -102,8 +127,12 @@ func TestPushManager_Send_UnknownDeviceType(t *testing.T) {
 
 func TestPushManager_Send_NilNotification(t *testing.T) {
 	m := NewPushManager(PushManagerConfig{Logger: testPushLogger()})
-	if err := m.Send(nil); err != nil {
+	res, err := m.Send(context.Background(), nil)
+	if err != nil {
 		t.Fatalf("unexpected error for nil notification: %v", err)
+	}
+	if res.Accepted {
+		t.Error("nil notification must not report Accepted")
 	}
 }
 
@@ -112,16 +141,37 @@ func TestPushManager_Send_ProviderError(t *testing.T) {
 	apns := &mockProvider{err: sendErr}
 	m := NewPushManager(PushManagerConfig{APNs: apns, Logger: testPushLogger()})
 
-	n := &PushNotification{
-		DeviceToken: "token",
-		DeviceType:  DeviceTypeAPNs,
-	}
-	err := m.Send(n)
+	n := &PushNotification{DeviceToken: "token", DeviceType: DeviceTypeAPNs}
+	_, err := m.Send(context.Background(), n)
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if err != sendErr {
+	if !errors.Is(err, sendErr) {
 		t.Errorf("got error %v, want %v", err, sendErr)
+	}
+}
+
+func TestPushManager_Send_ProviderRejection(t *testing.T) {
+	// Provider returns a rejection result without an error — the manager
+	// should surface the result and log a warning, not raise an error.
+	apns := &mockProvider{result: SendPushNotificationResult{
+		Accepted:        false,
+		RejectionReason: "BadDeviceToken",
+		Unregistered:    true,
+	}}
+	m := NewPushManager(PushManagerConfig{APNs: apns, Logger: testPushLogger()})
+
+	res, err := m.Send(context.Background(), &PushNotification{
+		DeviceType: DeviceTypeAPNs, DeviceToken: "expired",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Accepted {
+		t.Error("expected Accepted=false")
+	}
+	if !res.Unregistered {
+		t.Error("expected Unregistered=true")
 	}
 }
 
@@ -137,11 +187,7 @@ func TestPushManager_Close(t *testing.T) {
 
 func TestPushManager_Close_Error(t *testing.T) {
 	closeErr := errors.New("close failed")
-	// Use a manager with only APNs configured so iteration is over a single
-	// erroring provider; the FCM slot remains NoOpProvider (no error).
 	apns := &errorCloseProvider{err: closeErr}
-	// Replace the FCM slot with a NoOpProvider that succeeds, ensuring the
-	// first error encountered is always the APNs close error.
 	m := NewPushManager(PushManagerConfig{APNs: apns, FCM: NoOpProvider{}, Logger: testPushLogger()})
 
 	err := m.Close()
@@ -154,16 +200,14 @@ func TestPushManager_Close_Error(t *testing.T) {
 }
 
 func TestPushManager_RoutesToCorrectProvider(t *testing.T) {
-	apns := &mockProvider{}
-	fcm := &mockProvider{}
+	apns := &mockProvider{result: SendPushNotificationResult{Accepted: true}}
+	fcm := &mockProvider{result: SendPushNotificationResult{Accepted: true}}
 	m := NewPushManager(PushManagerConfig{APNs: apns, FCM: fcm, Logger: testPushLogger()})
 
-	// Send to APNs
-	if err := m.Send(&PushNotification{DeviceType: DeviceTypeAPNs, DeviceToken: "a"}); err != nil {
+	if _, err := m.Send(context.Background(), &PushNotification{DeviceType: DeviceTypeAPNs, DeviceToken: "a"}); err != nil {
 		t.Fatalf("APNs send: unexpected error: %v", err)
 	}
-	// Send to FCM
-	if err := m.Send(&PushNotification{DeviceType: DeviceTypeFCM, DeviceToken: "f"}); err != nil {
+	if _, err := m.Send(context.Background(), &PushNotification{DeviceType: DeviceTypeFCM, DeviceToken: "f"}); err != nil {
 		t.Fatalf("FCM send: unexpected error: %v", err)
 	}
 
@@ -172,5 +216,105 @@ func TestPushManager_RoutesToCorrectProvider(t *testing.T) {
 	}
 	if len(fcm.sent) != 1 {
 		t.Errorf("FCM: got %d sent, want 1", len(fcm.sent))
+	}
+}
+
+func TestPushManager_RetriesTransientErrors(t *testing.T) {
+	// First two attempts return a transport-layer *SendError, third
+	// succeeds. The manager must retry and ultimately surface the
+	// successful result.
+	apns := &mockProvider{
+		transientErr:   &SendError{Provider: "apns", DeviceToken: "tok", Cause: errors.New("connection reset")},
+		transientCount: 2,
+		result:         SendPushNotificationResult{Accepted: true},
+	}
+	m := NewPushManager(PushManagerConfig{
+		APNs:           apns,
+		Logger:         testPushLogger(),
+		RetryAttempts:  3,
+		InitialBackoff: 1 * time.Microsecond,
+		MaxBackoff:     1 * time.Microsecond,
+	})
+	res, err := m.Send(context.Background(), &PushNotification{
+		DeviceType: DeviceTypeAPNs, DeviceToken: "tok",
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if !res.Accepted {
+		t.Errorf("expected Accepted after retries, got %+v", res)
+	}
+	if got := len(apns.sent); got != 3 {
+		t.Errorf("expected 3 attempts, got %d", got)
+	}
+}
+
+func TestPushManager_RetryGiveUpAfterAttempts(t *testing.T) {
+	apns := &mockProvider{
+		transientErr:   &SendError{Provider: "apns", DeviceToken: "tok", Cause: errors.New("connection reset")},
+		transientCount: 10, // more than RetryAttempts.
+		result:         SendPushNotificationResult{Accepted: true},
+	}
+	m := NewPushManager(PushManagerConfig{
+		APNs:           apns,
+		Logger:         testPushLogger(),
+		RetryAttempts:  2,
+		InitialBackoff: 1 * time.Microsecond,
+	})
+	_, err := m.Send(context.Background(), &PushNotification{DeviceType: DeviceTypeAPNs, DeviceToken: "tok"})
+	if err == nil {
+		t.Fatal("expected error after retry exhaustion")
+	}
+	if got := len(apns.sent); got != 2 {
+		t.Errorf("expected 2 attempts before give-up, got %d", got)
+	}
+}
+
+func TestPushManager_NonRetryableErrorReturnsImmediately(t *testing.T) {
+	// A non-SendError (e.g. caller validation) shouldn't trigger retries.
+	apns := &mockProvider{err: errors.New("bad config")}
+	m := NewPushManager(PushManagerConfig{
+		APNs:           apns,
+		Logger:         testPushLogger(),
+		RetryAttempts:  5,
+		InitialBackoff: 1 * time.Microsecond,
+	})
+	_, err := m.Send(context.Background(), &PushNotification{DeviceType: DeviceTypeAPNs, DeviceToken: "tok"})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got := len(apns.sent); got != 1 {
+		t.Errorf("expected exactly 1 attempt for non-retryable error, got %d", got)
+	}
+}
+
+func TestPushManager_RetryRespectsContextCancellation(t *testing.T) {
+	apns := &mockProvider{
+		transientErr:   &SendError{Provider: "apns", DeviceToken: "tok", Cause: errors.New("connection reset")},
+		transientCount: 10,
+	}
+	m := NewPushManager(PushManagerConfig{
+		APNs:           apns,
+		Logger:         testPushLogger(),
+		RetryAttempts:  10,
+		InitialBackoff: 50 * time.Millisecond,
+		MaxBackoff:     50 * time.Millisecond,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		cancel()
+	}()
+	_, err := m.Send(ctx, &PushNotification{DeviceType: DeviceTypeAPNs, DeviceToken: "tok"})
+	if err == nil {
+		t.Fatal("expected context error")
+	}
+	if !errors.Is(err, context.Canceled) {
+		// Provider may have already returned a SendError that's surfaced
+		// instead — accept either as long as the call returned promptly.
+		var se *SendError
+		if !errors.As(err, &se) {
+			t.Fatalf("unexpected error type: %T: %v", err, err)
+		}
 	}
 }

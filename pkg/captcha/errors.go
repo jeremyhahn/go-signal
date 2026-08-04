@@ -94,3 +94,57 @@ type ReCAPTCHAConfigError struct {
 func (e *ReCAPTCHAConfigError) Error() string {
 	return "recaptcha config error: " + e.Message
 }
+
+// InvalidTokenFormatError indicates the captcha submission did not have the
+// expected dotted layout `provider.sitekey.action.token`.
+type InvalidTokenFormatError struct {
+	Reason string
+}
+
+// Error returns a human-readable description.
+func (e *InvalidTokenFormatError) Error() string {
+	return "invalid captcha token format: " + e.Reason
+}
+
+// InvalidActionError indicates the action slot did not parse to a known
+// Action value, or did not match the action expected by the call site.
+type InvalidActionError struct {
+	Action string
+}
+
+// Error returns a human-readable description.
+func (e *InvalidActionError) Error() string {
+	return "invalid captcha action: " + e.Action
+}
+
+// UnknownProviderError indicates the provider slot named a captcha scheme
+// not configured for this server.
+type UnknownProviderError struct {
+	Provider string
+}
+
+// Error returns a human-readable description.
+func (e *UnknownProviderError) Error() string {
+	return "unknown captcha provider: " + e.Provider
+}
+
+// InvalidSiteKeyError indicates the site-key slot was not on the
+// per-action allowlist of the resolved provider.
+type InvalidSiteKeyError struct {
+	SiteKey string
+	Action  Action
+}
+
+// Error returns a human-readable description.
+func (e *InvalidSiteKeyError) Error() string {
+	return "invalid captcha site key " + e.SiteKey + " for action " + string(e.Action)
+}
+
+// ShortCodeUnsupportedError indicates the submission used the `-short`
+// provider suffix but the deployment did not configure a ShortCodeExpander.
+type ShortCodeUnsupportedError struct{}
+
+// Error returns a human-readable description.
+func (e *ShortCodeUnsupportedError) Error() string {
+	return "short-code captcha submissions are not enabled"
+}

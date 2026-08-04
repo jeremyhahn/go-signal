@@ -89,6 +89,7 @@ func TestAccount_GetDevice(t *testing.T) {
 			}
 			if got == nil {
 				t.Fatalf("GetDevice(%d) = nil, want device with name %q", tt.id, tt.wantName)
+				return
 			}
 			if got.Name != tt.wantName {
 				t.Errorf("GetDevice(%d).Name = %q, want %q", tt.id, got.Name, tt.wantName)
@@ -106,6 +107,7 @@ func TestAccount_GetDevice_ReturnsPointerToSliceElement(t *testing.T) {
 	d := a.GetDevice(1)
 	if d == nil {
 		t.Fatal("GetDevice(1) = nil")
+		return
 	}
 	d.Name = "modified"
 	if a.Devices[0].Name != "modified" {

@@ -1,0 +1,43 @@
+FROM golang:1.26.3-bookworm AS builder
+
+# SERVICE selects which ./cmd/<service> entry point to compile.
+# Valid values: cdsi, svr2, key-transparency, registration-service, storage-service
+ARG SERVICE
+ARG BUILD_TAGS="fido2"
+
+WORKDIR /app
+
+# Copy local replace-directive dependencies (provided via additional_contexts).
+COPY --from=go-libsignal . /go-libsignal
+COPY --from=go-xkms . /go-xkms
+COPY --from=go-qrdb . /go-qrdb
+COPY --from=go-quicraft . /go-quicraft
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=0 GOOS=linux \
+    go build -tags "${BUILD_TAGS}" -ldflags="-s -w" \
+    -o /service "./cmd/${SERVICE}/"
+
+# Runtime: minimal Debian image with no dev toolchain.
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /service /usr/local/bin/service
+
+# Run as a non-root system user. The service binary expects its config
+# to be mounted at /etc/signal-service/config.yml at deploy time; no
+# secrets or active configuration are baked into this image.
+RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin signal \
+    && mkdir -p /etc/signal-service \
+    && chown -R signal:signal /etc/signal-service
+USER signal
+
+ENTRYPOINT ["/usr/local/bin/service"]
+CMD ["start"]

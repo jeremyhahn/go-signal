@@ -279,6 +279,50 @@ func TestRegistry_Stop_IsIdempotent(t *testing.T) {
 	r.Stop()
 }
 
+func TestRegistry_BackupAndCallLinkAccessors(t *testing.T) {
+	r := NewDefaultRegistry()
+	defer r.Stop()
+
+	pairs := []struct {
+		name string
+		got  RateLimiter
+	}{
+		{"ForSetBackupID", r.ForSetBackupID()},
+		{"ForSetPaidMediaBackupID", r.ForSetPaidMediaBackupID()},
+		{"ForBackupAttachment", r.ForBackupAttachment()},
+		{"ForCreateCallLink", r.ForCreateCallLink()},
+	}
+	for _, p := range pairs {
+		if p.got == nil {
+			t.Errorf("%s returned nil", p.name)
+		}
+	}
+	// Each must be distinct from the others.
+	if r.ForSetBackupID() == r.ForSetPaidMediaBackupID() {
+		t.Error("ForSetBackupID and ForSetPaidMediaBackupID should be distinct")
+	}
+	if r.ForBackupAttachment() == r.ForCreateCallLink() {
+		t.Error("ForBackupAttachment and ForCreateCallLink should be distinct")
+	}
+}
+
+func TestRegistry_BackupLimiters_FunctionallyAllow(t *testing.T) {
+	r := NewDefaultRegistry()
+	defer r.Stop()
+	ctx := context.Background()
+
+	for _, rl := range []RateLimiter{
+		r.ForSetBackupID(),
+		r.ForSetPaidMediaBackupID(),
+		r.ForBackupAttachment(),
+		r.ForCreateCallLink(),
+	} {
+		if err := rl.Allow(ctx, "test-key"); err != nil {
+			t.Errorf("first Allow should succeed, got: %v", err)
+		}
+	}
+}
+
 func TestNewDefaultRegistry_MatchesExplicitDefaultConfig(t *testing.T) {
 	r1 := NewDefaultRegistry()
 	defer stopRegistry(r1)

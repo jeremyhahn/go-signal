@@ -6,15 +6,15 @@ import (
 	"context"
 	"time"
 
-	signal "github.com/jeremyhahn/go-signal/sdk/go"
 	"github.com/jeremyhahn/go-signal/pkg/daostore"
 	"github.com/jeremyhahn/go-signal/pkg/daostore/entities"
+	signal "github.com/jeremyhahn/go-signal/sdk/go"
 )
 
 // ContactBindings provides contact operations to the frontend.
 type ContactBindings struct {
-	client   *signal.Client
-	factory  *daostore.Factory
+	client  *signal.Client
+	factory *daostore.Factory
 }
 
 // NewContactBindings creates contact bindings.

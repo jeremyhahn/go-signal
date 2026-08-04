@@ -1,0 +1,66 @@
+// Copyright 2026 Signal Messenger, LLC.
+// SPDX-License-Identifier: AGPL-3.0-only
+
+syntax = "proto3";
+
+package org.signal.directory;
+option go_package = "github.com/jeremyhahn/go-signal/pkg/api/grpc/genproto/directory;directorypb";
+
+// DirectoryService is the internal gRPC surface signald exposes for
+// cdsi (and any future directory-consuming binary). cdsi calls
+// ListEntries at startup to populate its lookup index and watches
+// future revisions via Subscribe for incremental sync.
+service DirectoryService {
+  // ListEntries server-streams the current directory snapshot. The
+  // stream completes when every entry has been delivered. cdsi calls
+  // this once at boot.
+  rpc ListEntries (ListEntriesRequest) returns (stream DirectoryEntry) {}
+
+  // Subscribe is a server-stream of change events (account created /
+  // updated / deleted) that follow a prior ListEntries snapshot.
+  // Reserved for the live-replication path; not in the Phase 4.3 MVP.
+  rpc Subscribe (SubscribeRequest) returns (stream DirectoryChangeEvent) {}
+}
+
+message ListEntriesRequest {
+  // page_size controls how many entries are sent before the server
+  // applies any flow control. Zero defaults to 1000.
+  uint32 page_size = 1;
+}
+
+message SubscribeRequest {
+  // resume_token, when non-empty, requests changes since the position
+  // identified by the token. cdsi stores the token returned by a
+  // previous Subscribe stream so it can resume across restarts.
+  bytes resume_token = 1;
+}
+
+// DirectoryEntry is one row of the directory: the E.164 number plus
+// its ACI / PNI / access_key bytes. ACI / access_key are absent for
+// accounts that have not opted in to contact discovery (the bytes
+// will be all-zero).
+message DirectoryEntry {
+  // e164 is the canonical phone number as a uint64 (no + prefix).
+  uint64 e164 = 1;
+  // aci is the 16-byte Account Contact Identifier (or zero bytes).
+  bytes aci = 2;
+  // pni is the 16-byte Phone Number Identifier (or zero bytes).
+  bytes pni = 3;
+  // access_key is the 16-byte profile access key (or zero bytes).
+  bytes access_key = 4;
+}
+
+// DirectoryChangeEvent carries a single per-account create/update/
+// delete signal. The cdsi side applies it to its local index.
+message DirectoryChangeEvent {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_UPSERT = 1;
+    KIND_DELETE = 2;
+  }
+  Kind kind = 1;
+  DirectoryEntry entry = 2;
+  // resume_token, when non-empty, replaces the caller's stored
+  // resume position. Servers may emit it every Nth event.
+  bytes resume_token = 3;
+}

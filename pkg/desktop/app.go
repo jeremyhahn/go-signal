@@ -6,9 +6,9 @@ import (
 	"context"
 
 	"github.com/jeremyhahn/go-qrdb/pkg/dao"
-	signal "github.com/jeremyhahn/go-signal/sdk/go"
 	"github.com/jeremyhahn/go-signal/pkg/daostore"
 	"github.com/jeremyhahn/go-signal/pkg/daostore/entities"
+	signal "github.com/jeremyhahn/go-signal/sdk/go"
 )
 
 // App is the Wails-bound application struct. Its exported methods are
@@ -108,4 +108,3 @@ func (a *App) GetConversations() ([]*entities.ConversationEntity, error) {
 		OrderBy("ActiveAt", dao.SortDescending).
 		Execute()
 }
-

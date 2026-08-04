@@ -613,6 +613,92 @@ func TestTokenBucketLimiter_Refill_OverflowGuard_TokensNeverExceedMax(t *testing
 // Helpers
 // --------------------------------------------------------------------------
 
+// --------------------------------------------------------------------------
+// newTokenBucketLimiterWithClock: default-value branches
+// --------------------------------------------------------------------------
+
+func TestNewTokenBucketLimiterWithClock_ZeroCleanupInterval_UsesDefault(t *testing.T) {
+	// CleanupInterval=0 triggers the default branch.
+	l := newTokenBucketLimiterWithClock(BucketConfig{BucketSize: 5, RefillRate: 1.0}, fixedClock(0))
+	defer l.Stop()
+	if l.cfg.CleanupInterval != defaultCleanupInterval {
+		t.Errorf("CleanupInterval = %v, want default %v", l.cfg.CleanupInterval, defaultCleanupInterval)
+	}
+	if l.cfg.StaleAfter != defaultStaleAfter {
+		t.Errorf("StaleAfter = %v, want default %v", l.cfg.StaleAfter, defaultStaleAfter)
+	}
+}
+
+func TestNewTokenBucketLimiterWithClock_ExplicitValues_Preserved(t *testing.T) {
+	l := newTokenBucketLimiterWithClock(BucketConfig{
+		BucketSize:      5,
+		RefillRate:      2.0,
+		CleanupInterval: 42 * time.Minute,
+		StaleAfter:      99 * time.Minute,
+	}, fixedClock(0))
+	defer l.Stop()
+	if l.cfg.CleanupInterval != 42*time.Minute {
+		t.Errorf("CleanupInterval = %v, want 42m", l.cfg.CleanupInterval)
+	}
+	if l.cfg.StaleAfter != 99*time.Minute {
+		t.Errorf("StaleAfter = %v, want 99m", l.cfg.StaleAfter)
+	}
+}
+
+// --------------------------------------------------------------------------
+// refill: zero / near-zero refill rate guards (rawAdd<=0, toAdd<=0)
+// --------------------------------------------------------------------------
+
+func TestTokenBucketLimiter_Refill_ZeroRefillRate_NoTokensAdded(t *testing.T) {
+	var now int64 // starts at 0
+	// RefillRate=0 → rawAdd = elapsed*0*scale = 0 → rawAdd<=0 guard fires.
+	l := newTokenBucketLimiterWithClock(BucketConfig{
+		BucketSize:      3,
+		RefillRate:      0, // degenerate: no validation in this constructor
+		CleanupInterval: time.Hour,
+		StaleAfter:      time.Hour,
+	}, func() int64 { return now })
+	defer l.Stop()
+
+	ctx := context.Background()
+	// Drain the bucket.
+	for range 3 {
+		_ = l.AllowN(ctx, "k", 1)
+	}
+	// Advance clock by 1 second.
+	now = int64(time.Second)
+	// With RefillRate=0 no tokens are added; request must still fail.
+	if err := l.Allow(ctx, "k"); err == nil {
+		t.Error("expected rate limit error: zero RefillRate must not add tokens")
+	}
+}
+
+func TestTokenBucketLimiter_Refill_ExtremelySmallRate_ToAddRoundsToZero(t *testing.T) {
+	var now int64 = 0
+	// RefillRate so tiny that elapsed*rate*scale < 1 → toAdd=0 guard fires.
+	l := newTokenBucketLimiterWithClock(BucketConfig{
+		BucketSize:      2,
+		RefillRate:      1e-20, // ~1 token per 1e20 seconds
+		CleanupInterval: time.Hour,
+		StaleAfter:      time.Hour,
+	}, func() int64 { return now })
+	defer l.Stop()
+
+	ctx := context.Background()
+	// Drain the bucket.
+	_ = l.Allow(ctx, "k")
+	_ = l.Allow(ctx, "k")
+	// Advance clock by 1 ns (now=1) — elapsed = 1e-9 s, rawAdd = 1e-9*1e-20*1e9 ≈ 1e-20 < 1 → toAdd=0.
+	now = 1
+	if err := l.Allow(ctx, "k"); err == nil {
+		t.Error("expected rate limit error: sub-nanosecond refill must not add tokens")
+	}
+}
+
+// --------------------------------------------------------------------------
+// Helpers
+// --------------------------------------------------------------------------
+
 // fixedClock returns a nowFn that always returns the given nanosecond value.
 func fixedClock(nanos int64) func() int64 {
 	return func() int64 { return nanos }

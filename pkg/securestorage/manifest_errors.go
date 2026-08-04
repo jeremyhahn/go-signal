@@ -40,3 +40,13 @@ func (e *StorageItemNotFoundError) Error() string {
 	return "storage item not found for account " + e.AccountUUID +
 		": key " + hex.EncodeToString(e.Key)
 }
+
+// InvalidStorageRequestError indicates a malformed storage-service request
+// (e.g. a write operation missing its manifest).
+type InvalidStorageRequestError struct {
+	Reason string
+}
+
+func (e *InvalidStorageRequestError) Error() string {
+	return "invalid storage request: " + e.Reason
+}

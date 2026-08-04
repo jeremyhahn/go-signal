@@ -17,9 +17,17 @@ type DeviceService interface {
 	// to the associated account.
 	LinkDevice(ctx context.Context, code string, req *devices.LinkDeviceRequest) (*devices.LinkDeviceResponse, error)
 
+	// LinkDeviceForAccount validates a provisioning code and links the device
+	// only when the code was issued for accountUUID, preventing confused-deputy
+	// attacks where an authenticated caller links a device onto another account.
+	LinkDeviceForAccount(ctx context.Context, accountUUID string, code string, req *devices.LinkDeviceRequest) (*devices.LinkDeviceResponse, error)
+
 	// SetCapabilities updates the capability set of a specific device.
 	SetCapabilities(ctx context.Context, accountUUID string, deviceID uint64, caps map[string]bool) error
 }
+
+// Compile-time assertion: DevicesManager must satisfy DeviceService.
+var _ DeviceService = (*devices.DevicesManager)(nil)
 
 // deviceService is the default DeviceService backed by a DevicesManager.
 type deviceService struct {
@@ -38,6 +46,10 @@ func (s *deviceService) CreateProvisioningCode(ctx context.Context, accountUUID 
 
 func (s *deviceService) LinkDevice(ctx context.Context, code string, req *devices.LinkDeviceRequest) (*devices.LinkDeviceResponse, error) {
 	return s.manager.LinkDevice(ctx, code, req)
+}
+
+func (s *deviceService) LinkDeviceForAccount(ctx context.Context, accountUUID string, code string, req *devices.LinkDeviceRequest) (*devices.LinkDeviceResponse, error) {
+	return s.manager.LinkDeviceForAccount(ctx, accountUUID, code, req)
 }
 
 func (s *deviceService) SetCapabilities(ctx context.Context, accountUUID string, deviceID uint64, caps map[string]bool) error {

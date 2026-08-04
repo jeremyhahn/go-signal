@@ -1,0 +1,8 @@
+db66d4ef18d30f82bc4c2386a2f90ca9a636dda5
+v20260306.1.0
+# Upstream Java Signal-Server pinned at /mnt/vm-host-1/Signal-Server
+# This commit is the reference for byte-wire compatibility of every
+# server-side handler, storage schema, and protocol response shape.
+# Crypto/wire formats themselves come from go-libsignal (see RUST_REV
+# in that repo); this server only orchestrates and stores the values
+# that go-libsignal produces and consumes.

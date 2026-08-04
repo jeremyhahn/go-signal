@@ -15,10 +15,12 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/verification"
 )
 
-// registrationLockTimeRemaining is the duration in seconds reported to the
-// client when a re-registration attempt is blocked by an active registration
-// lock. It mirrors the Signal server's 7-day lock window expressed in seconds.
-const registrationLockTimeRemaining int64 = 7 * 24 * 60 * 60
+// registrationLockTimeRemaining is the duration in milliseconds reported to
+// the client when a re-registration attempt is blocked by an active
+// registration lock. The Java Signal-Server's RegistrationLockFailure reports
+// timeRemaining in milliseconds (Duration.toMillis()); reporting seconds here
+// caused clients to render a lock countdown ~1000x too short.
+const registrationLockTimeRemaining int64 = 7 * 24 * 60 * 60 * 1000
 
 // handleRegistration processes POST /v1/registration requests. It creates a
 // new account with a generated UUID, stores the identity key and primary
@@ -59,16 +61,53 @@ func (s *Server) handleRegistration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Require a verification session ID in the request body. The session must
-	// exist, must not be expired, must belong to the number being registered,
-	// and must be in the Verified state. This mirrors the Java server's
-	// RegistrationController#register verification gate.
-	if req.SessionID == "" {
-		writeError(w, http.StatusBadRequest, "missing sessionId")
-		return
+	// Optional captcha verification. When a captcha solution is supplied
+	// AND the deployment configured a RegistrationCaptchaManager, the
+	// solution must verify before account state is mutated. A missing
+	// captcha is allowed at this layer — escalation policy lives in the
+	// verification session (CaptchaRequired) and fraud checker. Mirrors
+	// Java RegistrationCaptchaManager.assessCaptcha + RegistrationController
+	// short-circuit.
+	if req.Captcha != "" {
+		if s.regCaptcha == nil {
+			writeError(w, http.StatusServiceUnavailable, "captcha verification not available")
+			return
+		}
+		assess, err := s.regCaptcha.Assess(r.Context(), &req.Captcha, ipKey(r, nil))
+		if err != nil {
+			s.logger.Warn("registration captcha rejected",
+				slog.String("ip", r.RemoteAddr),
+				slog.String("error", err.Error()))
+			writeError(w, http.StatusUnprocessableEntity, "captcha rejected")
+			return
+		}
+		if assess != nil && !assess.Accepted() {
+			s.logger.Warn("registration captcha not accepted",
+				slog.String("ip", r.RemoteAddr))
+			writeError(w, http.StatusUnprocessableEntity, "captcha not accepted")
+			return
+		}
 	}
-	if err := s.enforceVerifiedSession(r, w, req.SessionID, number); err != nil {
-		// enforceVerifiedSession has already written the HTTP response.
+
+	// Either a verification session ID or a recovery password proves the
+	// caller's authority to (re-)register the number. Java requires
+	// exactly-one-of in PhoneVerificationRequest; we mirror that.
+	switch {
+	case req.SessionID != "" && req.RecoveryPassword != "":
+		writeError(w, http.StatusBadRequest, "sessionId and recoveryPassword are mutually exclusive")
+		return
+	case req.SessionID != "":
+		if err := s.enforceVerifiedSession(r, w, req.SessionID, number); err != nil {
+			// enforceVerifiedSession has already written the HTTP response.
+			return
+		}
+	case req.RecoveryPassword != "":
+		if err := s.enforceRecoveryPassword(r, w, number, req.RecoveryPassword); err != nil {
+			// enforceRecoveryPassword has already written the HTTP response.
+			return
+		}
+	default:
+		writeError(w, http.StatusBadRequest, "either sessionId or recoveryPassword is required")
 		return
 	}
 
@@ -116,7 +155,7 @@ func (s *Server) handleRegistration(w http.ResponseWriter, r *http.Request) {
 	}
 
 	accountUUID := uuid.New().String()
-	pni := "PNI:" + uuid.New().String()
+	pniUUID := uuid.New().String()
 
 	// Build the primary device with the ACI signed pre-key.
 	primaryDevice := accounts.Device{
@@ -136,6 +175,7 @@ func (s *Server) handleRegistration(w http.ResponseWriter, r *http.Request) {
 
 	acct := &accounts.Account{
 		UUID:                   accountUUID,
+		PNI:                    pniUUID,
 		Number:                 number,
 		IdentityKey:            identityKeyBytes,
 		PhoneNumberIdentityKey: pniIdentityKeyBytes,
@@ -144,7 +184,11 @@ func (s *Server) handleRegistration(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Signal supports re-registration: if an account with the same number
-	// already exists, enforce the registration lock before replacing it.
+	// already exists, enforce the registration lock before replacing it. The
+	// displaced account is snapshotted so it can be restored if the new
+	// account (or its key material) fails to persist — a failed re-registration
+	// must not destroy the prior account.
+	var displaced *accounts.Account
 	if existing, err := s.accounts.GetByNumber(r.Context(), number); err == nil {
 		if existing.RegistrationLockHash != nil {
 			// The existing account has an active registration lock. The
@@ -168,35 +212,154 @@ func (s *Server) handleRegistration(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to create account")
 			return
 		}
+		displaced = existing
+	}
+
+	// restoreDisplaced re-creates the displaced account after a failed
+	// re-registration so the prior account is not lost. RecreatePreserving
+	// keeps the original CreatedAt/Version rather than resetting them.
+	restoreDisplaced := func() {
+		if displaced == nil {
+			return
+		}
+		if restoreErr := s.accounts.RecreatePreserving(r.Context(), displaced); restoreErr != nil {
+			s.logger.Error("failed to restore displaced account after failed re-registration",
+				slog.String("uuid", displaced.UUID),
+				slog.String("error", restoreErr.Error()))
+		}
 	}
 
 	if err := s.accounts.Create(r.Context(), acct); err != nil {
 		s.logger.Error("failed to create account", slog.String("error", err.Error()))
+		restoreDisplaced()
 		writeError(w, http.StatusInternalServerError, "failed to create account")
 		return
 	}
 
-	// Store pre-keys for the primary device.
-	if err := s.storeRegistrationPreKeys(r, accountUUID, req); err != nil {
+	// Store pre-keys for the primary device. On failure roll the account back
+	// (and restore the displaced account) so a key-store error cannot leave a
+	// live account with no key material — or destroy the prior account.
+	if err := s.storeRegistrationPreKeys(r, acct, req); err != nil {
 		s.logger.Error("failed to store registration pre-keys", slog.String("error", err.Error()))
+		if delErr := s.accounts.Delete(r.Context(), accountUUID); delErr != nil {
+			s.logger.Error("failed to roll back account after pre-key store failure",
+				slog.String("uuid", accountUUID),
+				slog.String("error", delErr.Error()))
+		}
+		// Clean up any pre-keys that were partially stored before the failure,
+		// in both the ACI and PNI namespaces, so the rollback doesn't leave
+		// orphaned key material behind.
+		if cleanupErr := s.keys.DeleteAllForAccount(r.Context(), accountUUID); cleanupErr != nil {
+			s.logger.Warn("failed to clean up ACI pre-keys after rollback",
+				slog.String("uuid", accountUUID), slog.String("error", cleanupErr.Error()))
+		}
+		if cleanupErr := s.keys.DeleteAllForAccount(r.Context(), pniUUID); cleanupErr != nil {
+			s.logger.Warn("failed to clean up PNI pre-keys after rollback",
+				slog.String("pni", pniUUID), slog.String("error", cleanupErr.Error()))
+		}
+		restoreDisplaced()
 		writeError(w, http.StatusInternalServerError, "failed to store pre-keys")
 		return
 	}
 
+	// Persist any recovery password supplied via account attributes so
+	// future re-registrations can skip the verification flow. Failures here
+	// are logged but do not abort the registration: the account already
+	// exists, and the client can re-attempt the password upload.
+	s.storeAttrRecoveryPassword(r, pniUUID, req.AccountAttributes.RecoveryPassword)
+
 	resp := AccountCreationResponse{
 		UUID:           accountUUID,
-		PNI:            pni,
+		PNI:            accounts.ServiceIdentifierString(accounts.IdentityTypePNI, pniUUID),
 		StorageCapable: capabilityValue(req.AccountAttributes.Capabilities, "storage"),
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// enforceRecoveryPassword verifies a base64-encoded registration recovery
+// password against the manager's stored hash for the number's PNI. On any
+// failure it writes the HTTP response and returns a non-nil sentinel error;
+// callers must return immediately.
+func (s *Server) enforceRecoveryPassword(r *http.Request, w http.ResponseWriter, number, encoded string) error {
+	if s.recoveryPasswords == nil {
+		writeError(w, http.StatusBadRequest, "recoveryPassword not supported by this server")
+		return errRecoveryPasswordUnsupported
+	}
+
+	pwd, err := decodeBase64(encoded)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid base64 in recoveryPassword")
+		return err
+	}
+
+	existing, err := s.accounts.GetByNumber(r.Context(), number)
+	if err != nil {
+		s.logger.Warn("recovery password registration: no existing account",
+			slog.String("number", redactNumber(number)),
+			slog.String("error", err.Error()))
+		writeError(w, http.StatusForbidden, "recoveryPassword cannot register a new number")
+		return err
+	}
+
+	ok, err := s.recoveryPasswords.Verify(r.Context(), existing.PNI, pwd)
+	if err != nil {
+		s.logger.Error("failed to verify recovery password",
+			slog.String("pni", existing.PNI),
+			slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, "failed to verify recovery password")
+		return err
+	}
+	if !ok {
+		writeError(w, http.StatusForbidden, "recoveryPassword does not match")
+		return errRecoveryPasswordMismatch
+	}
+	return nil
+}
+
+// storeAttrRecoveryPassword stores a recovery password attached to an account
+// attributes payload. Empty input is a no-op; non-empty input is decoded and
+// passed to the manager. All failures are logged at warn level; the caller
+// flow continues regardless because the account record already exists.
+func (s *Server) storeAttrRecoveryPassword(r *http.Request, pni, encoded string) {
+	if encoded == "" || s.recoveryPasswords == nil {
+		return
+	}
+	pwd, err := decodeBase64(encoded)
+	if err != nil {
+		s.logger.Warn("ignoring invalid base64 recoveryPassword on registration",
+			slog.String("error", err.Error()))
+		return
+	}
+	if err := s.recoveryPasswords.Store(r.Context(), pni, pwd); err != nil {
+		s.logger.Warn("failed to store recovery password",
+			slog.String("pni", pni),
+			slog.String("error", err.Error()))
+	}
+}
+
+// errRecoveryPasswordUnsupported and errRecoveryPasswordMismatch are sentinel
+// errors returned by enforceRecoveryPassword to signal the HTTP response has
+// already been written. Callers do not consume them beyond the != nil check.
+var (
+	errRecoveryPasswordUnsupported = &recoveryPasswordSentinel{Reason: "unsupported"}
+	errRecoveryPasswordMismatch    = &recoveryPasswordSentinel{Reason: "mismatch"}
+)
+
+type recoveryPasswordSentinel struct{ Reason string }
+
+func (e *recoveryPasswordSentinel) Error() string { return "recovery password " + e.Reason }
+
 // storeRegistrationPreKeys persists the signed and PQ last-resort pre-keys
-// submitted during registration.
-func (s *Server) storeRegistrationPreKeys(r *http.Request, accountUUID string, req RegistrationRequest) error {
+// submitted during registration for BOTH the ACI and PNI identity namespaces.
+// The PNI keys are validated alongside the ACI keys in validateRegistrationKeys
+// but must also be persisted here, otherwise PNI pre-key lookups fail
+// immediately after a successful registration.
+func (s *Server) storeRegistrationPreKeys(r *http.Request, acct *accounts.Account, req RegistrationRequest) error {
 	ctx := r.Context()
 	deviceID := uint64(accounts.PrimaryDeviceID)
+	accountUUID := acct.UUID
 
+	// --- ACI namespace ---
 	aciSignedPub, _ := decodeBase64(req.AciSignedPreKey.PublicKey)
 	aciSignedSig, _ := decodeBase64(req.AciSignedPreKey.Signature)
 
@@ -223,7 +386,44 @@ func (s *Server) storeRegistrationPreKeys(r *http.Request, accountUUID string, r
 		PublicKey: aciPqPub,
 		Signature: aciPqSig,
 	}
-	if err := s.keys.StoreKEMPreKeys(ctx, accountUUID, deviceID, []*keys.KEMSignedPreKey{aciPqKey}); err != nil {
+	// Last-resort keys go in the last-resort namespace so they are not consumed
+	// (deleted) by TakeKEM during session establishment.
+	if err := s.keys.StoreKEMLastResortPreKey(ctx, accountUUID, deviceID, aciPqKey); err != nil {
+		return err
+	}
+
+	// --- PNI namespace ---
+	pniSignedPub, err := decodeBase64(req.PniSignedPreKey.PublicKey)
+	if err != nil {
+		return &DecodeError{Message: "pniSignedPreKey publicKey", Cause: err}
+	}
+	pniSignedSig, err := decodeBase64(req.PniSignedPreKey.Signature)
+	if err != nil {
+		return &DecodeError{Message: "pniSignedPreKey signature", Cause: err}
+	}
+	pniSigned := &keys.SignedPreKey{
+		KeyID:     req.PniSignedPreKey.KeyId,
+		PublicKey: pniSignedPub,
+		Signature: pniSignedSig,
+	}
+	if err := s.keys.StoreSignedPreKeyForIdentity(ctx, acct, accounts.IdentityTypePNI, deviceID, pniSigned); err != nil {
+		return err
+	}
+
+	pniPqPub, err := decodeBase64(req.PniPqLastResortPreKey.PublicKey)
+	if err != nil {
+		return &DecodeError{Message: "pniPqLastResortPreKey publicKey", Cause: err}
+	}
+	pniPqSig, err := decodeBase64(req.PniPqLastResortPreKey.Signature)
+	if err != nil {
+		return &DecodeError{Message: "pniPqLastResortPreKey signature", Cause: err}
+	}
+	pniPqKey := &keys.KEMSignedPreKey{
+		KeyID:     req.PniPqLastResortPreKey.KeyId,
+		PublicKey: pniPqPub,
+		Signature: pniPqSig,
+	}
+	if err := s.keys.StoreKEMLastResortPreKeyForIdentity(ctx, acct, accounts.IdentityTypePNI, deviceID, pniPqKey); err != nil {
 		return err
 	}
 

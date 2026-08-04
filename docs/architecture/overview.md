@@ -247,4 +247,4 @@ test/
 
 The server is configured via YAML files. Secret values support `kms://` URIs
 and `${ENV_VAR}` expansion through the `pkg/config/secrets/` subsystem. See
-[configuration.md](../configuration.md) for the full reference.
+[configuration/reference.md](../configuration/reference.md) for the full reference.

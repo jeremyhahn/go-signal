@@ -131,6 +131,7 @@ func TestDeserializeGroupSendToken(t *testing.T) {
 
 	if restored == nil {
 		t.Fatal("expected non-nil restored token")
+		return
 	}
 	if restored.Expiration != original.Expiration {
 		t.Errorf("expiration: got %d, want %d", restored.Expiration, original.Expiration)

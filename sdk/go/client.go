@@ -3,9 +3,10 @@ package signal
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"fmt"
 	"net/http"
 	"time"
+
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 
 	"github.com/jeremyhahn/go-libsignal/pkg/logger"
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
@@ -37,10 +38,10 @@ type Client struct {
 // NewClient creates a new Signal client with the given configuration.
 func NewClient(cfg ClientConfig) (*Client, error) {
 	if cfg.ServerURL == "" {
-		return nil, fmt.Errorf("signal: ServerURL is required")
+		return nil, signalerrors.New(signalerrors.ErrInvalidArgument, "signal: ServerURL is required")
 	}
 	if cfg.DataDir == "" {
-		return nil, fmt.Errorf("signal: DataDir is required")
+		return nil, signalerrors.New(signalerrors.ErrInvalidArgument, "signal: DataDir is required")
 	}
 	if cfg.UserAgent == "" {
 		cfg.UserAgent = "signal-go-sdk/0.1"
@@ -58,7 +59,7 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 				for i := range caBytes {
 					caBytes[i] = 0
 				}
-				return nil, fmt.Errorf("signal: failed to parse CA certificate")
+				return nil, signalerrors.New(signalerrors.ErrInvalidArgument, "signal: failed to parse CA certificate")
 			}
 			tlsConfig.RootCAs = pool
 			for i := range caBytes {
@@ -78,7 +79,7 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	if store == nil {
 		daoStore, err := NewDefaultDAOStore(cfg.DataDir)
 		if err != nil {
-			return nil, fmt.Errorf("signal: create dao store: %w", err)
+			return nil, signalerrors.Wrap(signalerrors.ErrInternal, "signal: create dao store", err)
 		}
 		store = daoStore
 	}

@@ -13,6 +13,15 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/accounts"
 )
 
+// uakResolver builds the destination resolver that optionalAuthMiddleware now
+// takes, looking the account up by UUID exactly as the previous destUUID
+// argument did.
+func uakResolver(s *Server, id string) func(*http.Request) (*accounts.Account, error) {
+	return func(r *http.Request) (*accounts.Account, error) {
+		return s.accounts.Get(r.Context(), id)
+	}
+}
+
 // --------------------------------------------------------------------------
 // context helpers: contextWithUnidentifiedSender / isUnidentifiedSender
 // --------------------------------------------------------------------------
@@ -73,7 +82,7 @@ func TestOptionalAuthMiddleware_BasicAuth_Success(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	handler := optionalAuthMiddleware(s.accounts, acct.UUID, inner)
+	handler := optionalAuthMiddleware(s.accounts, uakResolver(s, acct.UUID), inner)
 	req := httptest.NewRequest(http.MethodPut, "/v1/messages/"+acct.UUID, nil)
 	req.SetBasicAuth(testAccountUUID, testAuthToken)
 	rr := httptest.NewRecorder()
@@ -94,7 +103,7 @@ func TestOptionalAuthMiddleware_BasicAuth_WrongPassword(t *testing.T) {
 		t.Error("inner handler should not be called")
 	})
 
-	handler := optionalAuthMiddleware(s.accounts, acct.UUID, inner)
+	handler := optionalAuthMiddleware(s.accounts, uakResolver(s, acct.UUID), inner)
 	req := httptest.NewRequest(http.MethodPut, "/v1/messages/"+acct.UUID, nil)
 	req.SetBasicAuth(testAccountUUID, "wrong-password")
 	rr := httptest.NewRecorder()
@@ -131,7 +140,7 @@ func TestOptionalAuthMiddleware_UAK_ValidKey_Succeeds(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	handler := optionalAuthMiddleware(s.accounts, acct.UUID, inner)
+	handler := optionalAuthMiddleware(s.accounts, uakResolver(s, acct.UUID), inner)
 	req := httptest.NewRequest(http.MethodPut, "/v1/messages/"+acct.UUID, nil)
 	req.Header.Set("Unidentified-Access-Key", uakB64)
 	rr := httptest.NewRecorder()
@@ -158,7 +167,7 @@ func TestOptionalAuthMiddleware_UAK_InvalidKey_Returns401(t *testing.T) {
 		t.Error("inner handler should not be called on invalid UAK")
 	})
 
-	handler := optionalAuthMiddleware(s.accounts, acct.UUID, inner)
+	handler := optionalAuthMiddleware(s.accounts, uakResolver(s, acct.UUID), inner)
 	req := httptest.NewRequest(http.MethodPut, "/v1/messages/"+acct.UUID, nil)
 	req.Header.Set("Unidentified-Access-Key", wrongKeyB64)
 	rr := httptest.NewRecorder()
@@ -178,7 +187,7 @@ func TestOptionalAuthMiddleware_UAK_DestinationNotFound_Returns401(t *testing.T)
 		t.Error("inner handler should not be called when destination not found")
 	})
 
-	handler := optionalAuthMiddleware(s.accounts, "nonexistent-uuid", inner)
+	handler := optionalAuthMiddleware(s.accounts, uakResolver(s, "nonexistent-uuid"), inner)
 	req := httptest.NewRequest(http.MethodPut, "/v1/messages/nonexistent-uuid", nil)
 	req.Header.Set("Unidentified-Access-Key", uakB64)
 	rr := httptest.NewRecorder()
@@ -196,7 +205,7 @@ func TestOptionalAuthMiddleware_NoCredentials_Returns401(t *testing.T) {
 		t.Error("inner handler should not be called with no credentials")
 	})
 
-	handler := optionalAuthMiddleware(s.accounts, acct.UUID, inner)
+	handler := optionalAuthMiddleware(s.accounts, uakResolver(s, acct.UUID), inner)
 	req := httptest.NewRequest(http.MethodPut, "/v1/messages/"+acct.UUID, nil)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -222,7 +231,7 @@ func TestOptionalAuthMiddleware_UAK_AccountWithNoUAK_Returns401(t *testing.T) {
 		t.Error("inner handler should not be called when dest account has no UAK")
 	})
 
-	handler := optionalAuthMiddleware(s.accounts, testAccountUUID, inner)
+	handler := optionalAuthMiddleware(s.accounts, uakResolver(s, testAccountUUID), inner)
 	req := httptest.NewRequest(http.MethodPut, "/v1/messages/"+testAccountUUID, nil)
 	req.Header.Set("Unidentified-Access-Key", uakB64)
 	rr := httptest.NewRecorder()
@@ -240,7 +249,7 @@ func TestOptionalAuthMiddleware_UAK_MalformedBase64_Returns401(t *testing.T) {
 		t.Error("inner handler should not be called for malformed UAK")
 	})
 
-	handler := optionalAuthMiddleware(s.accounts, acct.UUID, inner)
+	handler := optionalAuthMiddleware(s.accounts, uakResolver(s, acct.UUID), inner)
 	req := httptest.NewRequest(http.MethodPut, "/v1/messages/"+acct.UUID, nil)
 	req.Header.Set("Unidentified-Access-Key", "!!!not-valid-base64!!!")
 	rr := httptest.NewRecorder()

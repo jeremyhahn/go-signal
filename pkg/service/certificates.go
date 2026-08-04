@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 
+	"github.com/jeremyhahn/go-libsignal/pkg/zkgroup"
 	"github.com/jeremyhahn/go-signal/pkg/certificates"
 )
 
@@ -29,7 +30,30 @@ type CertificateService interface {
 		startSeconds int64,
 		endSeconds int64,
 	) (*certificates.GroupCredentials, error)
+
+	// GetExpiringProfileKeyCredential issues an ExpiringProfileKeyCredential
+	// for the given account using the supplied zkgroup credential request and
+	// profile-key commitment.
+	GetExpiringProfileKeyCredential(
+		ctx context.Context,
+		aciUUID string,
+		credentialRequest *zkgroup.ProfileKeyCredentialRequest,
+		commitment *zkgroup.ProfileKeyCommitment,
+		credentialExpirationTime zkgroup.Timestamp,
+	) (*certificates.ExpiringProfileKeyCredentialResponse, error)
+
+	// GetExpiringProfileKeyCredentialStub returns a structured stub
+	// ExpiringProfileKeyCredentialResponse when the full zkgroup request
+	// cannot be deserialized or authServerSecret is not configured.
+	GetExpiringProfileKeyCredentialStub(
+		ctx context.Context,
+		aciUUID string,
+		credentialExpirationTime zkgroup.Timestamp,
+	) (*certificates.ExpiringProfileKeyCredentialResponse, error)
 }
+
+// Compile-time assertion: CertificatesManager must satisfy CertificateService.
+var _ CertificateService = (*certificates.CertificatesManager)(nil)
 
 // certificateService is the default CertificateService backed by a
 // CertificatesManager.
@@ -62,4 +86,22 @@ func (s *certificateService) GetGroupCredentials(
 	endSeconds int64,
 ) (*certificates.GroupCredentials, error) {
 	return s.manager.GetGroupCredentials(ctx, uuid, pni, startSeconds, endSeconds)
+}
+
+func (s *certificateService) GetExpiringProfileKeyCredential(
+	ctx context.Context,
+	aciUUID string,
+	credentialRequest *zkgroup.ProfileKeyCredentialRequest,
+	commitment *zkgroup.ProfileKeyCommitment,
+	credentialExpirationTime zkgroup.Timestamp,
+) (*certificates.ExpiringProfileKeyCredentialResponse, error) {
+	return s.manager.GetExpiringProfileKeyCredential(ctx, aciUUID, credentialRequest, commitment, credentialExpirationTime)
+}
+
+func (s *certificateService) GetExpiringProfileKeyCredentialStub(
+	ctx context.Context,
+	aciUUID string,
+	credentialExpirationTime zkgroup.Timestamp,
+) (*certificates.ExpiringProfileKeyCredentialResponse, error) {
+	return s.manager.GetExpiringProfileKeyCredentialStub(ctx, aciUUID, credentialExpirationTime)
 }

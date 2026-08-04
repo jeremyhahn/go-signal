@@ -618,6 +618,7 @@ func TestGetExpiringProfileKeyCredentialStub_NoAuthSecret(t *testing.T) {
 	}
 	if resp == nil {
 		t.Fatal("expected non-nil response")
+		return
 	}
 	if len(resp.Credential) == 0 {
 		t.Error("expected non-empty stub credential")
@@ -751,6 +752,7 @@ func TestGetExpiringProfileKeyCredential_WithAuthSecret(t *testing.T) {
 	}
 	if resp == nil {
 		t.Fatal("expected non-nil response")
+		return
 	}
 	if len(resp.Credential) == 0 {
 		t.Error("expected non-empty credential")
@@ -774,6 +776,7 @@ func TestGetExpiringProfileKeyCredential_FallsBackToStubWhenNoAuthSecret(t *test
 	}
 	if resp == nil {
 		t.Fatal("expected non-nil response from stub path")
+		return
 	}
 	if len(resp.Credential) == 0 {
 		t.Error("expected non-empty stub credential")

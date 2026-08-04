@@ -13,11 +13,12 @@ var errFailing = errors.New("kv client failure")
 // failingKVClient is a KV client that fails on specific operations to test
 // error handling paths.
 type failingKVClient struct {
-	failPut    bool
-	failGet    bool
-	failDelete bool
-	failList   bool
-	failExists bool
+	failPut             bool
+	failGet             bool
+	failDelete          bool
+	failDeleteIfPresent bool
+	failList            bool
+	failExists          bool
 
 	// data allows selective success for setup operations.
 	data map[string][]byte
@@ -58,6 +59,17 @@ func (f *failingKVClient) Delete(_ context.Context, key string) error {
 	}
 	delete(f.data, key)
 	return nil
+}
+
+func (f *failingKVClient) DeleteIfPresent(_ context.Context, key string) (bool, error) {
+	if f.failDeleteIfPresent {
+		return false, errFailing
+	}
+	if _, ok := f.data[key]; !ok {
+		return false, nil
+	}
+	delete(f.data, key)
+	return true, nil
 }
 
 func (f *failingKVClient) List(_ context.Context, _ string) ([]string, error) {

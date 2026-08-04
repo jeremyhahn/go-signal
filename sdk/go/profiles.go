@@ -2,7 +2,8 @@ package signal
 
 import (
 	"context"
-	"fmt"
+
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
 // UpdateProfile updates the authenticated user's profile.
@@ -28,7 +29,7 @@ func (c *Client) UpdateProfile(ctx context.Context, profile Profile) error {
 func (c *Client) GetProfile(ctx context.Context, uuid string) (*Profile, error) {
 	var result Profile
 	if err := c.doRequest(ctx, "GET", "/v1/profile/"+uuid, nil, &result); err != nil {
-		return nil, fmt.Errorf("get profile: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "get profile", err)
 	}
 	return &result, nil
 }

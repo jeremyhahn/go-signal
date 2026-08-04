@@ -127,8 +127,12 @@ func (h *Handler) HandleAuthenticated(w http.ResponseWriter, r *http.Request) {
 
 	deviceID := accounts.PrimaryDeviceID
 	session := signalws.NewSession(conn, acct.UUID, deviceID, secrets.NewSecureString(password), h.logger)
-	// Signal clients use binary protobuf framing for WebSocket messages.
-	session.SetFormat(signalws.FrameFormatProtobuf)
+	// Do NOT force a frame format here. ReadPump auto-detects the format from
+	// the first inbound frame type (binary → protobuf, text → JSON). Forcing
+	// protobuf here would lock the session before ReadPump can detect a JSON
+	// text frame, causing parse failures for JSON clients (integration tests,
+	// debugging tools). Signal app clients naturally send binary frames and
+	// ReadPump will detect protobuf correctly on their first message.
 
 	// Start the write pump BEFORE registering the session so that any
 	// messages delivered via the DeliveryCallback are consumed immediately
@@ -162,7 +166,9 @@ func (h *Handler) HandleUnauthenticated(w http.ResponseWriter, r *http.Request) 
 
 	sessionUUID := uuid.New().String()
 	session := signalws.NewSession(conn, sessionUUID, 0, nil, h.logger)
-	session.SetFormat(signalws.FrameFormatProtobuf)
+	// Do NOT force a frame format here; ReadPump auto-detects from the first
+	// inbound frame type, supporting both JSON (integration tests) and protobuf
+	// (Signal app clients) without a config knob.
 	session.StartWritePump()
 
 	h.sessions.Register(session)

@@ -19,4 +19,4 @@ type GroupEntity struct {
 }
 
 func (g *GroupEntity) EntityID() uint64      { return g.ID }
-func (g *GroupEntity) SetEntityID(id uint64)  { g.ID = id }
+func (g *GroupEntity) SetEntityID(id uint64) { g.ID = id }

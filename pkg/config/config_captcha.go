@@ -23,6 +23,18 @@ type CaptchaConfig struct {
 	// manager to use its built-in default (0.5). Not applicable to hCaptcha
 	// or the test provider which do not emit scores.
 	ScoreThreshold float64 `yaml:"scoreThreshold"`
+
+	// SiteKeysByAction is the per-action allowlist enforced by the Checker
+	// (Phase 3.3). Keys are action names ("challenge", "registration");
+	// values are the lower-cased site keys accepted for that action. When
+	// empty, the verifier accepts any site key (legacy behavior).
+	//
+	// Example:
+	//
+	//   siteKeysByAction:
+	//     registration: ["abc-prod", "def-fallback"]
+	//     challenge:    ["abc-prod"]
+	SiteKeysByAction map[string][]string `yaml:"siteKeysByAction"`
 }
 
 // ApplyDefaults fills in missing CaptchaConfig values with safe defaults.

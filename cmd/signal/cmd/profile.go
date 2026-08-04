@@ -1,9 +1,10 @@
 package cmd
 
 import (
-	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 
 	signal "github.com/jeremyhahn/go-signal/sdk/go"
 	"github.com/spf13/cobra"
@@ -33,9 +34,9 @@ var updateProfileCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
-		return client.UpdateProfile(context.Background(), signal.Profile{
+		return client.UpdateProfile(cmd.Context(), signal.Profile{
 			GivenName:  profileGivenName,
 			FamilyName: profileFamilyName,
 			About:      profileAbout,
@@ -53,24 +54,52 @@ var getUserStatusCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
 		for _, number := range args {
-			profile, err := client.GetProfile(context.Background(), number)
+			profile, err := client.GetProfile(cmd.Context(), number)
 			if err != nil {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s: not registered\n", number)
+				if isNotFoundError(err) {
+					if outputFmt == "json" {
+						_ = json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{
+							"number":     number,
+							"registered": false,
+						})
+					} else {
+						_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: not registered\n", number)
+					}
+				} else {
+					_, _ = fmt.Fprintf(os.Stderr, "%s: error: %v\n", number, err)
+					if outputFmt == "json" {
+						_ = json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{
+							"number": number,
+							"error":  err.Error(),
+						})
+					}
+				}
 				continue
 			}
 			if outputFmt == "json" {
-				json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{
+				_ = json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]any{
 					"number":     number,
 					"registered": true,
 					"profile":    profile,
 				})
 			} else {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s: registered\n", number)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: registered\n", number)
 			}
 		}
 		return nil
 	},
+}
+
+// isNotFoundError reports whether err indicates the account does not exist.
+// It matches signal.NotRegisteredError directly or an APIError with HTTP 404.
+func isNotFoundError(err error) bool {
+	var notReg *signal.NotRegisteredError
+	if errors.As(err, &notReg) {
+		return true
+	}
+	var apiErr *signal.APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == 404
 }

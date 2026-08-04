@@ -1,0 +1,177 @@
+# Signal Server — PRODUCTION configuration template.
+#
+# This profile activates the fail-closed production security gate
+# (config.validateProduction). signald will REFUSE to boot if any
+# development/test affordance is present. See pkg/config/config.go.
+#
+# Secrets are injected from the environment via ${VAR} references (resolved
+# by pkg/config/secrets EnvResolver) or, in a KMS deployment, by registering
+# a kms:// resolver and using kms:// URIs in place of the ${VAR} values.
+# Never commit real secret material to this file.
+
+mode: production
+
+server:
+  host: "0.0.0.0"
+  # Non-privileged ports so the container can run as a non-root user. The
+  # server terminates TLS itself; a load balancer forwards 443 -> 8443.
+  httpPort: 8443
+  grpcPort: 8444
+  # TLS is mandatory in production. Mount real certificates at deploy time.
+  tlsCertFile: "/etc/signal-server/tls/server-cert.pem"
+  tlsKeyFile: "/etc/signal-server/tls/server-key.pem"
+  maxDevices: 6
+  # Exact client origins only — never "*" in production.
+  allowedOrigins:
+    - "https://chat.example.com"
+
+storage:
+  # Only "postgres" (clustered) or "file" (single-node) are durable
+  # production backends. "memory"/"qrdb"/"dynamodb" are rejected by the gate.
+  backend: "postgres"
+  postgres:
+    host: "${SIGNAL_PG_HOST}"
+    port: 5432
+    database: "${SIGNAL_PG_DATABASE}"
+    user: "${SIGNAL_PG_USER}"
+    password: "${SIGNAL_PG_PASSWORD}"
+    # require | verify-ca | verify-full — never "disable" in production.
+    sslMode: "verify-full"
+
+cache:
+  # Redis is required for cross-instance WebSocket delivery.
+  backend: "redis"
+  redis:
+    url: "${SIGNAL_REDIS_URL}"
+    password: "${SIGNAL_REDIS_PASSWORD}"
+    db: 0
+
+push:
+  apn:
+    teamId: "${SIGNAL_APN_TEAM_ID}"
+    keyId: "${SIGNAL_APN_KEY_ID}"
+    bundleId: "${SIGNAL_APN_BUNDLE_ID}"
+    privateKey: "${SIGNAL_APN_PRIVATE_KEY}"
+    sandbox: false
+  fcm:
+    credentials: "${SIGNAL_FCM_CREDENTIALS}"
+
+cdn:
+  bucket: "${SIGNAL_CDN_BUCKET}"
+  region: "${SIGNAL_CDN_REGION}"
+  accessKey: "${SIGNAL_CDN_ACCESS_KEY}"
+  secretKey: "${SIGNAL_CDN_SECRET_KEY}"
+
+limits:
+  # Production rate limits (token-bucket). Tune to your traffic; these are
+  # conservative Signal-aligned defaults. A zero messages.bucketSize is
+  # rejected by the gate (it would disable the message spam check).
+  registration:
+    bucketSize: 5
+    leakRatePerMin: 2
+  messages:
+    bucketSize: 200
+    leakRatePerMin: 60
+  preKeys:
+    bucketSize: 100
+    leakRatePerMin: 30
+  profiles:
+    bucketSize: 100
+    leakRatePerMin: 30
+  attachments:
+    bucketSize: 50
+    leakRatePerMin: 15
+  verification:
+    bucketSize: 5
+    leakRatePerMin: 2
+  pin:
+    bucketSize: 10
+    leakRatePerMin: 3
+  usernames:
+    bucketSize: 20
+    leakRatePerMin: 6
+  authentication:
+    bucketSize: 50
+    leakRatePerMin: 15
+  accountCheck:
+    bucketSize: 50
+    leakRatePerMin: 15
+  captchaAttempt:
+    bucketSize: 10
+    leakRatePerMin: 3
+  captchaSuccess:
+    bucketSize: 10
+    leakRatePerMin: 3
+  deviceAllocate:
+    bucketSize: 10
+    leakRatePerMin: 3
+  deviceVerify:
+    bucketSize: 10
+    leakRatePerMin: 3
+  inboundMessageBytes:
+    bucketSize: 1048576
+    leakRatePerMin: 262144
+
+fraud:
+  # Real anti-abuse caps — NOT the test profile's effectively-unlimited values.
+  maxRegistrationsPerIP: 10
+  maxRegistrationsPerPrefix: 100
+  windowMinutes: 60
+
+turn:
+  cloudflare:
+    apiToken: "${SIGNAL_TURN_API_TOKEN}"
+    endpoint: "https://rtc.live.cloudflare.com/v1/turn/keys/<key-id>/credentials/generate"
+    urls:
+      - "turn:turn.example.com:3478"
+      - "turns:turn.example.com:443"
+    urlsWithIps:
+      - "turn:%s:3478"
+      - "turns:%s:443"
+    hostname: "turn.example.com"
+    requestedCredentialTtl: "86400s"
+    clientCredentialTtl: "43200s"
+    numHttpClients: 2
+
+zkConfig:
+  # Required in production: without a provisioned serverSecret the server
+  # issues an insecure HMAC placeholder profile-key credential.
+  serverSecret: "${SIGNAL_ZK_SERVER_SECRET}"
+  signingKey: "${SIGNAL_ZK_SIGNING_KEY}"
+  enabled: true
+
+callingZkConfig:
+  # Must be a real, unique secret — the development value is rejected.
+  serverSecret: "${SIGNAL_CALLING_ZK_SECRET}"
+
+callQualitySurvey:
+  backend: "log"
+  pubSub:
+    projectId: ""
+    topicId: ""
+
+payments:
+  stripe:
+    apiKey: "${SIGNAL_STRIPE_API_KEY}"
+    webhookSecret: "${SIGNAL_STRIPE_WEBHOOK_SECRET}"
+
+directory:
+  enabled: true
+
+verification:
+  # A real transport is required — the stub only logs codes. fixedCode must
+  # be empty (the gate rejects a non-empty value).
+  transport: "twilio"
+  fixedCode: ""
+  twilio:
+    accountSid: "${SIGNAL_TWILIO_ACCOUNT_SID}"
+    authToken: "${SIGNAL_TWILIO_AUTH_TOKEN}"
+    verifyServiceSid: "${SIGNAL_TWILIO_VERIFY_SERVICE_SID}"
+    channel: "sms"
+
+captcha:
+  # A real provider is required ("test" is rejected by the gate).
+  provider: "hcaptcha"
+  secretKey: "${SIGNAL_CAPTCHA_SECRET_KEY}"
+  siteKey: "${SIGNAL_CAPTCHA_SITE_KEY}"
+  scoreThreshold: 0.5

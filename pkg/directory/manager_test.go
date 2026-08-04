@@ -84,3 +84,145 @@ func TestGetAuthToken_CancelledContext(t *testing.T) {
 		t.Errorf("got username %q, want %q", creds.Username, "user-1")
 	}
 }
+
+func TestSetSharedSecret_EmptyStringClearsSecret(t *testing.T) {
+	m := NewDirectoryManager(testLogger())
+	m.SetSharedSecret("")
+	if m.sharedSecret != nil {
+		t.Error("expected nil sharedSecret after empty string")
+	}
+}
+
+func TestSetSharedSecret_NonEmptyStoresSecret(t *testing.T) {
+	m := NewDirectoryManager(testLogger())
+	m.SetSharedSecret("my-secret")
+	if string(m.sharedSecret) != "my-secret" {
+		t.Errorf("expected sharedSecret %q, got %q", "my-secret", string(m.sharedSecret))
+	}
+}
+
+func TestSetSharedSecret_ResetToEmpty(t *testing.T) {
+	m := NewDirectoryManager(testLogger())
+	m.SetSharedSecret("first-secret")
+	m.SetSharedSecret("")
+	if m.sharedSecret != nil {
+		t.Error("expected nil sharedSecret after reset with empty string")
+	}
+}
+
+func TestSetSharedSecret_OverwriteExisting(t *testing.T) {
+	m := NewDirectoryManager(testLogger())
+	m.SetSharedSecret("first")
+	m.SetSharedSecret("second")
+	if string(m.sharedSecret) != "second" {
+		t.Errorf("expected sharedSecret %q, got %q", "second", string(m.sharedSecret))
+	}
+}
+
+func TestGetAuthToken_WithSharedSecret_IsDeterministic(t *testing.T) {
+	m := NewDirectoryManager(testLogger())
+	m.SetSharedSecret("deterministic-secret")
+	creds1, err := m.GetAuthToken(context.Background(), "test-uuid")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	creds2, err := m.GetAuthToken(context.Background(), "test-uuid")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if creds1.Password != creds2.Password {
+		t.Error("HMAC password must be deterministic for the same input")
+	}
+}
+
+func TestGetAuthToken_WithSharedSecret_DifferentUUIDs(t *testing.T) {
+	m := NewDirectoryManager(testLogger())
+	m.SetSharedSecret("deterministic-secret")
+	creds1, err := m.GetAuthToken(context.Background(), "uuid-one")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	creds2, err := m.GetAuthToken(context.Background(), "uuid-two")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if creds1.Password == creds2.Password {
+		t.Error("different UUIDs must produce different HMAC passwords")
+	}
+}
+
+func TestGetAuthToken_WithSharedSecret_UsernameIsAccountUUID(t *testing.T) {
+	m := NewDirectoryManager(testLogger())
+	m.SetSharedSecret("any-secret")
+	const accountUUID = "account-uuid-123"
+	creds, err := m.GetAuthToken(context.Background(), accountUUID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if creds.Username != accountUUID {
+		t.Errorf("expected username %q, got %q", accountUUID, creds.Username)
+	}
+}
+
+func TestGetAuthToken_WithSharedSecret_PasswordIsHexHMAC(t *testing.T) {
+	m := NewDirectoryManager(testLogger())
+	m.SetSharedSecret("any-secret")
+	creds, err := m.GetAuthToken(context.Background(), "test-uuid")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// HMAC-SHA256 is 32 bytes → 64 hex characters.
+	if len(creds.Password) != 64 {
+		t.Errorf("expected 64-char hex password, got len %d: %q", len(creds.Password), creds.Password)
+	}
+}
+
+func TestGetAuthToken_WithSharedSecret_DiffersFromStubMode(t *testing.T) {
+	mStub := NewDirectoryManager(testLogger())
+	mHMAC := NewDirectoryManager(testLogger())
+	mHMAC.SetSharedSecret("test-secret")
+
+	const uuid = "shared-uuid"
+	credsStub, _ := mStub.GetAuthToken(context.Background(), uuid)
+	credsHMAC, _ := mHMAC.GetAuthToken(context.Background(), uuid)
+	// Stub mode returns a random UUID (36 chars); HMAC mode returns 64 hex chars.
+	if len(credsHMAC.Password) != 64 {
+		t.Errorf("HMAC password length = %d, want 64", len(credsHMAC.Password))
+	}
+	if len(credsStub.Password) == 64 {
+		t.Error("stub password should not be 64 chars (random UUID is 36)")
+	}
+}
+
+func TestGetAuthToken_TableDriven_WithAndWithoutSecret(t *testing.T) {
+	cases := []struct {
+		name           string
+		secret         string
+		uuid           string
+		wantPassLen    int
+		wantPassLenMsg string
+	}{
+		{"no-secret", "", "u1", 36, "random UUID is 36 chars"},
+		{"with-secret", "s3cr3t", "u1", 64, "HMAC-SHA256 hex is 64 chars"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewDirectoryManager(testLogger())
+			if tc.secret != "" {
+				m.SetSharedSecret(tc.secret)
+			}
+			creds, err := m.GetAuthToken(context.Background(), tc.uuid)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if creds.Username != tc.uuid {
+				t.Errorf("username = %q, want %q", creds.Username, tc.uuid)
+			}
+			if len(creds.Password) != tc.wantPassLen {
+				t.Errorf("password len = %d, want %d (%s): %q",
+					len(creds.Password), tc.wantPassLen, tc.wantPassLenMsg, creds.Password)
+			}
+		})
+	}
+}

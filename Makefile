@@ -3,6 +3,18 @@
 
 .DEFAULT_GOAL := build
 
+# ==============================================================================
+# Help
+# ==============================================================================
+
+.PHONY: help all
+
+help: ## Display available targets
+	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make <target>\n\nTargets:\n"} /^[a-zA-Z_0-9\/-]+:.*?##/ { printf "  %-24s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
+
+all: clean deps lint test build ## Run clean, deps, lint, test and build
+	@echo "==> All targets completed successfully."
+
 # Project metadata
 MODULE        := github.com/jeremyhahn/go-signal
 SERVER_BINARY := signald
@@ -30,7 +42,10 @@ GOVULNCHECK   := govulncheck
 #   G104: unhandled errors (false positive on hash.Write)
 #   G115: integer overflow conversions (protocol-spec bounded IDs)
 #   G304: file path via variable (config paths constructed internally)
-GOSEC_EXCLUDE := G103,G104,G115,G304
+#   G118: cancel-func ownership transferred to caller (Go idiom: helpers
+#         that build a (ctx, cancel) pair return both; the caller defers
+#         cancel — gosec doesn't track interprocedural ownership)
+GOSEC_EXCLUDE := G103,G104,G115,G304,G118
 
 # Coverage
 COVER_MIN     := 90
@@ -106,8 +121,9 @@ endif
 BUILD_TAGS_FLAG := $(if $(strip $(BUILD_TAGS)),-tags "$(strip $(BUILD_TAGS))")
 
 .PHONY: build build-server build-cli build-frontend dev-web proto
+.PHONY: build-cdsi build-svr2 build-key-transparency build-registration-service build-storage-service build-services
 
-build: build-server build-cli
+build: build-server build-cli ## Build server and CLI binaries
 
 # build-frontend compiles the React/Vite SPA and copies the output into the
 # internal/frontend/dist/ directory so that the Go embed directive in
@@ -131,7 +147,7 @@ build-server:
 # build-all builds the frontend then the server binary so that the web UI is
 # embedded in the resulting binary.
 .PHONY: build-all
-build-all: build-frontend build-server build-cli
+build-all: build-frontend build-server build-cli ## Build frontend, server and CLI
 
 # dev-web starts both the frontend Vite dev server (with HMR) and the signald
 # backend concurrently. Kill both processes with Ctrl-C.
@@ -146,6 +162,39 @@ build-cli:
 	@echo "==> Building CLI (tags: $(or $(strip $(BUILD_TAGS)),none))..."
 	@mkdir -p $(BIN_DIR)
 	$(GOBUILD) $(BUILD_TAGS_FLAG) -o $(BIN_DIR)/$(CLI_BINARY) ./cmd/signal/
+
+# ==============================================================================
+# Auxiliary service binaries
+# ==============================================================================
+
+build-cdsi:
+	@echo "==> Building cdsi (tags: $(or $(strip $(BUILD_TAGS)),none))..."
+	@mkdir -p $(BIN_DIR)
+	$(GOBUILD) $(BUILD_TAGS_FLAG) -o $(BIN_DIR)/cdsi ./cmd/cdsi/
+
+build-svr2:
+	@echo "==> Building svr2 (tags: $(or $(strip $(BUILD_TAGS)),none))..."
+	@mkdir -p $(BIN_DIR)
+	$(GOBUILD) $(BUILD_TAGS_FLAG) -o $(BIN_DIR)/svr2 ./cmd/svr2/
+
+build-key-transparency:
+	@echo "==> Building key-transparency (tags: $(or $(strip $(BUILD_TAGS)),none))..."
+	@mkdir -p $(BIN_DIR)
+	$(GOBUILD) $(BUILD_TAGS_FLAG) -o $(BIN_DIR)/key-transparency ./cmd/key-transparency/
+
+build-registration-service:
+	@echo "==> Building registration-service (tags: $(or $(strip $(BUILD_TAGS)),none))..."
+	@mkdir -p $(BIN_DIR)
+	$(GOBUILD) $(BUILD_TAGS_FLAG) -o $(BIN_DIR)/registration-service ./cmd/registration-service/
+
+build-storage-service:
+	@echo "==> Building storage-service (tags: $(or $(strip $(BUILD_TAGS)),none))..."
+	@mkdir -p $(BIN_DIR)
+	$(GOBUILD) $(BUILD_TAGS_FLAG) -o $(BIN_DIR)/storage-service ./cmd/storage-service/
+
+# build-services builds all five auxiliary service binaries.
+build-services: build-cdsi build-svr2 build-key-transparency build-registration-service build-storage-service ## Build all auxiliary service binaries
+	@echo "==> All auxiliary service binaries built."
 
 # Desktop GUI explicit build tags (for build-desktop target)
 BUILD_TAGS_DESKTOP := fido2,desktop,codec_json
@@ -175,9 +224,30 @@ coverage-desktop: ## Coverage report for desktop packages
 
 proto:
 	@echo "==> Generating protobuf code..."
-	protoc --go_out=. --go_opt=paths=source_relative \
-		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
-		pkg/api/grpc/proto/*.proto
+	@mkdir -p pkg/api/grpc/genproto
+	@PATH=$(GOPATH_BIN):$$PATH protoc \
+		--go_out=pkg/api/grpc/genproto \
+		--go-grpc_out=pkg/api/grpc/genproto \
+		-I pkg/api/grpc/proto \
+		pkg/api/grpc/proto/org/signal/chat/*.proto \
+		pkg/api/grpc/proto/RegistrationService.proto \
+		pkg/api/grpc/proto/KeyTransparencyService.proto \
+		pkg/api/grpc/proto/WebSocketConnectionEvent.proto \
+		pkg/api/grpc/proto/CallQualitySurveyPubSub.proto \
+		pkg/api/grpc/proto/DisconnectionRequests.proto \
+		pkg/api/grpc/proto/cdsi.proto \
+		pkg/api/grpc/proto/directory.proto
+	@# protoc places output under the full go_package path; flatten it.
+	@# Using cp + rm is idempotent across reruns (mv fails when target
+	@# subdirectories already exist from a previous generation).
+	@if [ -d pkg/api/grpc/genproto/github.com ]; then \
+		cp -r pkg/api/grpc/genproto/github.com/jeremyhahn/go-signal/pkg/api/grpc/genproto/. pkg/api/grpc/genproto/; \
+		rm -rf pkg/api/grpc/genproto/github.com; \
+	fi
+	@echo "==> Protobuf generation complete."
+
+# GOPATH_BIN holds the Go install bin dir where protoc-gen-go lives.
+GOPATH_BIN := $(shell go env GOPATH)/bin
 
 # ==============================================================================
 # Testing
@@ -185,7 +255,7 @@ proto:
 
 .PHONY: test integration-test
 
-test:
+test: ## Run unit tests with coverage
 	@echo "==> Running unit tests (tags: $(or $(strip $(BUILD_TAGS)),none))..."
 	@mkdir -p $(COVER_DIR)
 	$(GOTEST) $(BUILD_TAGS_FLAG) -coverprofile=$(COVER_DIR)/coverage.out \
@@ -196,7 +266,7 @@ test:
 # integration-test runs E2E integration tests inside the devcontainer.
 # When SIGNAL_SERVER_URL is set (inside the container), run go test directly.
 # Otherwise, bring up docker-compose and run tests in the integration container.
-integration-test:
+integration-test: ## Run integration tests
 ifdef SIGNAL_SERVER_URL
 	@echo "==> Running integration tests against $(SIGNAL_SERVER_URL)..."
 	@mkdir -p $(COVER_DIR)
@@ -298,6 +368,20 @@ test-store:
 	$(GOTEST) $(PKG_STORE)
 test-storage:
 	$(GOTEST) $(PKG_STORAGE)
+
+# test-storage-postgres runs the postgres-backed store tests against a live
+# Postgres instance pointed at by TEST_POSTGRES_URL. Tests skip silently when
+# the env var is unset, so this target is safe to chain into `make test`
+# without pulling Postgres into the unit-test path.
+#
+# In the project devcontainer:
+#   TEST_POSTGRES_URL=postgres://signal:signal@postgres:5432/signal?sslmode=disable
+test-storage-postgres:
+	$(GOTEST) -tags fido2 ./pkg/storage/postgres/...
+
+coverage-storage-postgres:
+	$(GOTEST) -tags fido2 -coverprofile=coverage-storage-postgres.out ./pkg/storage/postgres/...
+	go tool cover -func=coverage-storage-postgres.out | tail -1
 test-subscriptions:
 	$(GOTEST) $(PKG_SUBSCRIPTIONS)
 test-usernames:
@@ -325,8 +409,13 @@ test-secrets:
 # Coverage
 # ==============================================================================
 
-# Packages excluded from coverage reporting (generated code, test harness, CLI entry points)
-COVERAGE_EXCLUDE_PATTERN := /test/|/cmd/signalctl|/cmd/signald|/wsproto
+# Packages excluded from coverage reporting. Three categories, none of which
+# carry hand-written business logic that unit tests should measure:
+#   - generated protobuf packages (genproto/*, *pb, proto) — no logic to test
+#   - main/entry-point binaries (cmd/*) — exercised via integration tests
+#   - integration-only stores (storage/postgres) — its tests require a live DB,
+#     so it is measured by `make integration-test`, not the unit coverage gate
+COVERAGE_EXCLUDE_PATTERN := /test/|/cmd/|/genproto/|/internal/frontend|/securestorage/storagepb|/websocket/proto|/storage/postgres|/wsproto
 
 # All testable packages (excluding test directories)
 ALL_PACKAGES := $(shell go list ./... 2>/dev/null | grep -vE '$(COVERAGE_EXCLUDE_PATTERN)')
@@ -339,7 +428,7 @@ TESTABLE_PACKAGES := accounts api/rest api/websocket calling captcha certificate
 
 .PHONY: coverage
 
-coverage:
+coverage: ## Generate unit test coverage report with minimum gate
 	@echo "==> Generating coverage report..."
 	@mkdir -p $(COVER_DIR)
 	@echo "mode: atomic" > $(COVER_DIR)/coverage.out
@@ -365,6 +454,13 @@ coverage:
 	else \
 		echo "PASS: Coverage $$TOTAL meets minimum $(COVER_MIN)%"; \
 	fi
+
+.PHONY: coverage-report
+
+coverage-report: coverage ## Generate coverage report and open it in a browser
+	@which xdg-open > /dev/null 2>&1 && xdg-open $(COVER_DIR)/coverage.html || \
+	which open > /dev/null 2>&1 && open $(COVER_DIR)/coverage.html || \
+	echo "Coverage report generated at $(COVER_DIR)/coverage.html"
 
 # Per-package coverage targets: make coverage-accounts, make coverage-keys, etc.
 $(addprefix coverage-,$(TESTABLE_PACKAGES)):
@@ -410,26 +506,26 @@ coverage-smtp:
 
 .PHONY: ci fmt vet lint gosec vuln
 
-ci: fmt vet lint gosec vuln build test
+ci: fmt vet lint gosec vuln build test ## Run the full CI pipeline
 	@echo "==> CI pipeline complete."
 
-fmt:
+fmt: ## Check gofmt formatting
 	@echo "==> Checking formatting..."
 	@test -z "$$($(GOFMT) -l .)" || (echo "Files need formatting:"; $(GOFMT) -l .; exit 1)
 
-vet:
+vet: ## Run go vet
 	@echo "==> Running go vet..."
 	$(GOVET) ./...
 
-lint:
+lint: ## Run golangci-lint
 	@echo "==> Running linter..."
 	$(GOLINT) run --timeout 5m ./...
 
-gosec:
+gosec: ## Run gosec security scanner
 	@echo "==> Running security scanner..."
-	$(GOSEC) -exclude=$(GOSEC_EXCLUDE) ./...
+	$(GOSEC) -exclude=$(GOSEC_EXCLUDE) -exclude-generated ./...
 
-vuln:
+vuln: ## Run govulncheck vulnerability scan
 	@echo "==> Running vulnerability check..."
 	$(GOVULNCHECK) ./...
 
@@ -437,15 +533,40 @@ vuln:
 # Docker
 # ==============================================================================
 
-.PHONY: docker-build docker-run
+.PHONY: docker-build docker-build-dev docker-run docker-run-dev docker-build-services
 
-docker-build:
-	@echo "==> Building Docker image..."
+# Production image: ships no secrets/config; requires a mounted production
+# config (see configs/signal-server-prod.yml) and TLS certs at deploy time.
+docker-build: ## Build production Docker image
+	@echo "==> Building production Docker image..."
 	docker build -t $(DOCKER_IMAGE):$(DOCKER_TAG) .
 
-docker-run:
-	@echo "==> Running Docker container..."
-	docker run --rm -p 8081:8081 -p 8443:8443 $(DOCKER_IMAGE):$(DOCKER_TAG)
+# Development/demo image: bakes the in-memory test config + stub transport +
+# test certs for a zero-dependency `docker run`. NOT for production.
+docker-build-dev: ## Build development Docker image
+	@echo "==> Building development Docker image..."
+	docker build -f Dockerfile.dev -t $(DOCKER_IMAGE):$(DOCKER_TAG)-dev .
+
+# The production image fails closed without a mounted config, so the
+# quick-run target uses the development image.
+docker-run: docker-run-dev ## Run development Docker container
+
+docker-run-dev:
+	@echo "==> Running development Docker container..."
+	docker run --rm -p 8081:8081 -p 8443:8443 $(DOCKER_IMAGE):$(DOCKER_TAG)-dev
+
+# docker-build-services builds a Docker image for each auxiliary service
+# using the shared parameterized Dockerfile.service (ARG SERVICE selects
+# which ./cmd/<service> entry point to compile). Images run as non-root
+# and ship no secrets or config.
+docker-build-services:
+	@echo "==> Building auxiliary service Docker images..."
+	docker build -f Dockerfile.service --build-arg SERVICE=cdsi              -t $(DOCKER_IMAGE)-cdsi:$(DOCKER_TAG) .
+	docker build -f Dockerfile.service --build-arg SERVICE=svr2              -t $(DOCKER_IMAGE)-svr2:$(DOCKER_TAG) .
+	docker build -f Dockerfile.service --build-arg SERVICE=key-transparency  -t $(DOCKER_IMAGE)-key-transparency:$(DOCKER_TAG) .
+	docker build -f Dockerfile.service --build-arg SERVICE=registration-service -t $(DOCKER_IMAGE)-registration-service:$(DOCKER_TAG) .
+	docker build -f Dockerfile.service --build-arg SERVICE=storage-service   -t $(DOCKER_IMAGE)-storage-service:$(DOCKER_TAG) .
+	@echo "==> Auxiliary service images built."
 
 # ==============================================================================
 # Integration Testing with signal-cli
@@ -471,16 +592,16 @@ docker-compose-down:
 
 .PHONY: dev deps clean
 
-dev:
+dev: ## Run the development server
 	@echo "==> Starting development server..."
 	$(GO) run ./cmd/signald/ start
 
-deps:
+deps: ## Download and tidy dependencies
 	@echo "==> Downloading dependencies..."
 	$(GO) mod download
 	$(GO) mod tidy
 
-clean:
+clean: ## Remove build artifacts
 	@echo "==> Cleaning build artifacts..."
 	rm -rf $(BUILD_DIR)
 
@@ -495,3 +616,48 @@ test-e2e: ## Run Playwright E2E tests against the Vite dev server
 	@mkdir -p $(BUILD_DIR)
 	cd frontend && npx playwright test 2>&1 | tee ../$(BUILD_DIR)/e2e-test.log
 	@echo "==> E2E tests complete."
+
+# ==============================================================================
+# Documentation
+# ==============================================================================
+#
+# Documentation is a first-class deliverable. Some files are hand-written
+# (ADRs, architecture/*.md, protocol/*.md) and some are generated from source
+# (api/rest.md, api/grpc.md, configuration/reference.md, storage/schema-*.md).
+# `make docs` regenerates generated files. `make docs-check` fails if they're
+# stale. See docs/README.md for the documentation tree layout.
+
+.PHONY: docs docs-check docs-rest docs-grpc docs-config docs-storage docs-workers
+
+docs: docs-rest docs-grpc docs-config docs-storage docs-workers
+	@echo "==> Documentation generation complete."
+
+# Placeholder targets — each becomes a real generator as its source data lands:
+#   docs-rest:    Phase 2 — emit api/rest.md from route registry in pkg/api/rest/.
+#   docs-grpc:    Phase 1 — protoc-gen-doc on pkg/api/grpc/proto/*.proto → api/grpc.md.
+#   docs-config:  Phase 1 — reflect over pkg/config structs → configuration/reference.md.
+#   docs-storage: Phase 1 — dump table/keyspace registries → storage/schema-*.md.
+#   docs-workers: Phase 1 — dump worker catalog → workers/catalog.md.
+docs-rest:
+	@echo "==> [docs-rest] placeholder; enabled in Phase 2."
+
+docs-grpc:
+	@echo "==> [docs-grpc] placeholder; enabled in Phase 1 (gRPC scaffold)."
+
+docs-config:
+	@echo "==> [docs-config] placeholder; enabled in Phase 1."
+
+docs-storage:
+	@echo "==> [docs-storage] placeholder; enabled in Phase 1."
+
+docs-workers:
+	@echo "==> [docs-workers] placeholder; enabled in Phase 1 (worker framework)."
+
+docs-check: docs
+	@echo "==> Checking documentation for drift..."
+	@if [ -n "$$(git status --porcelain docs/ 2>/dev/null)" ]; then \
+		echo "ERROR: docs/ has uncommitted changes after regeneration:"; \
+		git status --porcelain docs/; \
+		exit 1; \
+	fi
+	@echo "==> Documentation is current."

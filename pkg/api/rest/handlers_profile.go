@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-signal/pkg/accounts"
+	"github.com/jeremyhahn/go-signal/pkg/auth"
 	"github.com/jeremyhahn/go-signal/pkg/profiles"
 )
 
@@ -25,6 +26,14 @@ func (s *Server) handleSetProfile(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.logger.Error("failed to decode profile request", slog.String("error", err.Error()))
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// The version becomes part of the profile storage key, so it must be a
+	// bounded hex string — never containing a path separator or the reserved
+	// "_latest" marker that would collide with the latest-version index.
+	if !isValidProfileVersion(req.Version) {
+		writeError(w, http.StatusBadRequest, "invalid profile version")
 		return
 	}
 
@@ -67,6 +76,31 @@ func (s *Server) handleSetProfile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Enforce per-field ciphertext sizes, matching the exact byte lengths the
+	// Java CreateProfileRequest accepts (@ExactlySize). Empty fields are treated
+	// as "not provided" and skipped; a present field with a disallowed size is
+	// rejected with 400 so oversized/malformed blobs never reach storage.
+	if !profileFieldLenOK(name, 81, 285) {
+		writeError(w, http.StatusBadRequest, "invalid name length")
+		return
+	}
+	if !profileFieldLenOK(about, 156, 282, 540) {
+		writeError(w, http.StatusBadRequest, "invalid about length")
+		return
+	}
+	if !profileFieldLenOK(aboutEmoji, 60) {
+		writeError(w, http.StatusBadRequest, "invalid aboutEmoji length")
+		return
+	}
+	if !profileFieldLenOK(paymentAddress, 582) {
+		writeError(w, http.StatusBadRequest, "invalid paymentAddress length")
+		return
+	}
+	if !profileFieldLenOK(commitment, profileKeyCommitmentLen) {
+		writeError(w, http.StatusBadRequest, "invalid commitment length")
+		return
+	}
+
 	profile := &profiles.Profile{
 		UUID:           acct.UUID,
 		Version:        req.Version,
@@ -86,32 +120,67 @@ func (s *Server) handleSetProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// When the client requests a new avatar upload, return S3 POST policy
-	// upload attributes so signal-cli can upload the avatar to the CDN.
+	// upload attributes so the client can upload the avatar to the CDN.
 	if req.AvatarUpload && !req.SameAvatar {
-		avatarKey := "profiles/" + acct.UUID
-
-		now := time.Now().UTC()
-		policyJSON := fmt.Sprintf(
-			`{"expiration":"%s","conditions":[{"bucket":"profile-bucket"},{"key":"%s"},{"acl":"private"},["starts-with","$Content-Type",""],["content-length-range",1,10485760]]}`,
-			now.Add(30*time.Minute).Format(time.RFC3339),
-			avatarKey,
-		)
-		policyB64 := base64.StdEncoding.EncodeToString([]byte(policyJSON))
-
-		attrs := ProfileAvatarUploadAttributes{
-			Key:        avatarKey,
-			Credential: "signal-test/" + now.Format("20060102") + "/us-east-1/s3/aws4_request",
-			ACL:        "private",
-			Algorithm:  "AWS4-HMAC-SHA256",
-			Date:       now.Format("20060102T150405Z"),
-			Policy:     policyB64,
-			Signature:  "0000000000000000000000000000000000000000000000000000000000000000",
+		attrs, err := s.buildAvatarUploadAttributes(acct.UUID)
+		if err != nil {
+			s.logger.Error("avatar upload requested but CDN is not configured",
+				slog.String("uuid", acct.UUID), slog.String("error", err.Error()))
+			writeError(w, http.StatusServiceUnavailable, "avatar upload is not configured")
+			return
 		}
 		writeJSON(w, http.StatusOK, attrs)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// errAvatarCDNNotConfigured indicates avatar upload was requested but no S3
+// CDN credentials are configured to sign the upload policy.
+var errAvatarCDNNotConfigured = &avatarCDNNotConfiguredError{}
+
+type avatarCDNNotConfiguredError struct{}
+
+func (e *avatarCDNNotConfiguredError) Error() string { return "avatar CDN not configured" }
+
+// buildAvatarUploadAttributes constructs a real AWS SigV4 S3 POST-policy for a
+// profile-avatar upload, signed with the configured CDN credentials. It fails
+// (errAvatarCDNNotConfigured) when the CDN is not configured rather than
+// returning a non-functional placeholder signature.
+func (s *Server) buildAvatarUploadAttributes(accountUUID string) (ProfileAvatarUploadAttributes, error) {
+	if !s.avatarCDN.Enabled() {
+		return ProfileAvatarUploadAttributes{}, errAvatarCDNNotConfigured
+	}
+
+	avatarKey := "profiles/" + accountUUID
+	now := time.Now().UTC()
+	dateStamp := now.Format("20060102")
+	amzDate := now.Format("20060102T150405Z")
+	credential := s.avatarCDN.AccessKey + "/" + dateStamp + "/" + s.avatarCDN.Region + "/s3/aws4_request"
+
+	// SigV4 POST policy: the x-amz-* fields the client submits must be bound in
+	// the policy conditions so the signature covers them.
+	policyJSON := fmt.Sprintf(
+		`{"expiration":"%s","conditions":[{"bucket":"%s"},{"key":"%s"},{"acl":"private"},{"x-amz-algorithm":"AWS4-HMAC-SHA256"},{"x-amz-credential":"%s"},{"x-amz-date":"%s"},["starts-with","$Content-Type",""],["content-length-range",1,10485760]]}`,
+		now.Add(30*time.Minute).Format(time.RFC3339),
+		s.avatarCDN.Bucket,
+		avatarKey,
+		credential,
+		amzDate,
+	)
+	policyB64 := base64.StdEncoding.EncodeToString([]byte(policyJSON))
+	signature := auth.SignS3PostPolicy(s.avatarCDN.SecretKey, dateStamp, s.avatarCDN.Region, policyB64)
+
+	return ProfileAvatarUploadAttributes{
+		Key:        avatarKey,
+		Credential: credential,
+		ACL:        "private",
+		Algorithm:  "AWS4-HMAC-SHA256",
+		Date:       amzDate,
+		Policy:     policyB64,
+		Signature:  signature,
+	}, nil
 }
 
 // handleGetVersionedProfile processes GET /v1/profile/{identifier}/{version}
@@ -122,6 +191,10 @@ func (s *Server) handleGetVersionedProfile(w http.ResponseWriter, r *http.Reques
 
 	if identifier == "" {
 		writeError(w, http.StatusBadRequest, "missing identifier")
+		return
+	}
+	if !isValidProfileVersion(version) {
+		writeError(w, http.StatusBadRequest, "invalid profile version")
 		return
 	}
 
@@ -210,4 +283,49 @@ func buildProfileResponse(acct *accounts.Account, profile *profiles.Profile) Pro
 	}
 
 	return resp
+}
+
+// isValidProfileVersion reports whether v is a syntactically valid profile
+// version. Because the version is concatenated into the profile storage key
+// (<uuid>/<version>), it must be a bounded token drawn from a safe character
+// set — no path separators — and must not collide with the reserved "_latest"
+// marker key.
+func isValidProfileVersion(v string) bool {
+	if len(v) == 0 || len(v) > 64 || v == profileLatestMarker {
+		return false
+	}
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		ok := (c >= '0' && c <= '9') ||
+			(c >= 'a' && c <= 'z') ||
+			(c >= 'A' && c <= 'Z') ||
+			c == '.' || c == '-' || c == '_'
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// profileLatestMarker is the reserved version suffix the profile store uses for
+// the latest-version pointer; a client-supplied version must never equal it.
+const profileLatestMarker = "_latest"
+
+// profileKeyCommitmentLen is the serialized size of a zkgroup
+// ProfileKeyCommitment (Rust PROFILE_KEY_COMMITMENT_LEN).
+const profileKeyCommitmentLen = 97
+
+// profileFieldLenOK reports whether a decoded profile field is acceptable: an
+// empty (not-provided) field always passes; a present field must have one of
+// the allowed exact byte lengths.
+func profileFieldLenOK(field []byte, allowed ...int) bool {
+	if len(field) == 0 {
+		return true
+	}
+	for _, n := range allowed {
+		if len(field) == n {
+			return true
+		}
+	}
+	return false
 }

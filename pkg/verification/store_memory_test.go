@@ -33,7 +33,7 @@ func TestMemoryStore_Create(t *testing.T) {
 	assert.Equal(t, session.Code, got.Code)
 }
 
-func TestMemoryStore_CreateOverwrite(t *testing.T) {
+func TestMemoryStore_CreateDuplicateID_RejectsWithError(t *testing.T) {
 	t.Parallel()
 	store := NewMemoryVerificationSessionStore()
 	ctx := context.Background()
@@ -50,12 +50,15 @@ func TestMemoryStore_CreateOverwrite(t *testing.T) {
 	}
 
 	require.NoError(t, store.Create(ctx, session1))
-	require.NoError(t, store.Create(ctx, session2))
 
+	err := store.Create(ctx, session2)
+	require.Error(t, err, "expected error when creating session with duplicate ID")
+
+	// The original session must remain unchanged.
 	got, err := store.Get(ctx, "session-1")
 	require.NoError(t, err)
-	assert.Equal(t, "+15559876543", got.Number)
-	assert.Equal(t, "222222", got.Code)
+	assert.Equal(t, "+15551234567", got.Number)
+	assert.Equal(t, "111111", got.Code)
 }
 
 func TestMemoryStore_GetNotFound(t *testing.T) {

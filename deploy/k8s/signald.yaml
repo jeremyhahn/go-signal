@@ -1,0 +1,92 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: signald
+  namespace: signal
+spec:
+  selector:
+    app: signald
+  ports:
+    - name: rest
+      port: 8080
+      targetPort: 8080
+    - name: grpc
+      port: 8443
+      targetPort: 8443
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: signald
+  namespace: signal
+spec:
+  replicas: 2 # multi-instance: WebSocket clustering via Redis pub/sub
+  selector:
+    matchLabels:
+      app: signald
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: signald
+    spec:
+      containers:
+        - name: signald
+          image: go-signal-signald:dev
+          ports:
+            - containerPort: 8080
+              name: rest
+            - containerPort: 8443
+              name: grpc
+          env:
+            - name: SIGNAL_STORAGE_BACKEND
+              value: "postgres"
+            - name: SIGNAL_CACHE_BACKEND
+              value: "redis"
+            - name: SIGNAL_CACHE_REDIS_ADDR
+              value: "redis:6379"
+            - name: SIGNAL_STORAGE_POSTGRES_URL
+              valueFrom:
+                secretKeyRef:
+                  name: signal-shared-secrets
+                  key: postgres-url
+            - name: SIGNAL_VERIFICATION_REMOTEADDR
+              value: "registration-service:8090"
+            - name: SIGNAL_VERIFICATION_REMOTEINSECURE
+              value: "true"
+            - name: SIGNAL_SVR2_REMOTEURL
+              value: "http://svr2:8091"
+            - name: SIGNAL_SVR2_SHAREDSECRET
+              valueFrom:
+                secretKeyRef:
+                  name: signal-shared-secrets
+                  key: svr2-hmac
+            - name: SIGNAL_CDSI_SHAREDSECRET
+              valueFrom:
+                secretKeyRef:
+                  name: signal-shared-secrets
+                  key: cdsi-hmac
+            - name: SIGNAL_STORAGESERVICE_REMOTEURL
+              value: "http://storage-service:8096"
+            - name: SIGNAL_STORAGESERVICE_REMOTEINSECURE
+              value: "true"
+            - name: SIGNAL_STORAGESERVICE_SHAREDSECRET
+              valueFrom:
+                secretKeyRef:
+                  name: signal-shared-secrets
+                  key: storage-service-hmac
+            - name: SIGNAL_KEYTRANSPARENCY_REMOTEADDR
+              value: "key-transparency:8098"
+            - name: SIGNAL_KEYTRANSPARENCY_REMOTEINSECURE
+              value: "true"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"

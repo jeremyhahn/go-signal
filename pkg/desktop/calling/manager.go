@@ -20,7 +20,7 @@ import (
 type CallState int
 
 const (
-	CallIdle       CallState = iota
+	CallIdle CallState = iota
 	CallRinging
 	CallConnected
 	CallEnded
@@ -30,8 +30,8 @@ const (
 type CallType int
 
 const (
-	CallTypeAudio     CallType = 1
-	CallTypeVideo     CallType = 2
+	CallTypeAudio      CallType = 1
+	CallTypeVideo      CallType = 2
 	CallTypeGroupAudio CallType = 3
 	CallTypeGroupVideo CallType = 4
 )

@@ -24,7 +24,7 @@ type JobEntity struct {
 }
 
 func (j *JobEntity) EntityID() uint64      { return j.ID }
-func (j *JobEntity) SetEntityID(id uint64)  { j.ID = id }
+func (j *JobEntity) SetEntityID(id uint64) { j.ID = id }
 
 // CompoundIndexes declares a compound index for efficient job queue queries.
 func (j JobEntity) CompoundIndexes() []index.CompoundIndexDef {

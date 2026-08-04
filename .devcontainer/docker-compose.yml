@@ -12,9 +12,14 @@ services:
       - go-mod-cache:/go/pkg/mod
     working_dir: /workspace
     command: sleep infinity
+    environment:
+      REDIS_URL: redis://redis:6379
+      POSTGRES_URL: postgres://signal:signal@postgres:5432/signal?sslmode=disable
     depends_on:
-      - redis
-      - postgres
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
 
   signal-server:
     build:
@@ -67,9 +72,9 @@ services:
       signal-cli:
         condition: service_started
       redis:
-        condition: service_started
+        condition: service_healthy
       postgres:
-        condition: service_started
+        condition: service_healthy
     environment:
       SIGNAL_SERVER_URL: https://signal-server:8081
       SIGNAL_CLI_BIN: /opt/signal-cli/bin/signal-cli
@@ -82,6 +87,13 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   postgres:
     image: postgres:16-alpine
@@ -91,8 +103,17 @@ services:
       POSTGRES_PASSWORD: signal
     ports:
       - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U signal -d signal"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   go-mod-cache:
   signal-cli-data:
   signal-cli-bin:
+  postgres-data:
+  redis-data:

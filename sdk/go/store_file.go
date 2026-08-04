@@ -2,10 +2,12 @@ package signal
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
+
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
@@ -22,7 +24,7 @@ type FileStore struct {
 // NewFileStore creates a new file-based store rooted at the given directory.
 func NewFileStore(rootDir string) (*FileStore, error) {
 	if err := os.MkdirAll(rootDir, 0700); err != nil {
-		return nil, fmt.Errorf("create store dir: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "create store dir", err)
 	}
 	return &FileStore{rootDir: rootDir}, nil
 }
@@ -250,6 +252,58 @@ func (s *FileStore) getGroupsLocked() ([]Group, error) {
 		return nil, err
 	}
 	return groups, nil
+}
+
+func (s *FileStore) GetStickerPacks() ([]InstalledStickerPack, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var packs []InstalledStickerPack
+	if err := s.readJSON(s.path("sticker_packs.json"), &packs); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return packs, nil
+}
+
+func (s *FileStore) SaveStickerPack(pack *InstalledStickerPack) error {
+	if pack == nil || pack.PackID == "" {
+		return errors.New("sticker pack: PackID is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var packs []InstalledStickerPack
+	if err := s.readJSON(s.path("sticker_packs.json"), &packs); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for i, p := range packs {
+		if p.PackID == pack.PackID {
+			packs[i] = *pack
+			return s.writeJSON(s.path("sticker_packs.json"), packs)
+		}
+	}
+	packs = append(packs, *pack)
+	return s.writeJSON(s.path("sticker_packs.json"), packs)
+}
+
+func (s *FileStore) DeleteStickerPack(packID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var packs []InstalledStickerPack
+	if err := s.readJSON(s.path("sticker_packs.json"), &packs); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	out := packs[:0]
+	for _, p := range packs {
+		if p.PackID != packID {
+			out = append(out, p)
+		}
+	}
+	return s.writeJSON(s.path("sticker_packs.json"), out)
 }
 
 func (s *FileStore) Close() error {

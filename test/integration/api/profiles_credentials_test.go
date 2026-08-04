@@ -4,7 +4,6 @@ package api
 
 import (
 	"encoding/base64"
-	"encoding/hex"
 	"net/http"
 	"testing"
 
@@ -16,19 +15,21 @@ func TestProfiles_GetWithCredential(t *testing.T) {
 	env := setupTestEnv(t)
 	uuid, _ := registerTestAccount(t, env, uniquePhoneNumber(), "pass123")
 
-	// Set a versioned profile first.
+	// Generate a wire-valid credential request and the matching commitment.
+	credentialRequest, commitmentB64 := profileCredentialReqAndCommitment(t, uuid)
+
+	// Set a versioned profile carrying that commitment.
 	profileReq := map[string]any{
 		"version":    "v1",
-		"name":       base64.StdEncoding.EncodeToString([]byte("Credential User")),
-		"commitment": base64.StdEncoding.EncodeToString([]byte("commitment-value-credential!!!!")),
+		"name":       validProfileName(),
+		"commitment": commitmentB64,
 	}
 	resp := env.doAuthRequest(t, "PUT", "/v1/profile", profileReq, uuid, "pass123")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	resp.Body.Close()
 
-	// Fetch the profile with a credential request. The endpoint requires
+	// Fetch the profile with the credential request. The endpoint requires
 	// authentication (Basic auth or Unidentified-Access-Key header).
-	credentialRequest := hex.EncodeToString([]byte("test-credential-request"))
 	resp = env.doAuthRequest(t, "GET", "/v1/profile/"+uuid+"/v1/"+credentialRequest, nil, uuid, "pass123")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
@@ -48,16 +49,12 @@ func TestProfiles_GetWithCredentialNonexistentProfile(t *testing.T) {
 	env := setupTestEnv(t)
 	uuid, _ := registerTestAccount(t, env, uniquePhoneNumber(), "pass123")
 
-	// When no profile exists for the requested version, the server returns a
-	// minimal 200 response with account-level fields and a stub credential.
-	// The endpoint requires authentication (Basic auth or Unidentified-Access-Key header).
-	credentialRequest := hex.EncodeToString([]byte("test-credential-request"))
+	// Without a stored profile (and thus no profile-key commitment) a
+	// credential cannot be issued — the endpoint returns 404.
+	credentialRequest, _ := profileCredentialReqAndCommitment(t, uuid)
 	resp := env.doAuthRequest(t, "GET", "/v1/profile/"+uuid+"/nonexistent/"+credentialRequest, nil, uuid, "pass123")
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-	var profile map[string]any
-	decodeJSON(t, resp, &profile)
-	assert.Equal(t, uuid, profile["uuid"])
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	resp.Body.Close()
 }
 
 func TestProfiles_BatchIdentityCheck(t *testing.T) {

@@ -1,0 +1,41 @@
+{
+	"name": "go-signal",
+	"dockerComposeFile": "docker-compose.yml",
+	"service": "devcontainer",
+	"workspaceFolder": "/workspace",
+	"shutdownAction": "stopCompose",
+	"forwardPorts": [8081, 8443, 5432, 6379],
+	"portsAttributes": {
+		"8081": { "label": "signald HTTP/2" },
+		"8443": { "label": "signald HTTPS" },
+		"5432": { "label": "postgres" },
+		"6379": { "label": "redis" }
+	},
+	"remoteUser": "root",
+	"runServices": ["devcontainer", "redis", "postgres"],
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"golang.go",
+				"zxh404.vscode-proto3",
+				"redhat.vscode-yaml",
+				"mtxr.sqltools",
+				"mtxr.sqltools-driver-pg"
+			],
+			"settings": {
+				"go.toolsManagement.checkForUpdates": "off",
+				"go.useLanguageServer": true,
+				"go.formatTool": "gofmt",
+				"go.lintTool": "golangci-lint",
+				"go.testFlags": ["-count=1"],
+				"[go]": {
+					"editor.formatOnSave": true,
+					"editor.codeActionsOnSave": {
+						"source.organizeImports": "explicit"
+					}
+				}
+			}
+		}
+	},
+	"postCreateCommand": "go mod download"
+}

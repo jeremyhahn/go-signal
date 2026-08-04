@@ -2,8 +2,9 @@ package websocket
 
 import (
 	"errors"
-	"fmt"
 	"testing"
+
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
 func TestSessionClosedError_Error(t *testing.T) {
@@ -74,7 +75,7 @@ func TestDeliveryFailedError_Error(t *testing.T) {
 			name:     "with cause",
 			uuid:     "user-1",
 			deviceID: 1,
-			cause:    fmt.Errorf("connection reset"),
+			cause:    errors.New("connection reset"),
 			want:     "message delivery failed for user-1: connection reset",
 		},
 		{
@@ -88,7 +89,7 @@ func TestDeliveryFailedError_Error(t *testing.T) {
 			name:     "empty uuid with cause",
 			uuid:     "",
 			deviceID: 0,
-			cause:    fmt.Errorf("timeout"),
+			cause:    errors.New("timeout"),
 			want:     "message delivery failed for : timeout",
 		},
 	}
@@ -104,7 +105,7 @@ func TestDeliveryFailedError_Error(t *testing.T) {
 }
 
 func TestDeliveryFailedError_TypeAssertion(t *testing.T) {
-	cause := fmt.Errorf("write timeout")
+	cause := errors.New("write timeout")
 	var err error = &DeliveryFailedError{UUID: "acc-1", DeviceID: 3, Cause: cause}
 
 	var target *DeliveryFailedError
@@ -120,7 +121,7 @@ func TestDeliveryFailedError_TypeAssertion(t *testing.T) {
 }
 
 func TestDeliveryFailedError_Unwrap(t *testing.T) {
-	cause := fmt.Errorf("underlying network error")
+	cause := errors.New("underlying network error")
 	e := &DeliveryFailedError{UUID: "uuid-1", DeviceID: 1, Cause: cause}
 
 	unwrapped := e.Unwrap()
@@ -139,8 +140,8 @@ func TestDeliveryFailedError_UnwrapNil(t *testing.T) {
 }
 
 func TestDeliveryFailedError_ErrorsIs(t *testing.T) {
-	root := fmt.Errorf("root cause")
-	wrapped := fmt.Errorf("mid: %w", root)
+	root := errors.New("root cause")
+	wrapped := signalerrors.Wrap(signalerrors.ErrInternal, "mid", root)
 	e := &DeliveryFailedError{UUID: "u", DeviceID: 1, Cause: wrapped}
 
 	if !errors.Is(e, root) {
@@ -163,7 +164,7 @@ func TestSessionClosedError_FieldsPreserved(t *testing.T) {
 }
 
 func TestDeliveryFailedError_FieldsPreserved(t *testing.T) {
-	cause := fmt.Errorf("test")
+	cause := errors.New("test")
 	e := &DeliveryFailedError{UUID: "preserved-uuid", DeviceID: 77, Cause: cause}
 	if e.UUID != "preserved-uuid" {
 		t.Errorf("UUID = %q, want %q", e.UUID, "preserved-uuid")

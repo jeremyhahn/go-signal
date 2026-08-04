@@ -18,6 +18,57 @@ import (
 	"time"
 )
 
+// --------------------------------------------------------------------------
+// AvatarCDNConfig.Enabled
+// --------------------------------------------------------------------------
+
+func TestAvatarCDNConfig_Enabled(t *testing.T) {
+	tests := []struct {
+		name     string
+		cfg      AvatarCDNConfig
+		expected bool
+	}{
+		{
+			name:     "all fields set",
+			cfg:      AvatarCDNConfig{Bucket: "b", Region: "r", AccessKey: "a", SecretKey: "s"},
+			expected: true,
+		},
+		{
+			name:     "empty struct",
+			cfg:      AvatarCDNConfig{},
+			expected: false,
+		},
+		{
+			name:     "missing bucket",
+			cfg:      AvatarCDNConfig{Region: "r", AccessKey: "a", SecretKey: "s"},
+			expected: false,
+		},
+		{
+			name:     "missing region",
+			cfg:      AvatarCDNConfig{Bucket: "b", AccessKey: "a", SecretKey: "s"},
+			expected: false,
+		},
+		{
+			name:     "missing access key",
+			cfg:      AvatarCDNConfig{Bucket: "b", Region: "r", SecretKey: "s"},
+			expected: false,
+		},
+		{
+			name:     "missing secret key",
+			cfg:      AvatarCDNConfig{Bucket: "b", Region: "r", AccessKey: "a"},
+			expected: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.cfg.Enabled()
+			if got != tc.expected {
+				t.Errorf("Enabled() = %v, want %v (cfg=%+v)", got, tc.expected, tc.cfg)
+			}
+		})
+	}
+}
+
 func TestServer_Addr_BeforeListen(t *testing.T) {
 	s := newTestServer(t)
 	addr := s.Addr()

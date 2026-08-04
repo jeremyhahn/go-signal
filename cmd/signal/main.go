@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"runtime"
-	"strings"
 
 	"github.com/jeremyhahn/go-signal/cmd/signal/cmd"
 )
@@ -109,11 +108,6 @@ func hasGUIEnvironment() bool {
 	default:
 		return false
 	}
-}
-
-// hasPrefix checks if a string starts with a prefix (case-insensitive).
-func hasPrefix(s, prefix string) bool {
-	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
 }
 
 // extractFlag extracts the value following a flag in the argument list.

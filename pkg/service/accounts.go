@@ -22,12 +22,20 @@ type AccountService interface {
 	// GetByNumber retrieves an account by its E.164 phone number.
 	GetByNumber(ctx context.Context, number string) (*accounts.Account, error)
 
+	// GetByPNI retrieves an account by its Phone Number Identity UUID.
+	GetByPNI(ctx context.Context, pni string) (*accounts.Account, error)
+
 	// Update persists mutations to an existing account. The account version
 	// is incremented automatically by the underlying manager.
 	Update(ctx context.Context, account *accounts.Account) error
 
 	// Delete removes an account and all associated data.
 	Delete(ctx context.Context, uuid string) error
+
+	// RecreatePreserving re-creates a previously-deleted account exactly as
+	// it was, preserving CreatedAt, Version, and hashed device tokens. Used
+	// to roll back a failed re-registration.
+	RecreatePreserving(ctx context.Context, account *accounts.Account) error
 
 	// SetRegistrationLock hashes pin and stores it on the account.
 	SetRegistrationLock(ctx context.Context, uuid string, pin string) error
@@ -44,6 +52,12 @@ type AccountService interface {
 	// RemoveDevice unlinks a device from the account.
 	RemoveDevice(ctx context.Context, uuid string, deviceID uint64) (*accounts.Account, error)
 
+	// ClearGcmRegistration removes the GCM push token from the given device.
+	ClearGcmRegistration(ctx context.Context, uuid string, deviceID uint64) (*accounts.Account, error)
+
+	// ClearApnRegistration removes the APN push tokens from the given device.
+	ClearApnRegistration(ctx context.Context, uuid string, deviceID uint64) (*accounts.Account, error)
+
 	// ChangeNumber updates the E.164 number for an account.
 	ChangeNumber(ctx context.Context, uuid string, number string, pniIdentityKey []byte) (*accounts.Account, error)
 
@@ -53,7 +67,16 @@ type AccountService interface {
 
 	// GetDataReport returns a regulatory data summary for an account.
 	GetDataReport(ctx context.Context, uuid string) (*accounts.DataReport, error)
+
+	// ListAll streams every account to fn. Workers (account-expiry,
+	// orphan-prekey GC, idle-device sweeps) consume this surface to
+	// implement bulk scans without leaking the underlying store
+	// interface. fn returning an error aborts iteration.
+	ListAll(ctx context.Context, fn func(*accounts.Account) error) error
 }
+
+// Compile-time assertion: AccountsManager must satisfy AccountService.
+var _ AccountService = (*accounts.AccountsManager)(nil)
 
 // accountService is the default AccountService backed by an AccountsManager.
 type accountService struct {
@@ -78,12 +101,20 @@ func (s *accountService) GetByNumber(ctx context.Context, number string) (*accou
 	return s.manager.GetByNumber(ctx, number)
 }
 
+func (s *accountService) GetByPNI(ctx context.Context, pni string) (*accounts.Account, error) {
+	return s.manager.GetByPNI(ctx, pni)
+}
+
 func (s *accountService) Update(ctx context.Context, account *accounts.Account) error {
 	return s.manager.Update(ctx, account)
 }
 
 func (s *accountService) Delete(ctx context.Context, uuid string) error {
 	return s.manager.Delete(ctx, uuid)
+}
+
+func (s *accountService) RecreatePreserving(ctx context.Context, account *accounts.Account) error {
+	return s.manager.RecreatePreserving(ctx, account)
 }
 
 func (s *accountService) SetRegistrationLock(ctx context.Context, uuid string, pin string) error {
@@ -106,6 +137,14 @@ func (s *accountService) RemoveDevice(ctx context.Context, uuid string, deviceID
 	return s.manager.RemoveDevice(ctx, uuid, deviceID)
 }
 
+func (s *accountService) ClearGcmRegistration(ctx context.Context, uuid string, deviceID uint64) (*accounts.Account, error) {
+	return s.manager.ClearGcmRegistration(ctx, uuid, deviceID)
+}
+
+func (s *accountService) ClearApnRegistration(ctx context.Context, uuid string, deviceID uint64) (*accounts.Account, error) {
+	return s.manager.ClearApnRegistration(ctx, uuid, deviceID)
+}
+
 func (s *accountService) ChangeNumber(ctx context.Context, uuid string, number string, pniIdentityKey []byte) (*accounts.Account, error) {
 	return s.manager.ChangeNumber(ctx, uuid, number, pniIdentityKey)
 }
@@ -116,4 +155,8 @@ func (s *accountService) SetPhoneNumberDiscoverability(ctx context.Context, uuid
 
 func (s *accountService) GetDataReport(ctx context.Context, uuid string) (*accounts.DataReport, error) {
 	return s.manager.GetDataReport(ctx, uuid)
+}
+
+func (s *accountService) ListAll(ctx context.Context, fn func(*accounts.Account) error) error {
+	return s.manager.ListAll(ctx, fn)
 }

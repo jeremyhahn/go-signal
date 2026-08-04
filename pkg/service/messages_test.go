@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-signal/pkg/messages"
 )
@@ -201,5 +202,58 @@ func TestMessageService_SetDeliveryCallback(t *testing.T) {
 	}
 	if !called {
 		t.Error("SetDeliveryCallback: callback not invoked after insert")
+	}
+}
+
+func TestMessageService_HasMessagesForDevice_Empty(t *testing.T) {
+	svc := newTestMessageService()
+	has, err := svc.HasMessagesForDevice(context.Background(), "empty-has-uuid", 1)
+	if err != nil {
+		t.Fatalf("HasMessagesForDevice: unexpected error: %v", err)
+	}
+	if has {
+		t.Error("HasMessagesForDevice: expected false for empty device")
+	}
+}
+
+func TestMessageService_HasMessagesForDevice_WithMessages(t *testing.T) {
+	svc := newTestMessageService()
+	if err := svc.Insert(context.Background(), "has-uuid", 1, newTestEnvelope()); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	has, err := svc.HasMessagesForDevice(context.Background(), "has-uuid", 1)
+	if err != nil {
+		t.Fatalf("HasMessagesForDevice: unexpected error: %v", err)
+	}
+	if !has {
+		t.Error("HasMessagesForDevice: expected true after insert")
+	}
+}
+
+func TestMessageService_SendMRMBinary_NoCache(t *testing.T) {
+	svc := newTestMessageService()
+	req := messages.MRMSendRequest{}
+	_, err := svc.SendMRMBinary(context.Background(), req)
+	// Without a cache configured this should return ErrMRMNoCache.
+	if err == nil {
+		t.Fatal("SendMRMBinary: expected error when no MRM cache is set")
+	}
+}
+
+func TestMessageService_SetMRMCache_Nil(t *testing.T) {
+	svc := newTestMessageService()
+	// Setting nil should not panic and should leave the cache unset.
+	svc.SetMRMCache(nil)
+}
+
+func TestMessageService_RemoveExpired_NoOp(t *testing.T) {
+	svc := newTestMessageService()
+	n, err := svc.RemoveExpired(context.Background(), time.Now())
+	if err != nil {
+		t.Fatalf("RemoveExpired: unexpected error: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("RemoveExpired: expected 0 removed from memory store, got %d", n)
 	}
 }

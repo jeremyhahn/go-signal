@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -13,6 +12,8 @@ func init() {
 	rootCmd.AddCommand(listDevicesCmd)
 	rootCmd.AddCommand(removeDeviceCmd)
 	rootCmd.AddCommand(addDeviceCmd)
+
+	addDeviceCmd.Flags().String("uri", "", "provisioning URI from the new device QR code")
 }
 
 var listDevicesCmd = &cobra.Command{
@@ -23,9 +24,9 @@ var listDevicesCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
-		devices, err := client.ListDevices(context.Background())
+		devices, err := client.ListDevices(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -34,7 +35,7 @@ var listDevicesCmd = &cobra.Command{
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(devices)
 		}
 		for _, d := range devices {
-			fmt.Fprintf(cmd.OutOrStdout(), "Device %d: %s\n", d.ID, d.Name)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Device %d: %s\n", d.ID, d.Name)
 		}
 		return nil
 	},
@@ -47,14 +48,14 @@ var removeDeviceCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		deviceID, err := strconv.Atoi(args[0])
 		if err != nil {
-			return fmt.Errorf("invalid device ID: %s", args[0])
+			return &UsageError{Message: fmt.Sprintf("invalid device ID: %s", args[0])}
 		}
 		client, err := newClient()
 		if err != nil {
 			return err
 		}
-		defer client.Close()
-		return client.RemoveDevice(context.Background(), deviceID)
+		defer func() { _ = client.Close() }()
+		return client.RemoveDevice(cmd.Context(), deviceID)
 	},
 }
 
@@ -62,6 +63,21 @@ var addDeviceCmd = &cobra.Command{
 	Use:   "addDevice",
 	Short: "Link a new device via provisioning URI",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return fmt.Errorf("addDevice: not yet implemented")
+		uri, _ := cmd.Flags().GetString("uri")
+		if uri == "" {
+			return &UsageError{Message: "provisioning URI is required (--uri)"}
+		}
+
+		client, err := newClient()
+		if err != nil {
+			return err
+		}
+		defer func() { _ = client.Close() }()
+
+		if err := client.AddDevice(cmd.Context(), uri); err != nil {
+			return &CLIError{Op: "add device", Cause: err}
+		}
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Device linked successfully.")
+		return nil
 	},
 }

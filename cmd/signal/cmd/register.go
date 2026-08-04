@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -28,29 +27,29 @@ Use 'signal verify' to complete registration.`,
 		if err != nil {
 			return err
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
-		ctx := context.Background()
+		ctx := cmd.Context()
 
 		// Create verification session.
 		session, err := client.CreateVerificationSession(ctx, number)
 		if err != nil {
-			return fmt.Errorf("failed to create verification session: %w", err)
+			return &CLIError{Op: "create verification session", Cause: err}
 		}
 
 		// Request code.
 		session, err = client.RequestVerificationCode(ctx, session.ID)
 		if err != nil {
-			return fmt.Errorf("failed to request verification code: %w", err)
+			return &CLIError{Op: "request verification code", Cause: err}
 		}
 
 		if outputFmt == "json" {
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(session)
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "Verification code requested for %s\n", number)
-		fmt.Fprintf(cmd.OutOrStdout(), "Session ID: %s\n", session.ID)
-		fmt.Fprintf(cmd.OutOrStdout(), "Use 'signal verify %s CODE --session %s' to complete registration.\n", number, session.ID)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Verification code requested for %s\n", number)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Session ID: %s\n", session.ID)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Use 'signal verify %s CODE --session %s' to complete registration.\n", number, session.ID)
 		return nil
 	},
 }
@@ -68,7 +67,7 @@ func newClient() (*signal.Client, error) {
 	if caCertFile != "" {
 		certData, err := os.ReadFile(caCertFile)
 		if err != nil {
-			return nil, fmt.Errorf("read CA cert: %w", err)
+			return nil, &CLIError{Op: "read CA cert", Cause: err}
 		}
 		cfg.CACert = signal.NewSecurePassword(string(certData))
 		// Wipe the file buffer.

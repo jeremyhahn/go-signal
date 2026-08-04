@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 
@@ -35,7 +34,7 @@ Examples:
   signal send -a +15555550100 -m "Note" --note-to-self`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if sendMessage == "" {
-			return fmt.Errorf("message text is required (-m)")
+			return &UsageError{Message: "message text is required (-m)"}
 		}
 
 		var recipient string
@@ -44,16 +43,16 @@ Examples:
 		} else if sendNoteToSelf {
 			recipient = account // send to self
 		} else if sendGroupID == "" {
-			return fmt.Errorf("recipient is required (or use --note-to-self or --group-id)")
+			return &UsageError{Message: "recipient is required (or use --note-to-self or --group-id)"}
 		}
 
 		client, err := newClient()
 		if err != nil {
 			return err
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
-		ctx := context.Background()
+		ctx := cmd.Context()
 
 		opts := &signal.SendOptions{
 			GroupID:    sendGroupID,
@@ -63,14 +62,14 @@ Examples:
 
 		result, err := client.Send(ctx, recipient, sendMessage, opts)
 		if err != nil {
-			return fmt.Errorf("send failed: %w", err)
+			return &CLIError{Op: "send", Cause: err}
 		}
 
 		if outputFmt == "json" {
 			return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "Message sent (timestamp: %d)\n", result.Timestamp)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Message sent (timestamp: %d)\n", result.Timestamp)
 		return nil
 	},
 }

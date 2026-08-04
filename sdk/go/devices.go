@@ -3,6 +3,8 @@ package signal
 import (
 	"context"
 	"fmt"
+
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
 // ListDevices returns all devices linked to the authenticated account.
@@ -11,7 +13,7 @@ func (c *Client) ListDevices(ctx context.Context) ([]Device, error) {
 		Devices []Device `json:"devices"`
 	}
 	if err := c.doRequest(ctx, "GET", "/v1/devices", nil, &result); err != nil {
-		return nil, fmt.Errorf("list devices: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "list devices", err)
 	}
 	return result.Devices, nil
 }

@@ -217,6 +217,30 @@ func (s *MemoryPreKeyStore) DeleteAllForAccount(_ context.Context, uuid string) 
 	return nil
 }
 
+// ListAccountUUIDs returns every UUID with pre-keys in any table.
+func (s *MemoryPreKeyStore) ListAccountUUIDs(_ context.Context) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	seen := make(map[string]struct{})
+	for k := range s.ecKeys {
+		seen[k.uuid] = struct{}{}
+	}
+	for k := range s.kemKeys {
+		seen[k.uuid] = struct{}{}
+	}
+	for k := range s.signedKeys {
+		seen[k.uuid] = struct{}{}
+	}
+	for k := range s.kemLastResort {
+		seen[k.uuid] = struct{}{}
+	}
+	out := make([]string, 0, len(seen))
+	for u := range seen {
+		out = append(out, u)
+	}
+	return out, nil
+}
+
 // clonePreKey returns a deep copy of a PreKey.
 func clonePreKey(pk *keys.PreKey) *keys.PreKey {
 	return &keys.PreKey{

@@ -27,4 +27,4 @@ type ConversationEntity struct {
 }
 
 func (c *ConversationEntity) EntityID() uint64      { return c.ID }
-func (c *ConversationEntity) SetEntityID(id uint64)  { c.ID = id }
+func (c *ConversationEntity) SetEntityID(id uint64) { c.ID = id }

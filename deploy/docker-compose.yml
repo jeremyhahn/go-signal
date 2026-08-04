@@ -1,0 +1,156 @@
+# Full Signal-server topology: signald + 5 external services.
+#
+# Each service runs as its own container. signald is the only one
+# clients (mobile apps, REST callers) talk to over the public ports
+# (8080 HTTPS, 8081 HTTP, 8443 gRPC). The four "back-end" services
+# (registration-service, svr2, cdsi, storage-service, key-transparency)
+# expose gRPC or HTTP only inside the compose network — signald is
+# the one that proxies for them or holds their HMAC credentials.
+#
+# Two of them (svr2, cdsi) also expose WebSocket listeners that
+# mobile clients connect to directly per Java's reference
+# architecture. Production deployments would publish those through a
+# separate ingress; here they sit on the compose network only.
+#
+# Shared infrastructure:
+#   - redis: WebSocket-session clustering + rate-limit token bucket.
+#   - postgres: production-grade durable storage backend.
+
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [signal]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: signal
+      POSTGRES_PASSWORD: signal-dev-password
+      POSTGRES_DB: signal
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [signal]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "signal"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  registration-service:
+    image: go-signal-registration-service:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.registration-service
+    restart: unless-stopped
+    networks: [signal]
+    expose: ["8090"]
+    environment:
+      SIGNAL_VERIFICATION_GRPCLISTEN: "0.0.0.0:8090"
+      SIGNAL_VERIFICATION_TRANSPORT: "stub"
+    depends_on:
+      redis: {condition: service_healthy}
+
+  svr2:
+    image: go-signal-svr2:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.svr2
+    restart: unless-stopped
+    networks: [signal]
+    expose: ["8091", "8092"]
+    environment:
+      SIGNAL_SVR2_HTTPLISTEN: "0.0.0.0:8091"
+      SIGNAL_SVR2_WSLISTEN: "0.0.0.0:8092"
+      SIGNAL_SVR2_ATTESTATION: "software"
+      SIGNAL_SVR2_SHAREDSECRET: "svr2-shared-secret-change-me"
+
+  cdsi:
+    image: go-signal-cdsi:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.cdsi
+    restart: unless-stopped
+    networks: [signal]
+    expose: ["8094"]
+    environment:
+      SIGNAL_CDSI_WSLISTEN: "0.0.0.0:8094"
+      SIGNAL_CDSI_ATTESTATION: "software"
+      SIGNAL_CDSI_SHAREDSECRET: "cdsi-shared-secret-change-me"
+      SIGNAL_CDSI_SIGNALDDIRECTORYADDR: "signald:8443"
+      SIGNAL_CDSI_SIGNALDDIRECTORYINSECURE: "true"
+    depends_on:
+      signald: {condition: service_started}
+
+  storage-service:
+    image: go-signal-storage-service:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.storage-service
+    restart: unless-stopped
+    networks: [signal]
+    expose: ["8096"]
+    environment:
+      SIGNAL_STORAGESERVICE_HTTPLISTEN: "0.0.0.0:8096"
+      SIGNAL_STORAGESERVICE_SHAREDSECRET: "storage-shared-secret-change-me"
+
+  key-transparency:
+    image: go-signal-key-transparency:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.key-transparency
+    restart: unless-stopped
+    networks: [signal]
+    expose: ["8098"]
+    environment:
+      SIGNAL_KEYTRANSPARENCY_GRPCLISTEN: "0.0.0.0:8098"
+
+  signald:
+    image: go-signal-signald:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.signald
+    restart: unless-stopped
+    networks: [signal]
+    ports:
+      - "8080:8080"  # REST / HTTPS
+      - "8443:8443"  # gRPC (DirectoryService for cdsi, also clients)
+    environment:
+      # Storage + cache backends
+      SIGNAL_STORAGE_BACKEND: "postgres"
+      SIGNAL_STORAGE_POSTGRES_URL: "postgres://signal:signal-dev-password@postgres:5432/signal?sslmode=disable"
+      SIGNAL_CACHE_BACKEND: "redis"
+      SIGNAL_CACHE_REDIS_ADDR: "redis:6379"
+      # External service wiring — all use compose-network hostnames.
+      SIGNAL_VERIFICATION_REMOTEADDR: "registration-service:8090"
+      SIGNAL_VERIFICATION_REMOTEINSECURE: "true"
+      SIGNAL_SVR2_REMOTEURL: "http://svr2:8091"
+      SIGNAL_SVR2_SHAREDSECRET: "svr2-shared-secret-change-me"
+      SIGNAL_CDSI_SHAREDSECRET: "cdsi-shared-secret-change-me"
+      SIGNAL_STORAGESERVICE_REMOTEURL: "http://storage-service:8096"
+      SIGNAL_STORAGESERVICE_REMOTEINSECURE: "true"
+      SIGNAL_STORAGESERVICE_SHAREDSECRET: "storage-shared-secret-change-me"
+      SIGNAL_KEYTRANSPARENCY_REMOTEADDR: "key-transparency:8098"
+      SIGNAL_KEYTRANSPARENCY_REMOTEINSECURE: "true"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      registration-service: {condition: service_started}
+      svr2: {condition: service_started}
+      storage-service: {condition: service_started}
+      key-transparency: {condition: service_started}
+
+volumes:
+  pgdata:
+
+networks:
+  signal:
+    driver: bridge

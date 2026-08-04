@@ -13,8 +13,9 @@ type UsernameService interface {
 	ReserveHash(ctx context.Context, uuid string, hashes [][]byte) ([]byte, string, error)
 
 	// ConfirmHash confirms a previously reserved username hash using the
-	// reservation token.
-	ConfirmHash(ctx context.Context, uuid string, hash []byte, token string) error
+	// reservation token. The caller supplies a zero-knowledge proof that is
+	// verified server-side via go-libsignal/usernames.VerifyProof.
+	ConfirmHash(ctx context.Context, uuid string, hash []byte, token string, zkProof []byte) error
 
 	// LookupByHash returns the account UUID associated with a confirmed hash.
 	LookupByHash(ctx context.Context, hash []byte) (string, error)
@@ -30,7 +31,20 @@ type UsernameService interface {
 
 	// DeleteLink removes the username link for the given account UUID.
 	DeleteLink(ctx context.Context, uuid string) error
+
+	// DeleteExpiredReservations sweeps expired username-hash holds.
+	// Used by the remove-expired-username-holds worker; safe to call
+	// from any node — the underlying store handles concurrency.
+	DeleteExpiredReservations(ctx context.Context) (int, error)
+
+	// ExistingLinkHandle returns the handle of the account's currently-published
+	// username link, or *UsernameLinkNotFoundError when none exists. Used by the
+	// REST handler to honour keepLinkHandle=true.
+	ExistingLinkHandle(ctx context.Context, uuid string) (string, error)
 }
+
+// Compile-time assertion: UsernamesManager must satisfy UsernameService.
+var _ UsernameService = (*usernames.UsernamesManager)(nil)
 
 // usernameService is the default UsernameService backed by a UsernamesManager.
 type usernameService struct {
@@ -47,8 +61,8 @@ func (s *usernameService) ReserveHash(ctx context.Context, uuid string, hashes [
 	return s.manager.ReserveHash(ctx, uuid, hashes)
 }
 
-func (s *usernameService) ConfirmHash(ctx context.Context, uuid string, hash []byte, token string) error {
-	return s.manager.ConfirmHash(ctx, uuid, hash, token)
+func (s *usernameService) ConfirmHash(ctx context.Context, uuid string, hash []byte, token string, zkProof []byte) error {
+	return s.manager.ConfirmHash(ctx, uuid, hash, token, zkProof)
 }
 
 func (s *usernameService) LookupByHash(ctx context.Context, hash []byte) (string, error) {
@@ -69,4 +83,12 @@ func (s *usernameService) GetLink(ctx context.Context, handle string) (*username
 
 func (s *usernameService) DeleteLink(ctx context.Context, uuid string) error {
 	return s.manager.DeleteLink(ctx, uuid)
+}
+
+func (s *usernameService) DeleteExpiredReservations(ctx context.Context) (int, error) {
+	return s.manager.DeleteExpiredReservations(ctx)
+}
+
+func (s *usernameService) ExistingLinkHandle(ctx context.Context, uuid string) (string, error) {
+	return s.manager.ExistingLinkHandle(ctx, uuid)
 }

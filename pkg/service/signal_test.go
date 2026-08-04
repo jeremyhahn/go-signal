@@ -69,6 +69,7 @@ func TestNewSignalService_AllFieldsPopulated(t *testing.T) {
 
 	if svc == nil {
 		t.Fatal("NewSignalService: returned nil")
+		return
 	}
 	if svc.Accounts == nil {
 		t.Error("NewSignalService: Accounts is nil")
@@ -176,6 +177,56 @@ func TestSignalService_MessagesFieldIsFunctional(t *testing.T) {
 	}
 	if len(pending) != 1 {
 		t.Errorf("Messages.GetMessagesForDevice: expected 1, got %d", len(pending))
+	}
+}
+
+// TestNewSignalService_NilWSSessions verifies that CallSignaling is nil when
+// WSSessions is not provided, exercising the false branch of the
+// WSSessions != nil && Calling != nil guard in NewSignalService.
+func TestNewSignalService_NilWSSessions(t *testing.T) {
+	cfg := buildTestServiceConfig()
+	cfg.WSSessions = nil
+
+	svc := NewSignalService(cfg)
+	if svc == nil {
+		t.Fatal("NewSignalService returned nil")
+		return
+	}
+	if svc.CallSignaling != nil {
+		t.Error("NewSignalService: CallSignaling should be nil when WSSessions is nil")
+	}
+}
+
+// TestNewSignalService_NilCalling verifies that CallSignaling is nil when
+// Calling is not provided.
+func TestNewSignalService_NilCalling(t *testing.T) {
+	cfg := buildTestServiceConfig()
+	cfg.Calling = nil
+
+	svc := NewSignalService(cfg)
+	if svc == nil {
+		t.Fatal("NewSignalService returned nil")
+		return
+	}
+	if svc.CallSignaling != nil {
+		t.Error("NewSignalService: CallSignaling should be nil when Calling is nil")
+	}
+}
+
+// TestNewSignalService_NilLogger verifies that NewSignalService falls back to
+// slog.Default() when Logger is nil, exercising the logger nil-check branch.
+func TestNewSignalService_NilLogger(t *testing.T) {
+	cfg := buildTestServiceConfig()
+	cfg.Logger = nil
+
+	svc := NewSignalService(cfg)
+	if svc == nil {
+		t.Fatal("NewSignalService returned nil")
+		return
+	}
+	// CallSignaling must still be wired because WSSessions and Calling are non-nil.
+	if svc.CallSignaling == nil {
+		t.Error("NewSignalService: CallSignaling should be set even when Logger is nil")
 	}
 }
 

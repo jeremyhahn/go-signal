@@ -277,6 +277,7 @@ func TestNewCaptchaManagerWithConfig_CustomVerifier(t *testing.T) {
 	})
 	if m == nil {
 		t.Fatal("expected non-nil manager")
+		return
 	}
 	if m.scoreThreshold != 0.7 {
 		t.Errorf("got threshold %v, want 0.7", m.scoreThreshold)

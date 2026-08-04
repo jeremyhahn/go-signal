@@ -340,6 +340,10 @@ func (c *countingKVClient) Delete(ctx context.Context, key string) error {
 	return c.delegate.Delete(ctx, key)
 }
 
+func (c *countingKVClient) DeleteIfPresent(ctx context.Context, key string) (bool, error) {
+	return c.delegate.DeleteIfPresent(ctx, key)
+}
+
 func (c *countingKVClient) List(ctx context.Context, prefix string) ([]string, error) {
 	return c.delegate.List(ctx, prefix)
 }

@@ -4,10 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
 // FileStore is a file-system-based implementation of Store. Each attachment
@@ -21,7 +22,7 @@ type FileStore struct {
 // is created if it does not exist.
 func NewFileStore(rootDir string) (*FileStore, error) {
 	if err := os.MkdirAll(rootDir, 0700); err != nil {
-		return nil, fmt.Errorf("attachments: create root dir: %w", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "attachments: create root dir", err)
 	}
 	return &FileStore{rootDir: rootDir}, nil
 }
@@ -35,7 +36,7 @@ func (s *FileStore) Put(_ context.Context, key string, data io.Reader, _ int64) 
 	path := s.keyPath(key)
 
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return fmt.Errorf("attachments: mkdir: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "attachments: mkdir", err)
 	}
 
 	// Write to temp file, then rename for atomicity.
@@ -45,25 +46,25 @@ func (s *FileStore) Put(_ context.Context, key string, data io.Reader, _ int64) 
 
 	f, err := os.Create(tmp)
 	if err != nil {
-		return fmt.Errorf("attachments: create temp: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "attachments: create temp", err)
 	}
 
 	if _, err := io.Copy(f, data); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return fmt.Errorf("attachments: write: %w", err)
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "attachments: write", err)
 	}
 
 	if err := f.Sync(); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return fmt.Errorf("attachments: sync: %w", err)
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "attachments: sync", err)
 	}
-	f.Close()
+	_ = f.Close()
 
 	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return fmt.Errorf("attachments: rename: %w", err)
+		_ = os.Remove(tmp)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "attachments: rename", err)
 	}
 
 	return nil
@@ -76,15 +77,15 @@ func (s *FileStore) Get(_ context.Context, key string) (io.ReadCloser, int64, er
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, 0, fmt.Errorf("attachment not found: %s", key)
+			return nil, 0, signalerrors.New(signalerrors.ErrNotFound, "attachment not found: "+key)
 		}
-		return nil, 0, fmt.Errorf("attachments: open: %w", err)
+		return nil, 0, signalerrors.Wrap(signalerrors.ErrInternal, "attachments: open", err)
 	}
 
 	info, err := f.Stat()
 	if err != nil {
-		f.Close()
-		return nil, 0, fmt.Errorf("attachments: stat: %w", err)
+		_ = f.Close()
+		return nil, 0, signalerrors.Wrap(signalerrors.ErrInternal, "attachments: stat", err)
 	}
 
 	return f, info.Size(), nil
@@ -97,7 +98,7 @@ func (s *FileStore) Delete(_ context.Context, key string) error {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return fmt.Errorf("attachments: delete: %w", err)
+		return signalerrors.Wrap(signalerrors.ErrInternal, "attachments: delete", err)
 	}
 	return nil
 }
@@ -109,7 +110,7 @@ func (s *FileStore) Exists(_ context.Context, key string) (bool, error) {
 		if os.IsNotExist(err) {
 			return false, nil
 		}
-		return false, fmt.Errorf("attachments: stat: %w", err)
+		return false, signalerrors.Wrap(signalerrors.ErrInternal, "attachments: stat", err)
 	}
 	return true, nil
 }

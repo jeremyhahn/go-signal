@@ -6,9 +6,9 @@ import (
 	"context"
 	"time"
 
-	signal "github.com/jeremyhahn/go-signal/sdk/go"
 	"github.com/jeremyhahn/go-signal/pkg/daostore"
 	"github.com/jeremyhahn/go-signal/pkg/daostore/entities"
+	signal "github.com/jeremyhahn/go-signal/sdk/go"
 )
 
 // SettingsBindings provides settings/preferences operations.
@@ -24,12 +24,12 @@ func NewSettingsBindings(client *signal.Client, f *daostore.Factory) *SettingsBi
 
 // AppSettings holds all user-configurable preferences.
 type AppSettings struct {
-	Theme              string `json:"theme"`
-	NotificationsEnabled bool  `json:"notificationsEnabled"`
-	ReadReceipts       bool   `json:"readReceipts"`
-	TypingIndicators   bool   `json:"typingIndicators"`
-	LinkPreviews       bool   `json:"linkPreviews"`
-	Locale             string `json:"locale"`
+	Theme                string `json:"theme"`
+	NotificationsEnabled bool   `json:"notificationsEnabled"`
+	ReadReceipts         bool   `json:"readReceipts"`
+	TypingIndicators     bool   `json:"typingIndicators"`
+	LinkPreviews         bool   `json:"linkPreviews"`
+	Locale               string `json:"locale"`
 }
 
 // GetSettings loads all settings from the DAO.
@@ -38,12 +38,12 @@ func (b *SettingsBindings) GetSettings() (*AppSettings, error) {
 	defer cancel()
 
 	settings := &AppSettings{
-		Theme:              "system",
+		Theme:                "system",
 		NotificationsEnabled: true,
-		ReadReceipts:       true,
-		TypingIndicators:   true,
-		LinkPreviews:       true,
-		Locale:             "en",
+		ReadReceipts:         true,
+		TypingIndicators:     true,
+		LinkPreviews:         true,
+		Locale:               "en",
 	}
 
 	// Load each setting by key.

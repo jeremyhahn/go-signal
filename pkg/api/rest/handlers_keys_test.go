@@ -716,3 +716,42 @@ func TestConvertSetKeysRequest_InvalidPqLastResortSigBase64(t *testing.T) {
 		t.Fatal("expected error for invalid base64")
 	}
 }
+
+// --------------------------------------------------------------------------
+// identityQueryParamError (Error method coverage)
+// --------------------------------------------------------------------------
+
+func TestIdentityQueryParamError_Error(t *testing.T) {
+	e := &identityQueryParamError{}
+	got := e.Error()
+	if got != "identity must be aci or pni" {
+		t.Errorf("unexpected error string: %q", got)
+	}
+}
+
+func TestHandleGetPreKeyCount_InvalidIdentityParam(t *testing.T) {
+	s, _ := newTestServerWithAccount(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/keys?identity=invalid", nil)
+	req.SetBasicAuth(testAccountUUID, testAuthToken)
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid identity param, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandleUploadKeys_InvalidIdentityParam(t *testing.T) {
+	s, _ := newTestServerWithAccount(t)
+
+	body := `{"preKeys":[],"signedPreKey":{"keyId":1,"publicKey":"` + testSignedPreKeyPubB64 + `","signature":"` + testSignedPreKeySigB64 + `"}}`
+	req := httptest.NewRequest(http.MethodPut, "/v2/keys?identity=bogus", strings.NewReader(body))
+	req.SetBasicAuth(testAccountUUID, testAuthToken)
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for invalid identity param, got %d: %s", rr.Code, rr.Body.String())
+	}
+}

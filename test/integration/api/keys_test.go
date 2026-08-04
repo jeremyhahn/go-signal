@@ -39,7 +39,11 @@ func TestKeys_UploadAndGetCount(t *testing.T) {
 	var count map[string]any
 	decodeJSON(t, resp, &count)
 	assert.Equal(t, float64(2), count["count"])
-	assert.Equal(t, float64(3), count["pqCount"]) // 2 uploaded + 1 from registration
+	// pqCount reflects one-time KEM keys only. The registration uploads a
+	// last-resort KEM key (aciPqLastResortPreKey) which is stored in its own
+	// namespace and never counted as a one-time key. Only the 2 pqPreKeys
+	// uploaded in the PUT /v2/keys request appear in pqCount.
+	assert.Equal(t, float64(2), count["pqCount"])
 }
 
 func TestKeys_GetPreKeysForUser(t *testing.T) {

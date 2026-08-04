@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 
 	signal "github.com/jeremyhahn/go-signal/sdk/go"
@@ -9,7 +8,7 @@ import (
 )
 
 var (
-	challengeToken  string
+	challengeToken   string
 	challengeCaptcha string
 )
 
@@ -24,19 +23,19 @@ var submitChallengeCmd = &cobra.Command{
 	Short: "Submit a rate limit challenge response",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if challengeToken == "" {
-			return fmt.Errorf("--challenge is required")
+			return &UsageError{Message: "--challenge is required"}
 		}
 		client, err := newClient()
 		if err != nil {
 			return err
 		}
-		defer client.Close()
+		defer func() { _ = client.Close() }()
 
-		err = client.SubmitChallenge(context.Background(), challengeToken, challengeCaptcha)
+		err = client.SubmitChallenge(cmd.Context(), challengeToken, challengeCaptcha)
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(cmd.OutOrStdout(), "Challenge submitted.")
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Challenge submitted.")
 		return nil
 	},
 }

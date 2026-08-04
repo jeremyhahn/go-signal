@@ -4,12 +4,16 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/jeremyhahn/go-libsignal/pkg/zkgroup"
+
+	"github.com/jeremyhahn/go-signal/pkg/certificates"
 )
 
 const (
@@ -25,13 +29,14 @@ const (
 
 // handleGetProfileWithCredential processes
 // GET /v1/profile/{identifier}/{version}/{credentialRequest} and returns the
-// specified version of a user's profile along with an ExpiringProfileKeyCredential.
+// specified version of a user's profile along with an
+// ExpiringProfileKeyCredential.
 //
 // The credentialRequest path parameter is a hex-encoded
-// ProfileKeyCredentialRequest from the client. The full zkgroup issuance flow
-// requires deserializing the request into a ProfileKeyCredentialRequest struct;
-// until go-libsignal exports a wire deserializer for that type, this handler
-// falls back to a structured stub credential that has the correct JSON shape.
+// ProfileKeyCredentialRequest from the client. It is deserialized and verified
+// against the account's stored profile-key commitment during issuance, so a
+// request that doesn't match the commitment fails closed (the zkgroup proof
+// verification rejects it) rather than yielding a usable-but-wrong credential.
 func (s *Server) handleGetProfileWithCredential(w http.ResponseWriter, r *http.Request) {
 	identifier := r.PathValue("identifier")
 	version := r.PathValue("version")
@@ -45,6 +50,22 @@ func (s *Server) handleGetProfileWithCredential(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "missing credential request")
 		return
 	}
+	if !isValidProfileVersion(version) {
+		writeError(w, http.StatusBadRequest, "invalid profile version")
+		return
+	}
+
+	// Decode and deserialize the client's profile-key-credential request.
+	requestBytes, err := hex.DecodeString(credentialRequest)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid credentialRequest encoding")
+		return
+	}
+	credRequest, err := zkgroup.DeserializeProfileKeyCredentialRequest(requestBytes)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid credentialRequest")
+		return
+	}
 
 	targetAcct, err := s.resolveAccount(r, identifier)
 	if err != nil {
@@ -52,26 +73,34 @@ func (s *Server) handleGetProfileWithCredential(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	profile, _ := s.profiles.Get(r.Context(), targetAcct.UUID, version)
+	// The profile-key commitment is required to issue a credential.
+	profile, err := s.profiles.Get(r.Context(), targetAcct.UUID, version)
+	if err != nil || profile == nil || len(profile.Commitment) == 0 {
+		writeError(w, http.StatusNotFound, "profile version not found")
+		return
+	}
+	commitment, err := zkgroup.DeserializeProfileKeyCommitment(profile.Commitment)
+	if err != nil {
+		s.logger.Error("stored profile commitment is malformed",
+			slog.String("uuid", targetAcct.UUID), slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, "invalid stored profile commitment")
+		return
+	}
 
 	resp := buildProfileResponse(targetAcct, profile)
 
 	// Compute the credential expiration time: truncate to UTC day boundary,
-	// then advance by the configured expiration window. This matches the Java
-	// Signal Server's behavior.
+	// then advance by the configured expiration window. Matches Java.
 	now := time.Now().UTC()
 	expirationTime := now.Truncate(24 * time.Hour).
 		Add(time.Duration(profileKeyCredentialExpirationDays) * 24 * time.Hour)
 	expirationTimestamp := zkgroup.TimestampFromTime(expirationTime)
 
-	// Issue the ExpiringProfileKeyCredential. The stub path is used because
-	// go-libsignal does not yet expose a wire deserializer for
-	// ProfileKeyCredentialRequest. When that is added, this should be replaced
-	// with the full zkgroup issuance flow using:
-	//   s.certificates.GetExpiringProfileKeyCredential(ctx, aci, request, commitment, expiration)
-	credResp, err := s.certificates.GetExpiringProfileKeyCredentialStub(
+	credResp, err := s.certificates.GetExpiringProfileKeyCredential(
 		r.Context(),
 		targetAcct.UUID,
+		credRequest,
+		commitment,
 		expirationTimestamp,
 	)
 	if err != nil {
@@ -79,6 +108,13 @@ func (s *Server) handleGetProfileWithCredential(w http.ResponseWriter, r *http.R
 			slog.String("uuid", targetAcct.UUID),
 			slog.String("error", err.Error()),
 		)
+		// A zkgroup verification failure means the client's request did not
+		// match the stored commitment — a bad request, not a server fault.
+		var zkErr *certificates.ZKGroupError
+		if errors.As(err, &zkErr) {
+			writeError(w, http.StatusBadRequest, "invalid credential request")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to issue profile key credential")
 		return
 	}
