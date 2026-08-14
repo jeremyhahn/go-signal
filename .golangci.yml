@@ -31,11 +31,11 @@ linters:
     - staticcheck
     - unused
     - ineffassign
+    - gocritic
   disable:
     - unconvert   # Style preference
     - unparam     # Too noisy for production code
     - goconst     # Too aggressive, better handled in code review
-    - gocritic    # Style preferences, not bugs
     - gocyclo     # Complexity handled in code review
     - goprintffuncname # Style preference
     - revive      # Too aggressive, covered by other linters
@@ -75,12 +75,12 @@ linters:
       min-len: 3
       min-occurrences: 5
     gocritic:
-      enabled-tags:
-        - diagnostic
-        - experimental
-        - opinionated
-        - performance
-        - style
+      # Default check set only. devops.md §8 requires gocritic on; the
+      # style/opinionated/experimental tags are taste rather than defects and
+      # turning them on buys noise instead of signal, which is why this repo
+      # had gocritic switched off entirely before.
+      disabled-checks:
+        - ifElseChain
     gocyclo:
       min-complexity: 30
     revive:

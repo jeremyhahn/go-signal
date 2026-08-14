@@ -1,0 +1,23 @@
+# Trivy ignore list for go-signal.
+#
+# The gate is a SOURCE filesystem scan (trivy fs) of the module, failing on
+# CRITICAL/HIGH (conventions/devops.md §8). test/ is the integration and
+# performance harness; build/, bin/ and data/ are gitignored local artifacts.
+# None of them ship.
+#
+# There is no image gate yet, and the reason is a broken build rather than an
+# accepted risk: none of this repository's Dockerfiles build today. The
+# top-level Dockerfile, Dockerfile.dev and Dockerfile.service still COPY from
+# go-libsignal/go-xkms/go-qrdb/go-quicraft build contexts that only
+# .devcontainer/docker-compose.yml supplies, and the deploy/Dockerfile.* build
+# stage is golang:<stable>-alpine with no git, so `go mod download` cannot
+# reach the first-party modules on Gitea. `make trivy-image` carries the
+# ready-to-use scan loop over the six deploy/ service images; chain it into
+# `make security` and add the CI job once the Dockerfiles build.
+#
+# Add specific advisory IDs below ONLY when a finding is confirmed
+# not-applicable or unfixable, with a one-line justification AND the date it
+# was accepted. An entry without both is a defect.
+#
+# Example:
+# CVE-XXXX-XXXXX  # 2026-01-01 <reason this advisory does not apply to go-signal>

@@ -71,6 +71,8 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
+      - name: Verify module integrity
+        run: make modverify
       - name: Run gosec
         run: |
           go install github.com/securego/gosec/v2/cmd/gosec@latest
@@ -79,6 +81,83 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           make vuln
+
+  trivy:
+    name: Trivy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # Two paths for one gate (devops.md §8). trivy-action's setup step cannot
+      # authenticate to github.com from a Gitea runner and upload-sarif has no
+      # GHES-compatible endpoint there, so the action path is guarded on the
+      # server URL and Gitea gates with the trivy CLI below. Both run the same
+      # fs scan at the same severity; only the SARIF upload is GitHub-only.
+      #
+      # test/ is the integration and performance harness; build/, bin/ and
+      # data/ are gitignored local artifacts. None ship.
+      - name: Trivy scan (SARIF for code scanning)
+        if: github.server_url == 'https://github.com'
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: 0
+          skip-dirs: test,build,bin,data
+          trivyignores: .trivyignore
+
+      - name: Upload Trivy SARIF
+        if: github.server_url == 'https://github.com'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-fs
+
+      - name: Trivy gate (fail on CRITICAL/HIGH)
+        if: github.server_url == 'https://github.com'
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: CRITICAL,HIGH
+          exit-code: 1
+          format: table
+          skip-dirs: test,build,bin,data
+          trivyignores: .trivyignore
+
+      - name: Install Trivy CLI (Gitea)
+        if: github.server_url != 'https://github.com'
+        run: curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Trivy gate (Gitea)
+        if: github.server_url != 'https://github.com'
+        run: trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 --skip-dirs test,build,bin,data .
+
+  # There is deliberately no trivy-image job yet. None of this repository's
+  # Dockerfiles build today, for two independent pre-existing reasons:
+  #
+  #   Dockerfile, Dockerfile.dev, Dockerfile.service
+  #     still `COPY --from=go-libsignal|go-xkms|go-qrdb|go-quicraft`, build
+  #     contexts only .devcontainer/docker-compose.yml supplies, so a plain
+  #     `docker build .` fails at the first COPY. Residue of the pre-2026-08
+  #     local-replace layout; go.mod itself carries no local-path replaces.
+  #
+  #   deploy/Dockerfile.*
+  #     build stage is golang:<stable>-alpine with no git, and the first-party
+  #     requires resolve from Gitea, so `go mod download` dies with
+  #     'exec: "git": executable file not found in $PATH' before it ever gets
+  #     to needing GOPRIVATE and the insteadOf rewrite the host provides.
+  #
+  # `make trivy-image` carries the ready-to-use scan loop and the full
+  # explanation. Add this job, and chain trivy-image into `make security`,
+  # once the Dockerfiles can build.
 
   build:
     name: Build

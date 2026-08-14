@@ -504,9 +504,9 @@ coverage-smtp:
 # CI / Quality
 # ==============================================================================
 
-.PHONY: ci fmt vet lint gosec vuln
+.PHONY: ci fmt vet lint gosec vuln modverify trivy trivy-image security
 
-ci: fmt vet lint gosec vuln build test ## Run the full CI pipeline
+ci: fmt vet lint security build test ## Run the full CI pipeline
 	@echo "==> CI pipeline complete."
 
 fmt: ## Check gofmt formatting
@@ -528,6 +528,67 @@ gosec: ## Run gosec security scanner
 vuln: ## Run govulncheck vulnerability scan
 	@echo "==> Running vulnerability check..."
 	$(GOVULNCHECK) ./...
+
+modverify: ## Verify module integrity against go.sum
+	@echo "==> Verifying module integrity..."
+	$(GO) mod verify
+
+# Filesystem CVE/secret scan, gated on CRITICAL/HIGH. test/ is the integration
+# and performance harness; build/, bin/ and data/ are gitignored local
+# artifacts. None of them ship.
+trivy: ## Run trivy filesystem scan (CRITICAL/HIGH gate)
+	@command -v trivy >/dev/null 2>&1 || { \
+		echo "==> trivy not installed - skipping filesystem scan (see https://trivy.dev/latest/getting-started/installation/)"; \
+		exit 0; \
+	}; \
+	echo "==> Running trivy filesystem scan..."; \
+	trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 \
+		--skip-dirs test,build,bin,data .
+
+# Image scan of the six deploy/ service images — the artifacts
+# deploy/docker-compose.yml and deploy/k8s reference.
+#
+# NOT a prerequisite of `security`, and deliberately so: no Dockerfile in this
+# repository builds today, for two independent pre-existing reasons.
+#
+#   Dockerfile, Dockerfile.dev, Dockerfile.service
+#     still `COPY --from=go-libsignal|go-xkms|go-qrdb|go-quicraft`, build
+#     contexts only .devcontainer/docker-compose.yml supplies, so a plain
+#     `docker build .` fails at the first COPY. Residue of the pre-2026-08
+#     local-replace layout; go.mod itself carries no local-path replaces.
+#     Removing the COPY lines would break the devcontainer compose path, so
+#     the fix belongs with whoever owns that topology.
+#
+#   deploy/Dockerfile.*
+#     build stage is golang:<stable>-alpine with no git, and the first-party
+#     requires resolve from Gitea, so `go mod download` dies with
+#     'exec: "git": executable file not found in $PATH' before it even gets to
+#     needing GOPRIVATE and the insteadOf rewrite the host provides
+#     (conventions/dependency-resolution.md).
+#
+# Chaining a security gate onto a build that fails for an unrelated reason
+# would give this repo a gate nobody can pass. Chain this in — and add the
+# matching CI job — once the Dockerfiles build.
+#
+# --ignore-unfixed: the runtime is gcr.io/distroless/static-debian12, whose
+# package set is upstream's. A CVE with no released fix cannot be actioned by
+# rebuilding; one that HAS a fix means the base is stale and is a real finding.
+DEPLOY_SERVICES := signald cdsi svr2 key-transparency registration-service storage-service
+
+trivy-image: ## Build and scan the deploy/ service images (see Makefile note)
+	@command -v docker >/dev/null 2>&1 || { echo "==> docker not installed - skipping image scan"; exit 0; }; \
+	command -v trivy >/dev/null 2>&1 || { echo "==> trivy not installed - skipping image scan"; exit 0; }; \
+	for svc in $(DEPLOY_SERVICES); do \
+		echo "==> Building and scanning go-signal-$$svc..."; \
+		docker build -f deploy/Dockerfile.$$svc -t go-signal-$$svc:security . || exit 1; \
+		trivy image --scanners vuln,secret --severity CRITICAL,HIGH --ignore-unfixed \
+			--exit-code 1 go-signal-$$svc:security || exit 1; \
+	done
+
+# The full devops.md §8 suite. See trivy-image above for why the image scan is
+# not chained in yet.
+security: gosec vuln modverify trivy ## Run the full security suite
+	@echo "==> Security suite passed."
 
 # ==============================================================================
 # Docker
