@@ -12,8 +12,11 @@
 services:
   devcontainer:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+      # No source in the image; the mount below supplies it, so a developer's
+      # edits are live without a rebuild.
+      target: toolchain
     volumes:
       - ..:/workspace:cached
       - go-mod-cache:/go/pkg/mod
@@ -74,10 +77,16 @@ services:
 
   integration:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+      # Source baked in, NOT mounted. compose reaches the host daemon through
+      # the mounted socket in CI, so a bind mount of the checkout resolves
+      # against the HOST filesystem, finds nothing, and silently mounts an
+      # empty directory — see the note in .devcontainer/Dockerfile.
+      target: integration
+      secrets:
+        - gomodauth
     volumes:
-      - ..:/workspace:cached
       - go-mod-cache:/go/pkg/mod
       - signal-cli-bin:/opt/signal-cli:ro
       - signal-cli-data:/var/lib/signal-cli

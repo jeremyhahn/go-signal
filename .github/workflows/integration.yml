@@ -49,10 +49,12 @@ jobs:
   integration-test:
     name: Integration Tests
     runs-on: ubuntu-latest
-    # Above the measured runtime with headroom; the suite's own go test timeout
-    # is 120m, so this must exceed it or the job is killed before the suite can
-    # report its own failure.
-    timeout-minutes: 180
+    # Measured on vm-host-1, 2026-08-14: api 3864s (64m) + cli 690s (11.5m)
+    # + image build, ~86m wall on an idle workstation. 150 leaves headroom for a
+    # shared runner without being fiction — an honest slow gate beats a fast
+    # lying one. It must also exceed the suite's own `go test -timeout 120m`, or
+    # the job is killed before the suite can report its own failure.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v6
 
