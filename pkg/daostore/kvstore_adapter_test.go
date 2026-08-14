@@ -40,6 +40,23 @@ func (m *mockKVServicer) Put(_ context.Context, key string, value []byte) error 
 	return nil
 }
 
+// PutIfAbsent stores only when the key is absent, matching the real engines.
+// The map lookup is the same check they perform; this mock is single-threaded,
+// so it needs no further synchronisation. It reports stored=false with a nil
+// error when the key already exists and leaves the store untouched.
+func (m *mockKVServicer) PutIfAbsent(_ context.Context, key string, value []byte) (bool, error) {
+	if m.putErr != nil {
+		return false, m.putErr
+	}
+	if _, exists := m.data[key]; exists {
+		return false, nil
+	}
+	cp := make([]byte, len(value))
+	copy(cp, value)
+	m.data[key] = cp
+	return true, nil
+}
+
 func (m *mockKVServicer) Get(_ context.Context, key string) ([]byte, error) {
 	if m.getErr != nil {
 		return nil, m.getErr
