@@ -6,9 +6,22 @@
 # host-built service binaries sit at the repository root (~130 MB), frontend/
 # carries node_modules, and .git is substantial.
 #
-# NOT excluded, deliberately: internal/frontend/dist — the Go binary embeds it
-# via `//go:embed all:dist`, so dropping it breaks the build. build/frontend/
-# is the staging copy and is excluded; the embedded one is not.
+# NOT excluded, deliberately — two carve-outs, both of which fail badly if a
+# later pass "tidies" them away:
+#
+#   internal/frontend/dist  the Go binary embeds it via `//go:embed all:dist`,
+#                           so dropping it breaks the build. build/frontend/ is
+#                           the staging copy and IS excluded; the embedded one
+#                           is not.
+#
+#   test/                   go-signal's integration suite lives in
+#                           test/integration/{api,cli,storage,mocks} — 438
+#                           tests — and the image that runs them needs those
+#                           files. Excluding test/ is the obvious-looking
+#                           saving and it is the dangerous one: the suite would
+#                           come up empty and REPORT SUCCESS rather than fail,
+#                           so nothing would announce the loss. Other repos in
+#                           the portfolio do exclude test/; this one must not.
 
 # VCS and CI config — never needed inside the image
 .git/
