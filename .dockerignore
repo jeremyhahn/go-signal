@@ -1,0 +1,74 @@
+# Keep the build context small and reproducible.
+#
+# The six deploy/Dockerfile.* images use `COPY . .` with the repository root as
+# their context, so anything not excluded here is sent to the daemon and baked
+# into every one of them. This tree is a worst case for that: five stale
+# host-built service binaries sit at the repository root (~130 MB), frontend/
+# carries node_modules, and .git is substantial.
+#
+# NOT excluded, deliberately: internal/frontend/dist — the Go binary embeds it
+# via `//go:embed all:dist`, so dropping it breaks the build. build/frontend/
+# is the staging copy and is excluded; the embedded one is not.
+
+# VCS and CI config — never needed inside the image
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# Stale host-built service binaries at the repository root. These are
+# gitignored leftovers from an older layout that wrote binaries here instead of
+# build/bin/; they are large, and shipping a host build into an image that is
+# supposed to compile its own is exactly the confusion to avoid.
+/signald
+/key-transparency
+/registration-service
+/svr2
+/storage-service
+
+# Build output and host binaries
+build/
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Node modules for the web UI — the deploy images consume the prebuilt
+# internal/frontend/dist, never the sources
+frontend/node_modules/
+**/node_modules/
+
+# Local runtime state
+data/
+
+# Test and coverage artifacts, regenerated in the container
+coverage/
+*.test
+*.out
+*.prof
+*.log
+
+# A stray go.work silently changes module resolution inside the build
+go.work
+go.work.sum
+vendor/
+
+# Editor, agent and OS noise
+.idea/
+.vscode/
+.claude/
+.serena/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Docker files themselves
+.dockerignore
+Dockerfile*
+deploy/Dockerfile*
+.devcontainer/
