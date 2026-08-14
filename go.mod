@@ -10,7 +10,7 @@ require (
 	github.com/go-webauthn/webauthn v0.16.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
-	github.com/jackc/pgx/v5 v5.9.0
+	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jeremyhahn/go-libsignal v0.1.1-alpha
 	github.com/jeremyhahn/go-qrdb v0.1.0-alpha
 	github.com/prometheus/client_golang v1.23.2

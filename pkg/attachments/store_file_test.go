@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -99,25 +101,23 @@ func TestFileStore_Put_MkdirError(t *testing.T) {
 }
 
 func TestFileStore_Put_CreateTempError(t *testing.T) {
-	// A directory with mode 0500 (r-x) prohibits file creation.
-	// This exercises the os.Create error branch.
+	// Exercises the os.Create error branch. Put first does MkdirAll on the
+	// key's parent, so the fault has to spare the parent and hit only the
+	// temp file: a final path component near NAME_MAX does exactly that,
+	// because Put appends ".tmp.<16 hex>" to it and pushes the temp name past
+	// the 255-byte limit. ENAMETOOLONG holds for every uid — a mode-0500
+	// parent would not, since CI runs as root and root bypasses the
+	// permission check (testing-guidelines.md §Fault Injection).
 	root := t.TempDir()
-	sub := filepath.Join(root, "locked")
-	require.NoError(t, os.Mkdir(sub, 0700))
-
 	s, err := NewFileStore(root)
 	require.NoError(t, err)
 
-	// Write the file while the directory is still writable.
-	ctx := context.Background()
-	// Remove write permission from the sub-directory BEFORE the Put so
-	// the temp-file creation fails.
-	require.NoError(t, os.Chmod(sub, 0500))
-	defer os.Chmod(sub, 0700) //nolint:errcheck
+	longName := strings.Repeat("n", 250)
 
-	putErr := s.Put(ctx, "locked/newfile", bytes.NewReader([]byte("z")), 1)
+	putErr := s.Put(context.Background(), "sub/"+longName, bytes.NewReader([]byte("z")), 1)
 	require.Error(t, putErr)
 	assert.Contains(t, putErr.Error(), "create temp")
+	assert.ErrorIs(t, putErr, syscall.ENAMETOOLONG)
 }
 
 func TestFileStore_Put_WriteError(t *testing.T) {
@@ -173,25 +173,22 @@ func TestFileStore_Get_NotFound(t *testing.T) {
 }
 
 func TestFileStore_Get_OpenError(t *testing.T) {
-	// A directory without the execute bit makes child-file paths inaccessible
-	// (EACCES rather than ENOENT), exercising the non-ENOENT open error branch.
+	// Exercises the non-ENOENT open error branch. A regular file used as a
+	// directory component makes the child path fail with ENOTDIR, which is
+	// not ENOENT, so Get takes the wrapped-error path rather than reporting
+	// "not found". Root cannot bypass ENOTDIR the way it bypasses the
+	// permission bits this test used to rely on.
 	root := t.TempDir()
-	sub := filepath.Join(root, "hidden")
-	require.NoError(t, os.Mkdir(sub, 0700))
-
 	s, err := NewFileStore(root)
 	require.NoError(t, err)
-	ctx := context.Background()
-	require.NoError(t, s.Put(ctx, "hidden/secret", bytes.NewReader([]byte("s")), 1))
 
-	// Revoke execute permission so os.Open can't traverse into sub.
-	require.NoError(t, os.Chmod(sub, 0600))
-	defer os.Chmod(sub, 0700) //nolint:errcheck
+	blocker := filepath.Join(root, "notadir")
+	require.NoError(t, os.WriteFile(blocker, []byte("regular file"), 0600))
 
-	_, _, getErr := s.Get(ctx, "hidden/secret")
+	_, _, getErr := s.Get(context.Background(), "notadir/child")
 	require.Error(t, getErr)
-	// Restore so cleanup can remove the directory.
-	require.NoError(t, os.Chmod(sub, 0700))
+	assert.Contains(t, getErr.Error(), "attachments: open")
+	assert.ErrorIs(t, getErr, syscall.ENOTDIR)
 }
 
 // -- Delete --
@@ -216,23 +213,21 @@ func TestFileStore_Delete_NotFound(t *testing.T) {
 }
 
 func TestFileStore_Delete_NonEnoentError(t *testing.T) {
-	// Removing a file from a read-only (mode 0500) parent directory triggers
-	// EACCES, covering the non-ENOENT delete error branch.
+	// Covers the non-ENOENT delete branch: Delete swallows ENOENT to stay
+	// idempotent, so the fault must be a different errno. A regular file used
+	// as a directory component yields ENOTDIR, which root cannot bypass —
+	// unlike the mode-0500 parent this test used to rely on.
 	root := t.TempDir()
-	sub := filepath.Join(root, "prot")
-	require.NoError(t, os.Mkdir(sub, 0700))
-
 	s, err := NewFileStore(root)
 	require.NoError(t, err)
-	ctx := context.Background()
-	require.NoError(t, s.Put(ctx, "prot/file", bytes.NewReader([]byte("f")), 1))
 
-	require.NoError(t, os.Chmod(sub, 0500))
-	defer os.Chmod(sub, 0700) //nolint:errcheck
+	blocker := filepath.Join(root, "notadir")
+	require.NoError(t, os.WriteFile(blocker, []byte("regular file"), 0600))
 
-	delErr := s.Delete(ctx, "prot/file")
+	delErr := s.Delete(context.Background(), "notadir/child")
 	require.Error(t, delErr)
-	require.NoError(t, os.Chmod(sub, 0700))
+	assert.Contains(t, delErr.Error(), "attachments: delete")
+	assert.ErrorIs(t, delErr, syscall.ENOTDIR)
 }
 
 // -- Exists --
@@ -255,23 +250,22 @@ func TestFileStore_Exists_False(t *testing.T) {
 }
 
 func TestFileStore_Exists_StatError(t *testing.T) {
-	// A directory without the execute bit causes os.Stat of child paths to
-	// return EACCES (not ENOENT), covering the non-ENOENT stat error branch.
+	// Covers the non-ENOENT stat branch: Exists reports (false, nil) for
+	// ENOENT, so the fault must be a different errno. A regular file used as
+	// a directory component yields ENOTDIR, which holds for every uid —
+	// unlike the permission bits this test used to rely on.
 	root := t.TempDir()
-	sub := filepath.Join(root, "opaque")
-	require.NoError(t, os.Mkdir(sub, 0700))
-
 	s, err := NewFileStore(root)
 	require.NoError(t, err)
-	ctx := context.Background()
-	require.NoError(t, s.Put(ctx, "opaque/file", bytes.NewReader([]byte("e")), 1))
 
-	require.NoError(t, os.Chmod(sub, 0600))
-	defer os.Chmod(sub, 0700) //nolint:errcheck
+	blocker := filepath.Join(root, "notadir")
+	require.NoError(t, os.WriteFile(blocker, []byte("regular file"), 0600))
 
-	_, statErr := s.Exists(ctx, "opaque/file")
+	ok, statErr := s.Exists(context.Background(), "notadir/child")
 	require.Error(t, statErr)
-	require.NoError(t, os.Chmod(sub, 0700))
+	assert.False(t, ok)
+	assert.Contains(t, statErr.Error(), "attachments: stat")
+	assert.ErrorIs(t, statErr, syscall.ENOTDIR)
 }
 
 // -- Interface compliance --

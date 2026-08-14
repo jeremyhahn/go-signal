@@ -1,4 +1,4 @@
-# ci-template: v1 (customized)
+# ci-template: v1.1 (customized)
 # Reconciled against software/templates/github-actions/ci.yml in the
 # automatethethings repo (devops.md §1/§8/§9). Divergence outside the
 # repo-specific blocks below is a defect.
@@ -7,96 +7,98 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # CUSTOMIZE: this repository's default branch is master. The previous
+    # trigger listed only `main`, which matched nothing — no push ever fired a
+    # run, and CI had never executed once since adoption.
+    branches: [master, main, develop]
   pull_request:
-    branches: [main]
+    branches: [master, main, develop]
 
+permissions:
+  contents: read
+  security-events: write
+
+# No GOPROXY/GOSUMDB here, deliberately. GOPRIVATE is injected by the runners
+# (dependency-resolution.md §6) and already exempts first-party modules from
+# the proxy and the checksum database; `GOPROXY: direct` + `GOSUMDB: off`
+# additionally disable sumdb verification for every THIRD-party dependency and
+# break the build when an upstream re-points a tag (go-tpm-tools v0.4.8,
+# 2026-08-14). ci-template v1.1 forbids both.
 env:
   GO_VERSION: '1.26.6'
-  COVERAGE_THRESHOLD: 90
-  GOPROXY: direct
-  GOSUMDB: off
 
 jobs:
-  test:
-    name: Unit Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      - name: Run tests
-        run: make test
-      - name: Check coverage
-        run: |
-          COVERAGE=$(go tool cover -func=build/coverage/coverage.out | grep total | awk '{print $3}' | sed 's/%//')
-          echo "Total coverage: ${COVERAGE}%"
-          if (( $(echo "$COVERAGE < $COVERAGE_THRESHOLD" | bc -l) )); then
-            echo "Coverage ${COVERAGE}% is below threshold ${COVERAGE_THRESHOLD}%"
-            exit 1
-          fi
-
-  integration-test:
-    name: Integration Tests
-    runs-on: ubuntu-latest
-    needs: test
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      - name: Run integration tests
-        run: make integration-test
-
   lint:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
+
       - name: Check formatting
         run: make fmt
+
       - name: Run go vet
         run: make vet
-      # Latest action major and latest linter: devops.md §9. No version pin --
-      # an undocumented pin is a defect, and there is no reason to hold one here.
+
+      # Latest linter, no version pin: devops.md §9 — an undocumented pin is a
+      # defect. .golangci.yml enables the §8 security linters.
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: latest
-          args: --timeout 5m
+        run: make lint
 
   security:
     name: Security Scanning
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
+
       - name: Verify module integrity
         run: make modverify
+
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+      # The -exclude list mirrors GOSEC_EXCLUDE in the Makefile, where each
+      # rule carries its written justification (devops.md §8):
+      #   G103 unsafe calls        — test reflect/unsafe access to unexported fields
+      #   G104 unhandled errors    — false positive on hash.Write
+      #   G115 integer overflow    — protocol-spec bounded IDs
+      #   G304 file path variable  — config paths constructed internally
+      #   G118 cancel-func owner   — (ctx, cancel) returned to caller, who defers it
+      #
+      # -stdout keeps findings readable in the job log: the SARIF upload below
+      # only runs on github.com, so without it a Gitea failure exits 1 with the
+      # findings buried in a file nobody can see (ci-template v1.1).
       - name: Run gosec
-        run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
-          make gosec
+        run: gosec -fmt=sarif -out=gosec.sarif -stdout -verbose=text -exclude=G103,G104,G115,G304,G118 -exclude-generated ./...
+
+      - name: Upload gosec SARIF
+        # Gitea has no code-scanning API; the upload 404s and fails the job.
+        if: always() && github.server_url == 'https://github.com'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gosec.sarif
+          category: gosec
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
       - name: Run govulncheck
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          make vuln
+        run: make vuln
 
   trivy:
     name: Trivy
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Two paths for one gate (devops.md §8). trivy-action's setup step cannot
       # authenticate to github.com from a Gitea runner and upload-sarif has no
@@ -169,24 +171,68 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-    needs: [test, lint]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
+
       - name: Build binaries
         run: make build
+
       # upload-artifact v4+ refuses to run against any server that is not
       # github.com -- it detects one and reports "not currently supported on
       # GHES", and Gitea presents as such (devops.md §1). The build has already
       # happened by this point; only the artifact upload is skipped.
       - name: Upload artifacts
         if: github.server_url == 'https://github.com'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: binaries
           path: build/bin/
+
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: [lint, build]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      # make test covers ./pkg/... and ./cmd/...; make coverage runs the whole
+      # module with -race and applies this repo's own coverage gate. Both are
+      # needed: COVERAGE_EXCLUDE_PATTERN removes /cmd/ from the coverage set,
+      # so make test is what exercises the cmd packages.
+      - name: Run unit tests
+        run: make test
+
+      # The coverage gate is `make coverage`, not a threshold re-derived here
+      # (devops.md §4 — CI runs what a developer runs). The Makefile applies
+      # COVERAGE_EXCLUDE_PATTERN (generated protobuf, /cmd/, frontend, postgres
+      # harness) before measuring against COVER_MIN. Computing the percentage
+      # in the workflow instead measured the unexcluded tree and compared it to
+      # the excluded tree's threshold: 61.3% against a 90 calibrated for the
+      # filtered set, i.e. guaranteed red. Filtered, the repo is at 92.7%.
+      - name: Coverage gate
+        run: make coverage
+
+  # There is deliberately no integration-test job. `make integration-test`
+  # builds .devcontainer/docker-compose.yml, whose signal-server service
+  # supplies additional_contexts pointing at SIBLING REPO WORKING COPIES
+  # (../../go-libsignal, ../../go-xkms, ../../go-qrdb, ../../go-quicraft).
+  # No runner has those paths, and the decoupling initiative exists precisely
+  # to remove filesystem references to sibling repos — cross-repo deps resolve
+  # as tagged modules from Gitea. The job could therefore never pass on either
+  # host; it had simply never run, because this workflow's trigger never
+  # matched the repo's branch.
+  #
+  # Restoring it is the same work as restoring trivy-image above: the
+  # Dockerfiles must resolve first-party modules from Gitea instead of from
+  # local paths, which needs a decision on how a container build authenticates
+  # to Gitea. Tracked separately.
 
   # The single required check (devops.md §1). Every job above appears in BOTH
   # the needs list and the results check -- a gate that can pass vacuously is
@@ -196,16 +242,15 @@ jobs:
     name: CI Gate
     runs-on: ubuntu-latest
     if: always()
-    needs: [test, integration-test, lint, security, trivy, build]
+    needs: [lint, security, trivy, build, test]
     steps:
       - name: Fail closed on any non-success
         run: |
           check() { case "$2" in success) echo "OK   $1";; *) echo "FAIL $1 ($2)"; BAD=1;; esac; }
           BAD=0
-          check test             "${{ needs.test.result }}"
-          check integration-test "${{ needs.integration-test.result }}"
-          check lint             "${{ needs.lint.result }}"
-          check security         "${{ needs.security.result }}"
-          check trivy            "${{ needs.trivy.result }}"
-          check build            "${{ needs.build.result }}"
+          check lint     "${{ needs.lint.result }}"
+          check security "${{ needs.security.result }}"
+          check trivy    "${{ needs.trivy.result }}"
+          check build    "${{ needs.build.result }}"
+          check test     "${{ needs.test.result }}"
           exit $BAD
