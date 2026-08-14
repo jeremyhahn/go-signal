@@ -1,3 +1,14 @@
+# Development and integration stack.
+#
+# Every `ports:` entry names the CONTAINER port only, so docker assigns the host
+# port dynamically. A fixed host binding cannot work on a shared CI runner:
+# compose reaches the HOST daemon through the mounted socket, so a second job —
+# or anything else already listening — collides with "failed to bind host port
+# 0.0.0.0:8081: address already in use". That is what failed run 338. Nothing
+# depends on the fixed numbers: every service addresses the others by compose
+# service name over the compose network, and `docker compose port <service>
+# <port>` reports the assigned host port when a developer wants one.
+
 services:
   devcontainer:
     build:
@@ -38,8 +49,9 @@ services:
       # build falls back to the public proxy.
       secrets:
         - gomodauth
+    # Dynamic host port — see the header.
     ports:
-      - "8081:8081"
+      - "8081"
     healthcheck:
       test: ["CMD", "wget", "--no-check-certificate", "--spider", "-q", "https://localhost:8081/v1/keepalive"]
       interval: 5s
@@ -100,8 +112,9 @@ services:
 
   redis:
     image: redis:7-alpine
+    # Dynamic host port — see the header.
     ports:
-      - "6379:6379"
+      - "6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -116,8 +129,9 @@ services:
       POSTGRES_DB: signal
       POSTGRES_USER: signal
       POSTGRES_PASSWORD: signal
+    # Dynamic host port — see the header.
     ports:
-      - "5432:5432"
+      - "5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
