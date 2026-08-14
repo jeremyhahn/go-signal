@@ -34,3 +34,11 @@ configs/local*.yml
 vendor/
 go.work
 go.work.sum
+
+# compiled binaries and node_modules never enter the module tree
+/signald
+/key-transparency
+/registration-service
+/svr2
+/storage-service
+node_modules/
