@@ -1,3 +1,8 @@
+# ci-template: v1 (customized)
+# Reconciled against software/templates/github-actions/ci.yml in the
+# automatethethings repo (devops.md §1/§8/§9). Divergence outside the
+# repo-specific blocks below is a defect.
+
 name: CI
 
 on:
@@ -57,10 +62,12 @@ jobs:
         run: make fmt
       - name: Run go vet
         run: make vet
+      # Latest action major and latest linter: devops.md §9. No version pin --
+      # an undocumented pin is a defect, and there is no reason to hold one here.
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.7.2
+          version: latest
           args: --timeout 5m
 
   security:
@@ -170,8 +177,35 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
       - name: Build binaries
         run: make build
+      # upload-artifact v4+ refuses to run against any server that is not
+      # github.com -- it detects one and reports "not currently supported on
+      # GHES", and Gitea presents as such (devops.md §1). The build has already
+      # happened by this point; only the artifact upload is skipped.
       - name: Upload artifacts
+        if: github.server_url == 'https://github.com'
         uses: actions/upload-artifact@v4
         with:
           name: binaries
           path: build/bin/
+
+  # The single required check (devops.md §1). Every job above appears in BOTH
+  # the needs list and the results check -- a gate that can pass vacuously is
+  # worse than no gate. join(needs.*.result) is deliberately not used: it
+  # evaluates empty on Gitea and reports success while jobs fail.
+  ci-gate:
+    name: CI Gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [test, integration-test, lint, security, trivy, build]
+    steps:
+      - name: Fail closed on any non-success
+        run: |
+          check() { case "$2" in success) echo "OK   $1";; *) echo "FAIL $1 ($2)"; BAD=1;; esac; }
+          BAD=0
+          check test             "${{ needs.test.result }}"
+          check integration-test "${{ needs.integration-test.result }}"
+          check lint             "${{ needs.lint.result }}"
+          check security         "${{ needs.security.result }}"
+          check trivy            "${{ needs.trivy.result }}"
+          check build            "${{ needs.build.result }}"
+          exit $BAD
