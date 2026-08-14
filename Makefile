@@ -255,12 +255,17 @@ GOPATH_BIN := $(shell go env GOPATH)/bin
 
 .PHONY: test integration-test
 
+# ./sdk/... is in scope deliberately. It was omitted until 2026-08-14, which
+# meant the client SDK — a shipped surface — was never exercised by `make test`
+# at all, and three of its permission-bit fault-injection tests sat undetected
+# because nothing ran them. A suite that measures less than it appears to is
+# the same defect class as a gate that passes vacuously.
 test: ## Run unit tests with coverage
 	@echo "==> Running unit tests (tags: $(or $(strip $(BUILD_TAGS)),none))..."
 	@mkdir -p $(COVER_DIR)
 	$(GOTEST) $(BUILD_TAGS_FLAG) -coverprofile=$(COVER_DIR)/coverage.out \
 		-covermode=atomic \
-		./pkg/... ./cmd/... 2>&1 | tee $(BUILD_DIR)/test.log
+		./pkg/... ./cmd/... ./sdk/... 2>&1 | tee $(BUILD_DIR)/test.log
 	@echo "==> Tests complete."
 
 # integration-test runs E2E integration tests inside the devcontainer.

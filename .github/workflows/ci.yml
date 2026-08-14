@@ -1,4 +1,4 @@
-# ci-template: v1.1 (customized)
+# ci-template: v1.2 (customized)
 # Reconciled against software/templates/github-actions/ci.yml in the
 # automatethethings repo (devops.md §1/§8/§9). Divergence outside the
 # repo-specific blocks below is a defect.
@@ -202,10 +202,10 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
-      # make test covers ./pkg/... and ./cmd/...; make coverage runs the whole
-      # module with -race and applies this repo's own coverage gate. Both are
-      # needed: COVERAGE_EXCLUDE_PATTERN removes /cmd/ from the coverage set,
-      # so make test is what exercises the cmd packages.
+      # make test covers ./pkg/..., ./cmd/... and ./sdk/...; make coverage runs
+      # the module with -race and applies this repo's own coverage gate. Both
+      # are needed: COVERAGE_EXCLUDE_PATTERN removes /cmd/ from the coverage
+      # set, so make test is what exercises the cmd packages.
       - name: Run unit tests
         run: make test
 
