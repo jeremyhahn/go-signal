@@ -19,6 +19,7 @@ import (
 	sessionrecord "github.com/jeremyhahn/go-libsignal/pkg/state/record"
 	"github.com/jeremyhahn/go-libsignal/pkg/state/store"
 	qrdbdao "github.com/jeremyhahn/go-qrdb/pkg/dao"
+
 	"github.com/jeremyhahn/go-signal/pkg/daostore"
 	"github.com/jeremyhahn/go-signal/pkg/daostore/entities"
 )

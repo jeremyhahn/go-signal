@@ -9,6 +9,7 @@ import (
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 
 	"github.com/jeremyhahn/go-libsignal/pkg/logger"
+
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 

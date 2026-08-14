@@ -6,8 +6,9 @@ import (
 	"os"
 	"strings"
 
-	signal "github.com/jeremyhahn/go-signal/sdk/go"
 	"golang.org/x/term"
+
+	signal "github.com/jeremyhahn/go-signal/sdk/go"
 
 	"github.com/spf13/cobra"
 )

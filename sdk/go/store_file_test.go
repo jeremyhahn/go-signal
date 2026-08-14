@@ -5,9 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 func TestNewFileStore_CreatesDirectory(t *testing.T) {

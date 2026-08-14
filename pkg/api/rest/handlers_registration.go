@@ -341,13 +341,13 @@ func (s *Server) storeAttrRecoveryPassword(r *http.Request, pni, encoded string)
 // errors returned by enforceRecoveryPassword to signal the HTTP response has
 // already been written. Callers do not consume them beyond the != nil check.
 var (
-	errRecoveryPasswordUnsupported = &recoveryPasswordSentinel{Reason: "unsupported"}
-	errRecoveryPasswordMismatch    = &recoveryPasswordSentinel{Reason: "mismatch"}
+	errRecoveryPasswordUnsupported = &recoveryPasswordSentinelError{Reason: "unsupported"}
+	errRecoveryPasswordMismatch    = &recoveryPasswordSentinelError{Reason: "mismatch"}
 )
 
-type recoveryPasswordSentinel struct{ Reason string }
+type recoveryPasswordSentinelError struct{ Reason string }
 
-func (e *recoveryPasswordSentinel) Error() string { return "recovery password " + e.Reason }
+func (e *recoveryPasswordSentinelError) Error() string { return "recovery password " + e.Reason }
 
 // storeRegistrationPreKeys persists the signed and PQ last-resort pre-keys
 // submitted during registration for BOTH the ACI and PNI identity namespaces.

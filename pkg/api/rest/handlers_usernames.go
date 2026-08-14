@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+
 	"github.com/jeremyhahn/go-signal/pkg/usernames"
 )
 

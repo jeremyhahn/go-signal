@@ -14,7 +14,7 @@ var (
 	BuildDate = "unknown"
 )
 
-// Global flag values
+// Global flag values.
 var (
 	configDir  string
 	account    string

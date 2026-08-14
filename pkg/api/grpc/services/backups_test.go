@@ -921,15 +921,15 @@ func TestBackupErrorToGRPC_AllTypedErrors(t *testing.T) {
 }
 
 func TestBackupErrorToGRPC_UnknownErrorReturnsInternal(t *testing.T) {
-	err := backupErrorToGRPC(&unknownTestErr{})
+	err := backupErrorToGRPC(&unknownTestError{})
 	if code := status.Code(err); code != codes.Internal {
 		t.Errorf("expected Internal, got %v", code)
 	}
 }
 
-type unknownTestErr struct{}
+type unknownTestError struct{}
 
-func (e *unknownTestErr) Error() string { return "unknown" }
+func (e *unknownTestError) Error() string { return "unknown" }
 
 // --- authenticateFromSignedPresentation tests --------------------------------
 

@@ -206,7 +206,6 @@ func TestGetAuthToken_TableDriven_WithAndWithoutSecret(t *testing.T) {
 		{"with-secret", "s3cr3t", "u1", 64, "HMAC-SHA256 hex is 64 chars"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			m := NewDirectoryManager(testLogger())
 			if tc.secret != "" {

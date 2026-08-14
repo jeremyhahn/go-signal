@@ -23,7 +23,7 @@ var _ ReportStore = (*KVReportStore)(nil)
 // It is a package-level variable so tests can substitute a failing
 // implementation to exercise the marshal-error branch, which is otherwise
 // unreachable because SpamReport contains only JSON-serialisable field types.
-var reportMarshal = func(v any) ([]byte, error) { return json.Marshal(v) }
+var reportMarshal func(v any) ([]byte, error) = json.Marshal
 
 // KVReportStore implements ReportStore using a pluggable KVClient backend.
 // Reports are stored as JSON-encoded values under primary keys of the form

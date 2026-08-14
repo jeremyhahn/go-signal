@@ -143,7 +143,10 @@ func (s *GRPCServer) currentTreeHead() (*ktpb.FullTreeHead, error) {
 	if len(sig) == 0 {
 		return nil, errors.New("kt: signature failed")
 	}
-	pub := s.signer.Public().(ed25519.PublicKey)
+	pub, ok := s.signer.Public().(ed25519.PublicKey)
+	if !ok {
+		return nil, errors.New("kt: signer did not yield an ed25519 public key")
+	}
 	return &ktpb.FullTreeHead{
 		TreeHead: &ktpb.TreeHead{
 			TreeSize:  size,

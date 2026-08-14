@@ -14,9 +14,10 @@ import (
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
-	"github.com/jeremyhahn/go-signal/pkg/fido2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-signal/pkg/fido2"
 )
 
 // --------------------------------------------------------------------------

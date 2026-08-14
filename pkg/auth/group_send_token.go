@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
+	"hash"
 	"time"
 )
 
@@ -123,7 +124,7 @@ func computeGroupSendMAC(key []byte, senderUUID string, groupID string, expirati
 
 // writeLengthPrefixed writes an 8-byte big-endian length followed by b, so that
 // a sequence of variable-length fields is unambiguously parseable.
-func writeLengthPrefixed(h interface{ Write([]byte) (int, error) }, b []byte) {
+func writeLengthPrefixed(h hash.Hash, b []byte) {
 	var lenBuf [8]byte
 	binary.BigEndian.PutUint64(lenBuf[:], uint64(len(b)))
 	h.Write(lenBuf[:])

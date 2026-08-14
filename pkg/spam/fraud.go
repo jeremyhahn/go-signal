@@ -132,7 +132,11 @@ func (c *DefaultFraudChecker) evictExpired() {
 	now := time.Now().UnixNano()
 	evict := func(m *sync.Map) {
 		m.Range(func(key, value any) bool {
-			entry := value.(*velocityEntry)
+			entry, ok := value.(*velocityEntry)
+			if !ok {
+				// Only *velocityEntry is ever stored; leave anything else alone.
+				return true
+			}
 			if now-entry.windowStart.Load() > c.window.Nanoseconds() {
 				m.Delete(key)
 			}
@@ -174,7 +178,11 @@ func (c *DefaultFraudChecker) Check(_ context.Context, req *RegistrationFraudReq
 func (c *DefaultFraudChecker) incrementAndCheck(m *sync.Map, key string, maxCount int, now time.Time) bool {
 	nowNano := now.UnixNano()
 	val, _ := m.LoadOrStore(key, &velocityEntry{})
-	entry := val.(*velocityEntry)
+	entry, ok := val.(*velocityEntry)
+	if !ok {
+		// Only *velocityEntry is ever stored; anything else carries no signal.
+		return false
+	}
 
 	for {
 		windowStart := entry.windowStart.Load()

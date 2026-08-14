@@ -1,8 +1,9 @@
 package main
 
 import (
-	"github.com/jeremyhahn/go-signal/pkg/config"
 	"github.com/spf13/cobra"
+
+	"github.com/jeremyhahn/go-signal/pkg/config"
 )
 
 var (

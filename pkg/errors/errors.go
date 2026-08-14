@@ -12,7 +12,7 @@ type SignalError struct {
 type ErrorCode int
 
 const (
-	// General errors
+	// General errors.
 	ErrInternal ErrorCode = iota
 	ErrNotFound
 	ErrAlreadyExists
@@ -22,23 +22,23 @@ const (
 	ErrRateLimited
 	ErrUnavailable
 
-	// Account errors
+	// Account errors.
 	ErrAccountNotFound
 	ErrAccountDisabled
 	ErrDeviceLimitExceeded
 	ErrRegistrationLocked
 	ErrDeviceNotFound
 
-	// Message errors
+	// Message errors.
 	ErrMismatchedDevices
 	ErrStaleDevices
 	ErrMessageTooLarge
 
-	// Key errors
+	// Key errors.
 	ErrPreKeyNotAvailable
 	ErrPreKeyCountExceeded
 
-	// Profile errors
+	// Profile errors.
 	ErrProfileNotFound
 	ErrProfileVersionConflict
 )

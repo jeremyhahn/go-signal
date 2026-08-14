@@ -8,9 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jeremyhahn/go-signal/pkg/accounts"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-signal/pkg/accounts"
 )
 
 // --------------------------------------------------------------------------

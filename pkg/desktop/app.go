@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/jeremyhahn/go-qrdb/pkg/dao"
+
 	"github.com/jeremyhahn/go-signal/pkg/daostore"
 	"github.com/jeremyhahn/go-signal/pkg/daostore/entities"
 	signal "github.com/jeremyhahn/go-signal/sdk/go"

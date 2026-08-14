@@ -13,6 +13,7 @@ package signal
 import (
 	groupstore "github.com/jeremyhahn/go-libsignal/pkg/groups/state/store"
 	"github.com/jeremyhahn/go-libsignal/pkg/state/store"
+
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 

@@ -191,7 +191,6 @@ func (s *MessagesAnonymousService) SendMultiRecipientMessage(
 	ctx context.Context,
 	req *messagespb.SendMultiRecipientMessageRequest,
 ) (*messagespb.SendMultiRecipientMessageResponse, error) {
-
 	if req == nil || req.GetMessage() == nil {
 		return nil, status.Error(codes.InvalidArgument, "missing multi-recipient message")
 	}

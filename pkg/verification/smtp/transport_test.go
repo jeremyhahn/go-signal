@@ -5,10 +5,11 @@ package smtp
 import (
 	"testing"
 
-	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
-	"github.com/jeremyhahn/go-signal/pkg/verification"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
+	"github.com/jeremyhahn/go-signal/pkg/verification"
 )
 
 func TestNewTransport(t *testing.T) {

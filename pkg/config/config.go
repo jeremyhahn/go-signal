@@ -9,8 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	"gopkg.in/yaml.v3"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 // Config is the top-level server configuration.

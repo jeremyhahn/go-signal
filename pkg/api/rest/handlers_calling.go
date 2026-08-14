@@ -2,6 +2,7 @@ package rest
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 
@@ -87,7 +88,8 @@ func (s *Server) handleSubmitCallQualitySurvey(w http.ResponseWriter, r *http.Re
 	userAgent := r.Header.Get("User-Agent")
 
 	if err := s.calling.SubmitCallQualitySurvey(r.Context(), &req, remoteAddr, userAgent); err != nil {
-		if _, ok := err.(*calling.SurveyValidationError); ok {
+		var surveyValidationError *calling.SurveyValidationError
+		if errors.As(err, &surveyValidationError) {
 			writeError(w, http.StatusBadRequest, "invalid survey submission")
 			return
 		}

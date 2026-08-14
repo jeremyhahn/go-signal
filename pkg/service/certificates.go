@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/jeremyhahn/go-libsignal/pkg/zkgroup"
+
 	"github.com/jeremyhahn/go-signal/pkg/certificates"
 )
 
@@ -75,6 +76,7 @@ func (s *certificateService) GetDeliveryCertificate(
 	identityKey []byte,
 	includeE164 bool,
 ) (*certificates.DeliveryCertificate, error) {
+	//nolint:staticcheck // Deliberate delegation: this service method is the compatibility surface for the retained CertificatesManager.GetDeliveryCertificate and is removed together with it.
 	return s.manager.GetDeliveryCertificate(ctx, uuid, e164, deviceID, identityKey, includeE164)
 }
 

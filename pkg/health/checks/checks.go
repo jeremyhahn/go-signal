@@ -15,9 +15,10 @@ import (
 
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 
-	"github.com/jeremyhahn/go-signal/pkg/health"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"
+
+	"github.com/jeremyhahn/go-signal/pkg/health"
 )
 
 // HTTPGet returns a Check that does a HEAD/GET against url and reports

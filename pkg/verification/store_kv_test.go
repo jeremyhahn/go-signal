@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-signal/pkg/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-signal/pkg/store"
 )
 
 func TestKVStore_Create(t *testing.T) {

@@ -116,7 +116,6 @@ func postgresEnv() string {
 
 func TestContract_SetPublicKey_FirstIdempotentConflict(t *testing.T) {
 	for _, bf := range backends(t) {
-		bf := bf
 		t.Run(bf.name, func(t *testing.T) {
 			store, _, _, _ := bf.new(t)
 			ctx := context.Background()
@@ -143,7 +142,6 @@ func TestContract_SetPublicKey_FirstIdempotentConflict(t *testing.T) {
 
 func TestContract_RetrieveAuthenticationData_HappyAndMissing(t *testing.T) {
 	for _, bf := range backends(t) {
-		bf := bf
 		t.Run(bf.name, func(t *testing.T) {
 			store, _, _, _ := bf.new(t)
 			ctx := context.Background()
@@ -177,7 +175,6 @@ func TestContract_RetrieveAuthenticationData_HappyAndMissing(t *testing.T) {
 
 func TestContract_AddMessageBackup_UnknownIDErrors(t *testing.T) {
 	for _, bf := range backends(t) {
-		bf := bf
 		t.Run(bf.name, func(t *testing.T) {
 			store, _, _, _ := bf.new(t)
 			ctx := context.Background()
@@ -192,7 +189,6 @@ func TestContract_AddMessageBackup_UnknownIDErrors(t *testing.T) {
 
 func TestContract_TTLRefresh_UpdatesTimestampsPerCredentialType(t *testing.T) {
 	for _, bf := range backends(t) {
-		bf := bf
 		t.Run(bf.name, func(t *testing.T) {
 			store, _, cs, _ := bf.new(t)
 			ctx := context.Background()
@@ -237,7 +233,6 @@ func TestContract_TTLRefresh_UpdatesTimestampsPerCredentialType(t *testing.T) {
 
 func TestContract_TrackMedia_AccumulatesAndRefundsClampAtZero(t *testing.T) {
 	for _, bf := range backends(t) {
-		bf := bf
 		t.Run(bf.name, func(t *testing.T) {
 			store, _, _, _ := bf.new(t)
 			ctx := context.Background()
@@ -282,7 +277,6 @@ func TestContract_TrackMedia_AccumulatesAndRefundsClampAtZero(t *testing.T) {
 
 func TestContract_DescribeBackup_MediaIncludesUsedSpace_MessagesDoesNot(t *testing.T) {
 	for _, bf := range backends(t) {
-		bf := bf
 		t.Run(bf.name, func(t *testing.T) {
 			store, _, _, _ := bf.new(t)
 			ctx := context.Background()
@@ -320,7 +314,6 @@ func TestContract_DescribeBackup_MediaIncludesUsedSpace_MessagesDoesNot(t *testi
 
 func TestContract_ScheduleBackupDeletion_RotatesDirAndQueuesPending(t *testing.T) {
 	for _, bf := range backends(t) {
-		bf := bf
 		t.Run(bf.name, func(t *testing.T) {
 			store, _, _, _ := bf.new(t)
 			ctx := context.Background()
@@ -380,7 +373,6 @@ func TestContract_ScheduleBackupDeletion_RotatesDirAndQueuesPending(t *testing.T
 
 func TestContract_StartExpiration_FinishExpiration_ClearsPendingRow(t *testing.T) {
 	for _, bf := range backends(t) {
-		bf := bf
 		t.Run(bf.name, func(t *testing.T) {
 			store, _, _, _ := bf.new(t)
 			ctx := context.Background()
@@ -439,7 +431,6 @@ func TestContract_StartExpiration_FinishExpiration_ClearsPendingRow(t *testing.T
 
 func TestContract_ListBackupAttributes_StreamsAllRows(t *testing.T) {
 	for _, bf := range backends(t) {
-		bf := bf
 		t.Run(bf.name, func(t *testing.T) {
 			store, _, _, _ := bf.new(t)
 			ctx := context.Background()
@@ -469,7 +460,6 @@ func TestContract_ListBackupAttributes_StreamsAllRows(t *testing.T) {
 
 func TestContract_GetExpiredBackups_ReturnsExpiredAndGCRows(t *testing.T) {
 	for _, bf := range backends(t) {
-		bf := bf
 		t.Run(bf.name, func(t *testing.T) {
 			store, _, cs, _ := bf.new(t)
 			ctx := context.Background()
@@ -535,7 +525,6 @@ func TestContract_GetExpiredBackups_ReturnsExpiredAndGCRows(t *testing.T) {
 
 func TestContract_RedeemedReceiptsPut_FirstTrueIdempotentTrueCrossAccountFalse(t *testing.T) {
 	for _, bf := range backends(t) {
-		bf := bf
 		t.Run(bf.name, func(t *testing.T) {
 			_, receipts, _, _ := bf.new(t)
 			ctx := context.Background()

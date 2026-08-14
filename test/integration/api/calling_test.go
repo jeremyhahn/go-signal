@@ -7,9 +7,10 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-libsignal/pkg/zkgroup"
-	"github.com/jeremyhahn/go-signal/pkg/calling"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-signal/pkg/calling"
 )
 
 func TestCalling_GetRelays(t *testing.T) {

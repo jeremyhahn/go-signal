@@ -643,7 +643,9 @@ func runStart(cmd *cobra.Command, args []string) error {
 				seed[i] = 0
 			}
 			// pubKeyID: first 4 bytes of the hex-encoded public key fingerprint.
-			pubHex := hex.EncodeToString(privKey.Public().(ed25519.PublicKey))
+			// ed25519.PrivateKey.Public always returns an ed25519.PublicKey.
+			pubKey, _ := privKey.Public().(ed25519.PublicKey)
+			pubHex := hex.EncodeToString(pubKey)
 			var pubKeyID uint32
 			for i := 0; i < 4 && i < len(pubHex); i++ {
 				pubKeyID = (pubKeyID << 8) | uint32(pubHex[i])
@@ -1217,7 +1219,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// runStart can return a non-nil error (L8).
 	startErr := make(chan error, 1)
 	go func() {
-		if err := srv.Start(); err != nil && err != http.ErrServerClosed {
+		if err := srv.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.ErrorContext(ctx, "REST server error", slog.String("error", err.Error()))
 			startErr <- err
 			cancel()

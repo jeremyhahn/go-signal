@@ -21,6 +21,8 @@ import (
 
 	"github.com/jeremyhahn/go-libsignal/pkg/ecc"
 	"github.com/jeremyhahn/go-libsignal/pkg/zkgroup"
+	"github.com/stretchr/testify/require"
+
 	"github.com/jeremyhahn/go-signal/pkg/accounts"
 	"github.com/jeremyhahn/go-signal/pkg/api/rest"
 	"github.com/jeremyhahn/go-signal/pkg/calling"
@@ -44,7 +46,6 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/usernames"
 	"github.com/jeremyhahn/go-signal/pkg/verification"
 	signalws "github.com/jeremyhahn/go-signal/pkg/websocket"
-	"github.com/stretchr/testify/require"
 )
 
 // phoneRunBase is a per-process random base offset for phone number generation.

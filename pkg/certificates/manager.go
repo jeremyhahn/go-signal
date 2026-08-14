@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jeremyhahn/go-libsignal/pkg/zkcredential"
 	"github.com/jeremyhahn/go-libsignal/pkg/zkgroup"
+
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
@@ -163,9 +164,12 @@ func (m *CertificatesManager) Ed25519PublicKey() ed25519.PublicKey {
 	// The copy is zeroed before returning to avoid lingering key material.
 	priv := ed25519.PrivateKey(make([]byte, len(buf.Bytes())))
 	copy(priv, buf.Bytes())
-	pub := priv.Public().(ed25519.PublicKey)
+	pub, ok := priv.Public().(ed25519.PublicKey)
 	for i := range priv {
 		priv[i] = 0
+	}
+	if !ok {
+		return nil
 	}
 	return pub
 }
@@ -177,7 +181,7 @@ func (m *CertificatesManager) Ed25519PublicKey() ed25519.PublicKey {
 // the phone number is omitted from the certificate to support anonymous
 // sealed-sender delivery.
 //
-// DEPRECATED: this method emits a JSON-encoded envelope with raw Ed25519
+// Deprecated: this method emits a JSON-encoded envelope with raw Ed25519
 // or HMAC over a JSON payload. That format is NOT byte-wire compatible
 // with Rust libsignal or the Java Signal-Server reference. New code MUST
 // use BuildSignalSenderCertificate (in signal_compat.go) which delegates
@@ -193,7 +197,6 @@ func (m *CertificatesManager) GetDeliveryCertificate(
 	identityKey []byte,
 	includeE164 bool,
 ) (*DeliveryCertificate, error) {
-
 	expiry := time.Now().Add(certificateValidityDuration)
 	expiryMillis := expiry.UnixMilli()
 
@@ -249,7 +252,6 @@ func (m *CertificatesManager) GetGroupCredentials(
 	startSeconds int64,
 	endSeconds int64,
 ) (*GroupCredentials, error) {
-
 	if startSeconds > endSeconds {
 		return nil, &InvalidTimeRangeError{Message: "start must not be after end"}
 	}
@@ -330,7 +332,6 @@ func (m *CertificatesManager) GetExpiringProfileKeyCredential(
 	commitment *zkgroup.ProfileKeyCommitment,
 	credentialExpirationTime zkgroup.Timestamp,
 ) (*ExpiringProfileKeyCredentialResponse, error) {
-
 	if m.authServerSecret == nil {
 		// Return a structured stub when zkgroup is not configured so the REST
 		// handler can still return a well-formed response.

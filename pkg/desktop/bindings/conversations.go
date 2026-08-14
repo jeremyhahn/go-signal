@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-qrdb/pkg/dao"
+
 	"github.com/jeremyhahn/go-signal/pkg/daostore"
 	"github.com/jeremyhahn/go-signal/pkg/daostore/entities"
 )

@@ -2,6 +2,7 @@ package rest
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/jeremyhahn/go-signal/pkg/calling"
@@ -68,10 +69,14 @@ func (s *Server) relayCallSignal(w http.ResponseWriter, r *http.Request, fn sign
 	}
 
 	if err := fn(s.callSignaling, acct.UUID, &msg); err != nil {
-		switch err.(type) {
-		case *calling.PeerNotConnectedError:
+		var (
+			peerNotConnected  *calling.PeerNotConnectedError
+			invalidCallSignal *calling.InvalidCallSignalError
+		)
+		switch {
+		case errors.As(err, &peerNotConnected):
 			writeError(w, http.StatusNotFound, "peer not connected")
-		case *calling.InvalidCallSignalError:
+		case errors.As(err, &invalidCallSignal):
 			writeError(w, http.StatusBadRequest, err.Error())
 		default:
 			s.logger.Error("failed to relay call signal", "error", err.Error())

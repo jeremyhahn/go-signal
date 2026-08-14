@@ -1340,7 +1340,7 @@ func TestWriteBackupError_AllTypedErrors(t *testing.T) {
 		{"RateLimitedError", &backups.RateLimitedError{}, http.StatusTooManyRequests},
 		{"BadReceiptError", &backups.BadReceiptError{}, http.StatusBadRequest},
 		{"MissingIDCommitmentError", &backups.MissingIDCommitmentError{}, http.StatusConflict},
-		{"UnknownError", errArchiveTest("unknown"), http.StatusInternalServerError},
+		{"UnknownError", archiveTestError("unknown"), http.StatusInternalServerError},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1353,9 +1353,9 @@ func TestWriteBackupError_AllTypedErrors(t *testing.T) {
 	}
 }
 
-type errArchiveTest string
+type archiveTestError string
 
-func (e errArchiveTest) Error() string { return string(e) }
+func (e archiveTestError) Error() string { return string(e) }
 
 // =============================================================================
 // handleCopyMedia — non-success (OutOfQuota) outcome path

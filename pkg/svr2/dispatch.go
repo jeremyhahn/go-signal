@@ -2,6 +2,7 @@ package svr2
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -90,7 +91,7 @@ func (d *Dispatcher) handleCreate(ctx context.Context, identity string, req *svr
 
 func (d *Dispatcher) handleRestore1(ctx context.Context, identity string, _ *svrpb.Request4_Restore1) *svrpb.Response4_Restore1_ {
 	rec, err := d.storage.Get(ctx, identity)
-	if err == ErrRecordNotFound {
+	if errors.Is(err, ErrRecordNotFound) {
 		return &svrpb.Response4_Restore1_{Restore1: &svrpb.Response4_Restore1{Status: svrpb.Response4_MISSING}}
 	}
 	if err != nil {
@@ -119,7 +120,7 @@ func (d *Dispatcher) handleRestore1(ctx context.Context, identity string, _ *svr
 
 func (d *Dispatcher) handleRestore2(ctx context.Context, identity string, req *svrpb.Request4_Restore2) *svrpb.Response4_Restore2_ {
 	rec, err := d.storage.Get(ctx, identity)
-	if err == ErrRecordNotFound {
+	if errors.Is(err, ErrRecordNotFound) {
 		return &svrpb.Response4_Restore2_{Restore2: &svrpb.Response4_Restore2{Status: svrpb.Response4_RESTORE1_MISSING}}
 	}
 	if err != nil {
@@ -141,7 +142,7 @@ func (d *Dispatcher) handleRemove(ctx context.Context, identity string) *svrpb.R
 
 func (d *Dispatcher) handleQuery(ctx context.Context, identity string) *svrpb.Response4_Query_ {
 	rec, err := d.storage.Get(ctx, identity)
-	if err == ErrRecordNotFound {
+	if errors.Is(err, ErrRecordNotFound) {
 		return &svrpb.Response4_Query_{Query: &svrpb.Response4_Query{Status: svrpb.Response4_MISSING}}
 	}
 	if err != nil {
@@ -160,7 +161,7 @@ func (d *Dispatcher) handleQuery(ctx context.Context, identity string) *svrpb.Re
 
 func (d *Dispatcher) handleRotateStart(ctx context.Context, identity string, req *svrpb.Request4_RotateStart) *svrpb.Response4_RotateStart_ {
 	rec, err := d.storage.Get(ctx, identity)
-	if err == ErrRecordNotFound {
+	if errors.Is(err, ErrRecordNotFound) {
 		return &svrpb.Response4_RotateStart_{RotateStart: &svrpb.Response4_RotateStart{Status: svrpb.Response4_MISSING}}
 	}
 	if err != nil {
@@ -190,7 +191,7 @@ func (d *Dispatcher) handleRotateStart(ctx context.Context, identity string, req
 
 func (d *Dispatcher) handleRotateCommit(ctx context.Context, identity string, req *svrpb.Request4_RotateCommit) *svrpb.Response4_RotateCommit_ {
 	rec, err := d.storage.Get(ctx, identity)
-	if err == ErrRecordNotFound {
+	if errors.Is(err, ErrRecordNotFound) {
 		return &svrpb.Response4_RotateCommit_{RotateCommit: &svrpb.Response4_RotateCommit{Status: svrpb.Response4_MISSING}}
 	}
 	if err != nil {
@@ -212,7 +213,7 @@ func (d *Dispatcher) handleRotateCommit(ctx context.Context, identity string, re
 
 func (d *Dispatcher) handleRotateRollback(ctx context.Context, identity string, req *svrpb.Request4_RotateRollback) *svrpb.Response4_RotateRollback_ {
 	rec, err := d.storage.Get(ctx, identity)
-	if err == ErrRecordNotFound {
+	if errors.Is(err, ErrRecordNotFound) {
 		return &svrpb.Response4_RotateRollback_{RotateRollback: &svrpb.Response4_RotateRollback{Status: svrpb.Response4_MISSING}}
 	}
 	if err != nil {

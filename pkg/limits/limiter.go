@@ -144,7 +144,11 @@ func (l *TokenBucketLimiter) getOrCreate(key string) *bucket {
 		lastAccess: now,
 	}
 	actual, _ := l.buckets.LoadOrStore(key, b)
-	return actual.(*bucket)
+	if existing, ok := actual.(*bucket); ok {
+		return existing
+	}
+	// Only *bucket is ever stored; fall back to the bucket just built.
+	return b
 }
 
 // refill adds tokens to b based on elapsed time since the last refill.
@@ -232,7 +236,11 @@ func (l *TokenBucketLimiter) cleanupLoop() {
 func (l *TokenBucketLimiter) purgeStale() {
 	threshold := l.nowFn() - l.cfg.StaleAfter.Nanoseconds()
 	l.buckets.Range(func(k, v any) bool {
-		b := v.(*bucket)
+		b, ok := v.(*bucket)
+		if !ok {
+			// Only *bucket is ever stored; leave anything else alone.
+			return true
+		}
 		if atomic.LoadInt64(&b.lastAccess) < threshold {
 			l.buckets.Delete(k)
 		}

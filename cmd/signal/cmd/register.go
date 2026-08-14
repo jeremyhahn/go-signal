@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	signal "github.com/jeremyhahn/go-signal/sdk/go"
 	"github.com/spf13/cobra"
+
+	signal "github.com/jeremyhahn/go-signal/sdk/go"
 )
 
 func init() {

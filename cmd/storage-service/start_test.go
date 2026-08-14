@@ -114,12 +114,14 @@ func TestStorageService_ManifestVersionConflict(t *testing.T) {
 	srv, _ := newTestMux(t, "s")
 	auth := hmacAuthHeader("alice", "s")
 	body, _ := json.Marshal(manifestJSON{Version: 5, Value: base64.StdEncoding.EncodeToString([]byte("v5"))})
-	if resp := do(t, http.MethodPut, srv.URL+"/v1/storage/manifest", auth, body); resp.StatusCode != http.StatusNoContent {
+	resp := do(t, http.MethodPut, srv.URL+"/v1/storage/manifest", auth, body)
+	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("first PUT = %d", resp.StatusCode)
 	}
+	_ = resp.Body.Close()
 	// Old version → 409.
 	body, _ = json.Marshal(manifestJSON{Version: 3, Value: base64.StdEncoding.EncodeToString([]byte("v3"))})
-	resp := do(t, http.MethodPut, srv.URL+"/v1/storage/manifest", auth, body)
+	resp = do(t, http.MethodPut, srv.URL+"/v1/storage/manifest", auth, body)
 	if resp.StatusCode != http.StatusConflict {
 		t.Errorf("expected 409 on version conflict, got %d", resp.StatusCode)
 	}
@@ -137,11 +139,13 @@ func TestStorageService_ItemRoundTripAndDelete(t *testing.T) {
 		Key:   base64.StdEncoding.EncodeToString(rawKey),
 		Value: base64.StdEncoding.EncodeToString([]byte("encrypted-contact-001")),
 	})
-	if resp := do(t, http.MethodPut, srv.URL+"/v1/storage/item/"+keyPath, auth, body); resp.StatusCode != http.StatusNoContent {
+	resp := do(t, http.MethodPut, srv.URL+"/v1/storage/item/"+keyPath, auth, body)
+	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("PUT item = %d", resp.StatusCode)
 	}
+	_ = resp.Body.Close()
 	// GET item.
-	resp := do(t, http.MethodGet, srv.URL+"/v1/storage/item/"+keyPath, auth, nil)
+	resp = do(t, http.MethodGet, srv.URL+"/v1/storage/item/"+keyPath, auth, nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET item = %d", resp.StatusCode)
 	}
@@ -152,13 +156,17 @@ func TestStorageService_ItemRoundTripAndDelete(t *testing.T) {
 		t.Errorf("item value round-trip mismatch: %q", v)
 	}
 	// DELETE item.
-	if resp := do(t, http.MethodDelete, srv.URL+"/v1/storage/item/"+keyPath, auth, nil); resp.StatusCode != http.StatusNoContent {
+	resp = do(t, http.MethodDelete, srv.URL+"/v1/storage/item/"+keyPath, auth, nil)
+	if resp.StatusCode != http.StatusNoContent {
 		t.Errorf("DELETE item = %d", resp.StatusCode)
 	}
+	_ = resp.Body.Close()
 	// GET after delete → 404.
-	if resp := do(t, http.MethodGet, srv.URL+"/v1/storage/item/"+keyPath, auth, nil); resp.StatusCode != http.StatusNotFound {
+	resp = do(t, http.MethodGet, srv.URL+"/v1/storage/item/"+keyPath, auth, nil)
+	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("expected 404 after delete, got %d", resp.StatusCode)
 	}
+	_ = resp.Body.Close()
 }
 
 func TestStorageService_DeleteAllPurgesAccount(t *testing.T) {
@@ -172,9 +180,11 @@ func TestStorageService_DeleteAllPurgesAccount(t *testing.T) {
 	_ = do(t, http.MethodPut, srv.URL+"/v1/storage/item/"+keyPath, auth, body).Body.Close()
 
 	// DELETE /v1/storage purges.
-	if resp := do(t, http.MethodDelete, srv.URL+"/v1/storage", auth, nil); resp.StatusCode != http.StatusNoContent {
+	resp := do(t, http.MethodDelete, srv.URL+"/v1/storage", auth, nil)
+	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("DELETE /v1/storage = %d", resp.StatusCode)
 	}
+	_ = resp.Body.Close()
 	if _, err := store.GetManifest(context.Background(), "alice"); err == nil {
 		t.Error("manifest should be gone after DeleteAll")
 	}

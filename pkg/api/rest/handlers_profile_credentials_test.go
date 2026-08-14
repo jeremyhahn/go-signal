@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-libsignal/pkg/zkgroup"
+
 	"github.com/jeremyhahn/go-signal/pkg/certificates"
 	"github.com/jeremyhahn/go-signal/pkg/profiles"
 	"github.com/jeremyhahn/go-signal/pkg/service"

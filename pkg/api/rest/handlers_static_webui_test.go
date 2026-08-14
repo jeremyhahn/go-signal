@@ -174,7 +174,7 @@ func TestWebUIEventHub_HandleWebSocket_FullLifecycle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial: %v", err)
 	}

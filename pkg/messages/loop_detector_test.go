@@ -291,7 +291,6 @@ func TestDeliveryLoopDetector_ConcurrentDifferentPairs_NoInterference(t *testing
 
 	var wg sync.WaitGroup
 	for _, p := range pairs {
-		p := p
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

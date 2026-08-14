@@ -3,6 +3,7 @@ package verification
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/jeremyhahn/go-signal/pkg/store"
@@ -139,6 +140,6 @@ func unmarshalSession(data []byte) (*VerificationSession, error) {
 
 // isKeyNotFound checks whether the given error is a store.KeyNotFoundError.
 func isKeyNotFound(err error) bool {
-	_, ok := err.(*store.KeyNotFoundError)
-	return ok
+	var keyNotFound *store.KeyNotFoundError
+	return errors.As(err, &keyNotFound)
 }

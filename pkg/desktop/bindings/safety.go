@@ -72,7 +72,6 @@ func (b *SafetyBindings) VerifyIdentity(contactUUID string) error {
 	}
 	contact.IsVerified = true
 	return b.factory.Contacts.Save(ctx, contact)
-
 }
 
 // GetIdentityKey returns the stored identity key for a contact.

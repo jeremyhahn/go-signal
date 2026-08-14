@@ -12,6 +12,9 @@ import (
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/jeremyhahn/go-signal/pkg/accounts"
 	"github.com/jeremyhahn/go-signal/pkg/api/rest"
 	"github.com/jeremyhahn/go-signal/pkg/calling"
@@ -35,8 +38,6 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/usernames"
 	"github.com/jeremyhahn/go-signal/pkg/verification"
 	signalws "github.com/jeremyhahn/go-signal/pkg/websocket"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"log/slog"
 	"os"

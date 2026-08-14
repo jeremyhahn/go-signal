@@ -65,7 +65,7 @@ func (c *Client) ConnectWebSocket(ctx context.Context, handler func(msg Received
 		},
 	}
 
-	conn, _, err := websocket.Dial(ctx, wsURL, opts)
+	conn, _, err := websocket.Dial(ctx, wsURL, opts) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		return signalerrors.Wrap(signalerrors.ErrInternal, "WebSocket connect", err)
 	}

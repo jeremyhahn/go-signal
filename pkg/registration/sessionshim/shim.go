@@ -153,7 +153,9 @@ func (s *Shim) SendCode(ctx context.Context, sessionID string) (*verification.Ve
 // for SendCode calls against this session.
 func (s *Shim) bumpSendCount(sessionID string) int {
 	v, _ := s.sendCounts.LoadOrStore(sessionID, 0)
-	next := v.(int) + 1
+	// Only int counters are ever stored; a zero base is the correct fallback.
+	count, _ := v.(int)
+	next := count + 1
 	s.sendCounts.Store(sessionID, next)
 	return next
 }

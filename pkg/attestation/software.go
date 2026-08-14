@@ -77,9 +77,14 @@ func NewSoftware(cfg SoftwareConfig) (*SoftwareAttester, error) {
 		return nil, err
 	}
 
+	signerPub, ok := signerPriv.Public().(ed25519.PublicKey)
+	if !ok {
+		return nil, errors.New("attestation: ed25519 private key did not yield an ed25519 public key")
+	}
+
 	return &SoftwareAttester{
 		signerPriv: signerPriv,
-		signerPub:  signerPriv.Public().(ed25519.PublicKey),
+		signerPub:  signerPub,
 		staticPriv: append([]byte(nil), staticPriv...),
 		staticPub:  staticPub,
 	}, nil

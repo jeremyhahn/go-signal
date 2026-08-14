@@ -1068,7 +1068,7 @@ func TestHandleRegistration_CaptchaWithoutCheckerReturns503(t *testing.T) {
 }
 
 // --------------------------------------------------------------------------
-// recoveryPasswordSentinel
+// recoveryPasswordSentinelError
 // --------------------------------------------------------------------------
 
 func TestRecoveryPasswordSentinel_Error(t *testing.T) {
@@ -1083,7 +1083,7 @@ func TestRecoveryPasswordSentinel_Error(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.reason, func(t *testing.T) {
-			e := &recoveryPasswordSentinel{Reason: tc.reason}
+			e := &recoveryPasswordSentinelError{Reason: tc.reason}
 			got := e.Error()
 			if got != tc.expected {
 				t.Errorf("expected %q, got %q", tc.expected, got)

@@ -580,7 +580,7 @@ func TestHandleAuthenticated_FullWebSocket(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/v1/websocket/?login=ws-uuid&password=ws-pass"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -634,7 +634,7 @@ func TestHandleAuthenticated_MessagePUT(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/v1/websocket/?login=msg-uuid&password=msg-pass"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -685,7 +685,7 @@ func TestHandleAuthenticated_UnknownRoute(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/v1/websocket/?login=route-uuid&password=route-pass"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -753,7 +753,7 @@ func TestHandleAuthenticated_FlushPendingMessages(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/v1/websocket/?login=flush-uuid&password=flush-pass"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -800,7 +800,7 @@ func TestHandleAuthenticated_ClientResponseAck(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/v1/websocket/?login=ack-uuid&password=ack-pass"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -857,7 +857,7 @@ func TestHandleProvisioning_FullWebSocket(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/v1/provisioning/"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -931,7 +931,7 @@ func TestHandleAuthenticated_NilRequestIgnored(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/v1/websocket/?login=nil-req-uuid&password=nil-req-pass"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -987,7 +987,7 @@ func TestHandleAuthenticated_NoPendingMessages(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/v1/websocket/?login=empty-uuid&password=empty-pass"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -1035,7 +1035,7 @@ func TestHandleAuthenticated_FlushPendingMessagesError(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/v1/websocket/?login=err-uuid&password=err-pass"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -1125,7 +1125,7 @@ func TestHandleProvisioning_ClientSendsNonResponse(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/v1/provisioning/"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -1241,7 +1241,7 @@ func TestFlushPendingMessages_SendError(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/test"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -1304,7 +1304,7 @@ func TestHandleIncomingMessage_SendErrorKeepalive(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/test"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -1363,7 +1363,7 @@ func TestHandleIncomingMessage_SendErrorPUTMessage(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/test"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -1422,7 +1422,7 @@ func TestHandleIncomingMessage_SendErrorUnknownRoute(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/test"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -1467,7 +1467,7 @@ func TestRouteToHTTP_NilHTTPHandler(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/v1/websocket/?login=nil-http-uuid&password=nil-http-pass"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -1539,7 +1539,7 @@ func TestRouteToHTTP_NilHTTPHandler_ClosedSession(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/test"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -1611,7 +1611,7 @@ func TestRouteToHTTP_InvalidBase64Body(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/test"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -1685,7 +1685,7 @@ func TestRouteToHTTP_InvalidBase64Body_ClosedSession(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/test"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -1736,7 +1736,7 @@ func TestRouteToHTTP_ValidBodyForwarded(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/v1/websocket/?login=fwd-uuid&password=fwd-pass"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -1808,7 +1808,7 @@ func TestRouteToHTTP_BodyWithoutContentType_AutoSetsJSON(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/v1/websocket/?login=ct-uuid&password=ct-pass"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -1865,7 +1865,7 @@ func TestRouteToHTTP_ExplicitContentType_NotOverridden(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/v1/websocket/?login=ct2-uuid&password=ct2-pass"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -1925,7 +1925,7 @@ func TestRouteToHTTP_HeadersForwarded(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/v1/websocket/?login=hdr-uuid&password=hdr-pass"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -1997,7 +1997,7 @@ func TestRouteToHTTP_BasicAuthForwarded(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/v1/websocket/?login=auth-fwd-uuid&password=auth-fwd-pass"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -2067,7 +2067,7 @@ func TestRouteToHTTP_SendResponseError_ClosedSession(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/test"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -2117,7 +2117,7 @@ func TestRouteToHTTP_NoBody_NoContentTypeSet(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/v1/websocket/?login=nobody-uuid&password=nobody-pass"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -2170,7 +2170,7 @@ func TestRouteToHTTP_ResponseHeaders_Empty(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/v1/websocket/?login=emptyhdr-uuid&password=emptyhdr-pass"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}
@@ -2249,7 +2249,7 @@ func TestHandleProvisioning_SendProvisioningAddressError(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/v1/provisioning/"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, _, err := ws.Dial(ctx, wsURL, nil)
+	conn, _, err := ws.Dial(ctx, wsURL, nil) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
 		t.Fatalf("failed to dial websocket: %v", err)
 	}

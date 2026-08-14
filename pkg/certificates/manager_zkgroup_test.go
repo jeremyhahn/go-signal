@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-libsignal/pkg/zkgroup"
+
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 

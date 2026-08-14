@@ -72,7 +72,6 @@ func (m *CallingManager) CreateCallLinkAuth(
 	accountUUID string,
 	requestBytes []byte,
 ) (*CreateCallLinkCredentialResponse, error) {
-
 	if m.genericServerSecret == nil {
 		return nil, &InvalidCredentialRequestError{Message: "calling zkgroup not configured"}
 	}

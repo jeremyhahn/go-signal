@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/google/uuid"
+
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 	"github.com/jeremyhahn/go-signal/pkg/messages"
 )
@@ -25,7 +26,7 @@ type ReportStore struct {
 // NewReportStore returns a ReportStore that persists to kv. IDs are
 // generated with google/uuid.
 func NewReportStore(kv KVStore) *ReportStore {
-	return &ReportStore{kv: kv, newID: func() string { return uuid.NewString() }}
+	return &ReportStore{kv: kv, newID: uuid.NewString}
 }
 
 func reportKey(reporterUUID, reportID string) string {

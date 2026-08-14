@@ -10,6 +10,7 @@ import (
 
 	"github.com/jeremyhahn/go-libsignal/pkg/ecc"
 	"github.com/jeremyhahn/go-libsignal/pkg/keys/identity"
+
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
