@@ -5,10 +5,6 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ..:/workspace:cached
-      - ../../go-libsignal:/go-libsignal:cached
-      - ../../go-xkms:/go-xkms:cached
-      - ../../go-qrdb:/go-qrdb:cached
-      - ../../go-quicraft:/go-quicraft:cached
       - go-mod-cache:/go/pkg/mod
     working_dir: /workspace
     command: sleep infinity
@@ -24,12 +20,24 @@ services:
   signal-server:
     build:
       context: ..
-      dockerfile: Dockerfile
-      additional_contexts:
-        go-libsignal: ../../go-libsignal
-        go-xkms: ../../go-xkms
-        go-qrdb: ../../go-qrdb
-        go-quicraft: ../../go-quicraft
+      # Dockerfile.dev, not the top-level Dockerfile. The latter is the
+      # production image and is deliberately fail-closed: it ships no config,
+      # no secrets and no TLS material, only config.yml.example, so it exits 1
+      # with "open /etc/signal-server/config.yml: no such file or directory"
+      # the moment compose starts it — which is correct behaviour for a
+      # production image and useless for a test stack. Dockerfile.dev exists for
+      # exactly this: it bakes the in-memory test config, the stub verification
+      # transport and the self-signed test certs, and listens on 8081, which is
+      # the port this service publishes and health-checks.
+      dockerfile: Dockerfile.dev
+      # Credentials for the internal Gitea host, so the image's `go mod
+      # download` can resolve first-party modules. A BuildKit secret, not a
+      # build arg: an arg is recoverable from image metadata with
+      # `docker history`. Where GOMODAUTH_ENV is unset the secret resolves to
+      # /dev/null, the Dockerfile's mount finds nothing to source, and the
+      # build falls back to the public proxy.
+      secrets:
+        - gomodauth
     ports:
       - "8081:8081"
     healthcheck:
@@ -58,10 +66,6 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ..:/workspace:cached
-      - ../../go-libsignal:/go-libsignal:cached
-      - ../../go-xkms:/go-xkms:cached
-      - ../../go-qrdb:/go-qrdb:cached
-      - ../../go-quicraft:/go-quicraft:cached
       - go-mod-cache:/go/pkg/mod
       - signal-cli-bin:/opt/signal-cli:ro
       - signal-cli-data:/var/lib/signal-cli
@@ -81,6 +85,17 @@ services:
       SIGNAL_CLI_DATA: /var/lib/signal-cli
       REDIS_URL: redis://redis:6379
       POSTGRES_URL: postgres://signal:signal@postgres:5432/signal?sslmode=disable
+      # This container compiles the suite itself against a bind-mounted
+      # /workspace, so it needs Gitea module resolution at RUN time, not just
+      # at build time. Inherited from the caller's environment — the Actions
+      # runner injects all four (dependency-resolution.md §6). GIT_CONFIG_COUNT
+      # defaults to 0 rather than empty: git rejects an empty count outright,
+      # while 0 means "no rewrites configured", which is the correct behaviour
+      # on a machine without Gitea credentials.
+      GOPRIVATE: ${GOPRIVATE:-}
+      GIT_CONFIG_COUNT: ${GIT_CONFIG_COUNT:-0}
+      GIT_CONFIG_KEY_0: ${GIT_CONFIG_KEY_0:-}
+      GIT_CONFIG_VALUE_0: ${GIT_CONFIG_VALUE_0:-}
     command: make integration-test
 
   redis:
@@ -110,6 +125,12 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+secrets:
+  gomodauth:
+    # Path to a file of `export VAR=...` lines. /dev/null when unset, which
+    # makes the secret present but empty rather than failing the build.
+    file: ${GOMODAUTH_ENV:-/dev/null}
 
 volumes:
   go-mod-cache:

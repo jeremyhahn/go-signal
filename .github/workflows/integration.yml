@@ -1,0 +1,133 @@
+# Integration suite (devops.md §5).
+#
+# 438 tests across test/integration/{api,cli,storage,mocks} against a live
+# stack: signald over TLS, postgres, redis, and a real signal-cli client. The
+# api package alone is 332 tests and most of the signal-cli ones fork a JVM per
+# case, so the suite runs for well over an hour — measured, not estimated: a
+# 50-minute cap killed it mid-api on 2026-08-14.
+#
+# That is why it is not in ci.yml. §5 is explicit that anything this slow runs
+# on a schedule rather than per push, with workflow_dispatch to trigger it by
+# hand and a paths filter so it still fires when the code it covers changes.
+# go-sysmon's nightly Cinnamon desktop suite is the worked example. Two further
+# reasons specific to this repo: ci.yml's Unit Tests job is already the
+# portfolio's slowest, and `docker build`/`docker compose` reach the HOST daemon
+# through the mounted socket, so this stack runs OUTSIDE the runner's
+# --cpus/--memory caps (infra/gitea/config/runner-config.yaml). Per-push would
+# put an uncapped multi-container build on a shared host every time.
+#
+# The paths filter covers the harness — the parts whose breakage is invisible
+# until this suite runs. The server code it exercises is essentially the whole
+# repository, so filtering on that would fire on every push and defeat the
+# purpose; the nightly schedule is what covers it.
+
+name: Integration
+
+on:
+  schedule:
+    # 02:00 UTC daily.
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+  push:
+    branches: [master, main, develop]
+    paths:
+      - 'Dockerfile'
+      - 'Dockerfile.dev'
+      - 'Dockerfile.service'
+      - '.devcontainer/**'
+      - 'test/integration/**'
+      - 'test/signal-cli/**'
+      - '.dockerignore'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/integration.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    # Above the measured runtime with headroom; the suite's own go test timeout
+    # is 120m, so this must exceed it or the job is killed before the suite can
+    # report its own failure.
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v6
+
+      # The signal-server image resolves first-party modules from the internal
+      # Gitea, and the test container compiles the suite itself, so credentials
+      # are needed at BOTH build time and run time
+      # (conventions/dependency-resolution.md §6).
+      #
+      # Build time: a file passed to compose as a BuildKit secret, staged under
+      # RUNNER_TEMP — deliberately outside the build context, because the
+      # Dockerfiles end with `COPY . .` and anything in the workspace lands in a
+      # layer.
+      #
+      # Read from the shell environment, NOT ${{ env.X }}: that expression reads
+      # this workflow's `env:` block, which does not define them, and would
+      # write blanks silently — the build then fails on an unrelated-looking
+      # "unknown revision".
+      - name: Stage module-fetch credentials
+        run: |
+          set -eu
+          umask 077
+          : > "${RUNNER_TEMP}/gomodauth.env"
+          if [ -n "${GIT_CONFIG_KEY_0:-}" ]; then
+            {
+              printf 'export GOPRIVATE=%s\n' "${GOPRIVATE:-}"
+              printf 'export GIT_CONFIG_COUNT=%s\n' "${GIT_CONFIG_COUNT:-}"
+              printf 'export GIT_CONFIG_KEY_0=%s\n' "${GIT_CONFIG_KEY_0}"
+              printf 'export GIT_CONFIG_VALUE_0=%s\n' "${GIT_CONFIG_VALUE_0:-}"
+            } > "${RUNNER_TEMP}/gomodauth.env"
+            echo "staged Gitea module credentials"
+          else
+            echo "no Gitea credentials in this environment; resolving from the public proxy"
+          fi
+
+      # GOMODAUTH_ENV is what compose interpolates into the `gomodauth` secret;
+      # the four GIT_/GOPRIVATE variables are inherited by the integration
+      # container, which needs them at run time to compile the suite.
+      - name: Run integration suite
+        env:
+          GOMODAUTH_ENV: ${{ runner.temp }}/gomodauth.env
+          DOCKER_BUILDKIT: '1'
+        run: make integration-test
+
+      - name: Remove staged credentials
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/gomodauth.env"
+
+      # Named volumes outlive `compose run --rm`, and this stack keeps five of
+      # them (postgres, redis, signal-cli data and binaries, the module cache).
+      # Leaving them behind carries state from one run into the next on a
+      # long-lived self-hosted runner, which is how an integration suite starts
+      # passing for reasons that have nothing to do with the commit.
+      - name: Tear down the stack
+        if: always()
+        run: docker compose -f .devcontainer/docker-compose.yml down -v --remove-orphans || true
+
+      - name: Upload integration log
+        if: always() && github.server_url == 'https://github.com'
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-log
+          path: build/integration-test.log
+
+  # devops.md §1: one required check per workflow, every job listed explicitly
+  # in both places, failing closed. join(needs.*.result) evaluates empty on
+  # Gitea and would report success while the suite failed.
+  integration-gate:
+    name: Integration Gate
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [integration-test]
+    steps:
+      - name: Fail closed on any non-success
+        run: |
+          check() { case "$2" in success) echo "OK   $1";; *) echo "FAIL $1 ($2)"; BAD=1;; esac; }
+          BAD=0
+          check integration-test "${{ needs.integration-test.result }}"
+          exit $BAD

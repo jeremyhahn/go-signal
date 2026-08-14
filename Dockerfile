@@ -1,15 +1,33 @@
+# syntax=docker/dockerfile:1.7
 FROM golang:1.26.6-bookworm AS builder
 
 WORKDIR /app
 
-# Copy local replace-directive dependencies (provided via additional_contexts)
-COPY --from=go-libsignal . /go-libsignal
-COPY --from=go-xkms . /go-xkms
-COPY --from=go-qrdb . /go-qrdb
-COPY --from=go-quicraft . /go-quicraft
-
 COPY go.mod go.sum ./
-RUN go mod download
+
+# The four `COPY --from=go-libsignal|go-xkms|go-qrdb|go-quicraft` lines that
+# stood here were residue of the pre-2026-08 local-replace layout. go.mod has
+# carried no local-path replaces since the cutover — every first-party
+# dependency is a tagged module fetched from Gitea — so the copies fed nothing;
+# they only made the image unbuildable outside .devcontainer/docker-compose.yml,
+# which was the sole supplier of those build contexts, and unbuildable anywhere
+# at all on a CI runner, which has no sibling working copies.
+#
+# What the build genuinely needs instead is credentials for the internal Gitea
+# host: GOPRIVATE plus git's insteadOf rewrite carrying a read-only token
+# (conventions/dependency-resolution.md §6). They arrive as a BuildKit secret,
+# NOT a build arg — a build arg is recorded in image metadata and readable with
+# `docker history` — and are sourced rather than exported so the value never
+# reaches a command line either. The mount is tmpfs for this RUN alone and
+# never becomes a layer.
+#
+# The mount is optional by design: where no secret is supplied, as on GitHub,
+# these modules resolve from the public proxy once tags are mirrored, so the
+# same Dockerfile builds on both hosts.
+RUN --mount=type=secret,id=gomodauth \
+    set -eu; \
+    if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+    go mod download
 
 COPY . .
 

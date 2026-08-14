@@ -263,9 +263,14 @@ GOPATH_BIN := $(shell go env GOPATH)/bin
 test: ## Run unit tests with coverage
 	@echo "==> Running unit tests (tags: $(or $(strip $(BUILD_TAGS)),none))..."
 	@mkdir -p $(COVER_DIR)
-	$(GOTEST) $(BUILD_TAGS_FLAG) -coverprofile=$(COVER_DIR)/coverage.out \
+# pipefail, or the tee at the end of the pipeline decides the exit status and
+# this target can never fail — see the note on integration-test below. The Unit
+# Tests CI job calls this, so without it that gate was passing by construction
+# rather than on the suite's merits. (Checked: run 312's log carries zero
+# failures, so nothing was actually being hidden — the hole was latent.)
+	bash -o pipefail -c '$(GOTEST) $(BUILD_TAGS_FLAG) -coverprofile=$(COVER_DIR)/coverage.out \
 		-covermode=atomic \
-		./pkg/... ./cmd/... ./sdk/... 2>&1 | tee $(BUILD_DIR)/test.log
+		./pkg/... ./cmd/... ./sdk/... 2>&1 | tee $(BUILD_DIR)/test.log'
 	@echo "==> Tests complete."
 
 # integration-test runs E2E integration tests inside the devcontainer.
@@ -275,16 +280,22 @@ integration-test: ## Run integration tests
 ifdef SIGNAL_SERVER_URL
 	@echo "==> Running integration tests against $(SIGNAL_SERVER_URL)..."
 	@mkdir -p $(COVER_DIR)
-	$(GOTEST) -tags integration -timeout 120m \
+	bash -o pipefail -c '$(GOTEST) -tags integration -timeout 120m \
 		-coverprofile=$(COVER_DIR)/integration-coverage.out \
 		-covermode=atomic \
-		./test/integration/... 2>&1 | tee $(BUILD_DIR)/integration-test.log
+		./test/integration/... 2>&1 | tee $(BUILD_DIR)/integration-test.log'
 	@echo "==> Integration tests complete."
 else
 	@echo "==> Starting devcontainer infrastructure..."
 	@mkdir -p $(BUILD_DIR)
 	docker compose -f .devcontainer/docker-compose.yml build signal-server signal-cli integration
-	docker compose -f .devcontainer/docker-compose.yml run --rm integration 2>&1 | tee $(BUILD_DIR)/integration-test.log
+# `set -o pipefail` is what makes this target able to fail at all. A make recipe
+# runs under /bin/sh, where a pipeline exits with the status of its LAST command
+# — tee, which always succeeds — so `docker compose run` could report "dependency
+# failed to start: container devcontainer-signal-server-1 exited (1)" and this
+# target still returned 0. It did exactly that until 2026-08-14. bash is invoked
+# explicitly because /bin/sh is dash here and has no pipefail.
+	bash -o pipefail -c 'docker compose -f .devcontainer/docker-compose.yml run --rm integration 2>&1 | tee $(BUILD_DIR)/integration-test.log'
 	@echo "==> Integration tests complete."
 endif
 

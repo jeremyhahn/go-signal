@@ -219,20 +219,16 @@ jobs:
       - name: Coverage gate
         run: make coverage
 
-  # There is deliberately no integration-test job. `make integration-test`
-  # builds .devcontainer/docker-compose.yml, whose signal-server service
-  # supplies additional_contexts pointing at SIBLING REPO WORKING COPIES
-  # (../../go-libsignal, ../../go-xkms, ../../go-qrdb, ../../go-quicraft).
-  # No runner has those paths, and the decoupling initiative exists precisely
-  # to remove filesystem references to sibling repos — cross-repo deps resolve
-  # as tagged modules from Gitea. The job could therefore never pass on either
-  # host; it had simply never run, because this workflow's trigger never
-  # matched the repo's branch.
-  #
-  # Restoring it is the same work as restoring trivy-image above: the
-  # Dockerfiles must resolve first-party modules from Gitea instead of from
-  # local paths, which needs a decision on how a container build authenticates
-  # to Gitea. Tracked separately.
+  # The integration suite lives in integration.yml, on a nightly schedule with
+  # workflow_dispatch and a paths filter (devops.md §5). It is not absent and it
+  # is not blocked: the sibling-context coupling that made it unrunnable is gone
+  # — go.mod carries no local-path replaces, so those four build contexts fed
+  # nothing, and the Dockerfiles now resolve first-party modules from Gitea
+  # through a BuildKit secret. It sits outside this workflow because it takes
+  # over an hour (438 tests, most of the signal-cli ones forking a JVM), and
+  # because compose reaches the host daemon through the mounted socket and so
+  # escapes the runner's cpu/memory caps. See integration.yml for the full
+  # reasoning.
 
   # The single required check (devops.md §1). Every job above appears in BOTH
   # the needs list and the results check -- a gate that can pass vacuously is
