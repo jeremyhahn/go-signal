@@ -3,6 +3,7 @@ package signal
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -363,18 +364,20 @@ func TestFileStore_WriteJSON_MkdirAllError(t *testing.T) {
 }
 
 func TestFileStore_SaveCredentials_WriteJSONFails(t *testing.T) {
-	// Make rootDir read-only so WriteFile inside writeJSON fails.  This covers
-	// the "return err" branch after writeJSON returns an error in SaveCredentials.
-	dir := t.TempDir()
-	store, err := NewFileStore(dir)
+	// Covers the "return err" branch after writeJSON fails in SaveCredentials.
+	// A directory occupying the exact path credentials.json would take makes
+	// the write fail with EISDIR — the same idiom as the .auth_token test
+	// below, and unlike the read-only parent this used to rely on it holds as
+	// root, which is how CI runs (testing-guidelines.md §Fault Injection).
+	store, err := NewFileStore(t.TempDir())
 	require.NoError(t, err)
 
-	require.NoError(t, os.Chmod(dir, 0500))
-	defer func() { _ = os.Chmod(dir, 0700) }()
+	require.NoError(t, os.Mkdir(store.path("credentials.json"), 0700))
 
 	creds := &Credentials{Number: "+15550000001", DeviceID: 1}
 	err = store.SaveCredentials(creds)
 	assert.Error(t, err)
+	assert.ErrorIs(t, err, syscall.EISDIR)
 }
 
 func TestFileStore_SaveCredentials_AuthTokenIsDirectory(t *testing.T) {

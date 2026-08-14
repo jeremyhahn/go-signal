@@ -106,10 +106,7 @@ func TestServer_Subscribe_SnapshotThenLive(t *testing.T) {
 	<-es.subbed
 	es.sub.ch <- ChangeEvent{Seq: 6, Kind: ChangeEventUpsert, UUID: "u-live", Entry: DirectoryEntry{E164: 999}}
 
-	live, err := stream.Recv()
-	if err != nil {
-		t.Fatalf("live recv: %v", err)
-	}
+	live := recvChange(t, stream)
 	if live.Kind != dirpb.DirectoryChangeEvent_KIND_UPSERT || live.Entry.E164 != 999 {
 		t.Errorf("live event mismatch: %+v", live)
 	}
@@ -191,12 +188,31 @@ func TestServer_Subscribe_RetrogradeEventsDropped(t *testing.T) {
 	// Event with seq > asOf is delivered.
 	es.sub.ch <- ChangeEvent{Seq: 11, Kind: ChangeEventUpsert, UUID: "fresh", Entry: DirectoryEntry{E164: 2}}
 
-	ev, err := stream.Recv()
-	if err != nil {
-		t.Fatalf("Recv: %v", err)
-	}
+	ev := recvChange(t, stream)
 	if ev.Entry.E164 != 2 {
 		t.Errorf("got stale event through: %+v", ev)
+	}
+}
+
+// recvChange returns the next real change event, skipping the token-only
+// keepalive frames the server emits on a ticker. Without this a test racing a
+// 50ms keepalive reads the keepalive instead of the event it just published
+// and fails only under load — the frame arrives, just not the one asserted on.
+// Bounded by the stream's context deadline rather than a sleep
+// (testing-guidelines.md §Fault Injection, on time as a synchronization
+// primitive).
+func recvChange(t *testing.T, stream dirpb.DirectoryService_SubscribeClient) *dirpb.DirectoryChangeEvent {
+	t.Helper()
+	for {
+		ev, err := stream.Recv()
+		if err != nil {
+			t.Fatalf("Recv: %v", err)
+		}
+		// A keepalive carries only a resume token: no kind, no entry.
+		if ev.Kind == dirpb.DirectoryChangeEvent_KIND_UNSPECIFIED && ev.Entry == nil {
+			continue
+		}
+		return ev
 	}
 }
 
@@ -217,10 +233,7 @@ func TestServer_Subscribe_DeleteKind(t *testing.T) {
 	<-es.subbed
 	es.sub.ch <- ChangeEvent{Seq: 1, Kind: ChangeEventDelete, UUID: "u-gone"}
 
-	ev, err := stream.Recv()
-	if err != nil {
-		t.Fatalf("Recv: %v", err)
-	}
+	ev := recvChange(t, stream)
 	if ev.Kind != dirpb.DirectoryChangeEvent_KIND_DELETE {
 		t.Errorf("kind = %v, want KIND_DELETE", ev.Kind)
 	}

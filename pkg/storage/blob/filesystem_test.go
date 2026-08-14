@@ -11,6 +11,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/jeremyhahn/go-signal/pkg/backups"
@@ -324,28 +325,23 @@ func TestFilesystemStore_Copy_RejectsPathTraversal(t *testing.T) {
 	}
 }
 
-func TestFilesystemStore_Delete_StatPermissionDenied(t *testing.T) {
-	// Place the target inside a directory we then strip of execute bits so
-	// the stat in Delete fails with EACCES rather than ENOENT.
-	if os.Geteuid() == 0 {
-		t.Skip("permission tests do not work as root")
-	}
+func TestFilesystemStore_Delete_StatError(t *testing.T) {
+	// Delete returns (0, nil) for ENOENT, so the fault has to be a different
+	// errno. A regular file used as a directory component makes the stat fail
+	// with ENOTDIR, which holds for every uid — the permission bits this test
+	// used to strip are bypassed by root, and CI runs as root
+	// (testing-guidelines.md §Fault Injection).
 	s := newFSStore(t)
-	inner := filepath.Join(s.root, "sealed")
-	if err := os.MkdirAll(inner, 0o700); err != nil {
-		t.Fatalf("mkdir: %v", err)
+	if err := os.WriteFile(filepath.Join(s.root, "notadir"), []byte("regular file"), 0o600); err != nil {
+		t.Fatalf("write blocker: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(inner, "obj"), []byte("x"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if err := os.Chmod(inner, 0o000); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(inner, 0o700) })
 
-	_, err := s.Delete(context.Background(), "sealed/obj")
+	_, err := s.Delete(context.Background(), "notadir/obj")
 	if err == nil {
-		t.Fatal("expected stat permission error")
+		t.Fatal("expected stat error")
+	}
+	if !errors.Is(err, syscall.ENOTDIR) {
+		t.Fatalf("expected ENOTDIR, got %v", err)
 	}
 }
 
@@ -412,25 +408,19 @@ func TestFilesystemStore_Copy_MkdirDestParentFails(t *testing.T) {
 }
 
 func TestFilesystemStore_CalculateBytesUsed_WalkErrorBubblesUp(t *testing.T) {
-	// Same trick: an unsearchable directory makes filepath.Walk return EACCES
-	// from inside the callback, which we translate to an error.
-	if os.Geteuid() == 0 {
-		t.Skip("permission tests do not work as root")
-	}
+	// The walk callback swallows ENOENT and propagates everything else, so the
+	// fault must be a different errno. Walking beneath a regular file yields
+	// ENOTDIR on the very first lstat, which no uid can bypass.
 	s := newFSStore(t)
-	inner := filepath.Join(s.root, "sealed")
-	if err := os.MkdirAll(inner, 0o700); err != nil {
-		t.Fatalf("mkdir: %v", err)
+	if err := os.WriteFile(filepath.Join(s.root, "notadir"), []byte("regular file"), 0o600); err != nil {
+		t.Fatalf("write blocker: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(inner, "f"), []byte("x"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if err := os.Chmod(inner, 0o000); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(inner, 0o700) })
 
-	if _, err := s.CalculateBytesUsed(context.Background(), "sealed"); err == nil {
-		t.Fatal("expected walk error from sealed directory")
+	_, err := s.CalculateBytesUsed(context.Background(), "notadir/sub")
+	if err == nil {
+		t.Fatal("expected walk error to bubble up")
+	}
+	if !errors.Is(err, syscall.ENOTDIR) {
+		t.Fatalf("expected ENOTDIR, got %v", err)
 	}
 }

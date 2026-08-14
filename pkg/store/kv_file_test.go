@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -469,120 +471,91 @@ func TestFileKV_keyPath_FlatKey(t *testing.T) {
 
 // --- Error paths that require filesystem manipulation ---
 
+// blockPath plants a regular file at rootDir/name and returns a key beneath it.
+// Using that key makes the filesystem answer ENOTDIR for every syscall that has
+// to walk through it — a fault that holds for every uid, unlike the permission
+// bits these tests used to rely on, which root bypasses
+// (testing-guidelines.md §Fault Injection).
+func blockPath(t *testing.T, rootDir, name string) string {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(rootDir, name), []byte("regular file"), 0600))
+	return name + "/child"
+}
+
 // TestNewFileKVClient_MkdirAllFails exercises the NewFileKVClient error return
-// by trying to create a directory inside a read-only parent.
+// when the root cannot be created because a path component is a regular file.
 func TestNewFileKVClient_MkdirAllFails(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("running as root: permission checks are skipped")
-	}
-
-	// Create a temporary read-only parent directory.
 	parent := t.TempDir()
-	require.NoError(t, os.Chmod(parent, 0500)) // r-x only
-	t.Cleanup(func() { _ = os.Chmod(parent, 0700) })
+	blocker := filepath.Join(parent, "notadir")
+	require.NoError(t, os.WriteFile(blocker, []byte("regular file"), 0600))
 
-	child := filepath.Join(parent, "cannot-create")
-	_, err := NewFileKVClient(child)
+	_, err := NewFileKVClient(filepath.Join(blocker, "cannot-create"))
 	require.Error(t, err)
+	require.ErrorIs(t, err, syscall.ENOTDIR)
 }
 
-// TestFileKV_Put_MkdirFails exercises the mkdir error branch in Put. We
-// make the root directory read-only after construction so that creating a
-// nested key directory fails.
+// TestFileKV_Put_MkdirFails exercises the mkdir error branch in Put: the key's
+// parent directory cannot be created because that path component is a file.
 func TestFileKV_Put_MkdirFails(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("running as root: permission checks are skipped")
-	}
-
 	kv := newTestFileKV(t)
-	ctx := context.Background()
+	key := blockPath(t, kv.rootDir, "notadir")
 
-	// Lock down the root so subdirectory creation fails.
-	require.NoError(t, os.Chmod(kv.rootDir, 0500))
-	t.Cleanup(func() { _ = os.Chmod(kv.rootDir, 0700) })
-
-	err := kv.Put(ctx, "sub/key", []byte("v"))
+	err := kv.Put(context.Background(), key, []byte("v"))
 	require.Error(t, err)
+	require.ErrorIs(t, err, syscall.ENOTDIR)
+	require.Contains(t, err.Error(), "kv_file: mkdir")
 }
 
-// TestFileKV_Put_WriteFileFails exercises the write-temp error branch in Put
-// by making the root directory non-writable so WriteFile fails.
+// TestFileKV_Put_WriteFileFails exercises the write-temp error branch in Put.
+// The fault must spare the MkdirAll that runs first, so it targets the temp
+// file alone: Put appends ".tmp.<16 hex>" to the key path, which pushes a
+// final component near NAME_MAX past the 255-byte limit and fails the write
+// with ENAMETOOLONG for every uid.
 func TestFileKV_Put_WriteFileFails(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("running as root: permission checks are skipped")
-	}
-
 	kv := newTestFileKV(t)
-	ctx := context.Background()
 
-	// Root is writable; lock it down after construction.
-	require.NoError(t, os.Chmod(kv.rootDir, 0500))
-	t.Cleanup(func() { _ = os.Chmod(kv.rootDir, 0700) })
-
-	// Flat key — no subdirectory creation needed, but file write will fail.
-	err := kv.Put(ctx, "flatkey", []byte("v"))
+	err := kv.Put(context.Background(), "sub/"+strings.Repeat("n", 250), []byte("v"))
 	require.Error(t, err)
+	require.ErrorIs(t, err, syscall.ENAMETOOLONG)
+	require.Contains(t, err.Error(), "kv_file: write temp")
 }
 
 // TestFileKV_Exists_StatError exercises the non-IsNotExist error branch in
-// Exists by making the root directory non-executable so os.Stat fails.
+// Exists: stat through a regular file returns ENOTDIR, not ENOENT.
 func TestFileKV_Exists_StatError(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("running as root: permission checks are skipped")
-	}
-
 	kv := newTestFileKV(t)
-	ctx := context.Background()
+	key := blockPath(t, kv.rootDir, "notadir")
 
-	require.NoError(t, kv.Put(ctx, "k", []byte("v")))
-
-	// Remove execute permission so Stat inside cannot traverse the directory.
-	require.NoError(t, os.Chmod(kv.rootDir, 0600))
-	t.Cleanup(func() { _ = os.Chmod(kv.rootDir, 0700) })
-
-	_, err := kv.Exists(ctx, "k")
+	_, err := kv.Exists(context.Background(), key)
 	require.Error(t, err)
+	require.ErrorIs(t, err, syscall.ENOTDIR)
 }
 
-// TestFileKV_Get_ReadError exercises the non-IsNotExist error branch in Get
-// by removing read permission from the stored file.
+// TestFileKV_Get_ReadError exercises the non-IsNotExist error branch in Get:
+// reading through a regular file returns ENOTDIR, so Get must report a real
+// error rather than "key not found".
 func TestFileKV_Get_ReadError(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("running as root: permission checks are skipped")
-	}
-
 	kv := newTestFileKV(t)
-	ctx := context.Background()
+	key := blockPath(t, kv.rootDir, "notadir")
 
-	require.NoError(t, kv.Put(ctx, "k", []byte("v")))
-
-	// Remove read permission from the file.
-	filePath := filepath.Join(kv.rootDir, "k")
-	require.NoError(t, os.Chmod(filePath, 0000))
-	t.Cleanup(func() { _ = os.Chmod(filePath, 0600) })
-
-	_, err := kv.Get(ctx, "k")
+	_, err := kv.Get(context.Background(), key)
 	require.Error(t, err)
+	require.ErrorIs(t, err, syscall.ENOTDIR)
+
+	var knf *KeyNotFoundError
+	require.False(t, errors.As(err, &knf), "ENOTDIR must not be reported as key-not-found")
 }
 
 // TestFileKV_Delete_RemoveError exercises the non-IsNotExist error branch in
-// Delete by removing write permission from the root directory so os.Remove fails.
+// Delete: removing through a regular file returns ENOTDIR, which Delete must
+// propagate instead of treating the key as already absent.
 func TestFileKV_Delete_RemoveError(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("running as root: permission checks are skipped")
-	}
-
 	kv := newTestFileKV(t)
-	ctx := context.Background()
+	key := blockPath(t, kv.rootDir, "notadir")
 
-	require.NoError(t, kv.Put(ctx, "k", []byte("v")))
-
-	// Remove write permission from root so Remove fails.
-	require.NoError(t, os.Chmod(kv.rootDir, 0500))
-	t.Cleanup(func() { _ = os.Chmod(kv.rootDir, 0700) })
-
-	err := kv.Delete(ctx, "k")
+	err := kv.Delete(context.Background(), key)
 	require.Error(t, err)
+	require.ErrorIs(t, err, syscall.ENOTDIR)
 }
 
 // --- randSuffix ---
@@ -658,21 +631,19 @@ func TestFileKV_DeleteIfPresent_SecondCallReturnsFalse(t *testing.T) {
 }
 
 // TestFileKV_Scan_GetReadError exercises the non-KeyNotFoundError branch in
-// Scan.Get by storing a file then removing read permission before Scan runs.
+// Scan.Get. The entry has to survive List and then fail Get, so ENOTDIR is no
+// use here — List would never enumerate it. A self-referential symlink does
+// both: filepath.Walk lstats it and sees a non-directory, so it is listed,
+// while Get's os.ReadFile follows it and fails with ELOOP. Neither step
+// depends on the uid, so this runs as root in CI.
 func TestFileKV_Scan_GetReadError(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("running as root: permission checks are skipped")
-	}
-
 	kv := newTestFileKV(t)
 	ctx := context.Background()
 
-	require.NoError(t, kv.Put(ctx, "ns/key", []byte("v")))
-
-	// Remove read permission from the stored file so Get returns a non-KeyNotFound error.
-	filePath := filepath.Join(kv.rootDir, "ns", "key")
-	require.NoError(t, os.Chmod(filePath, 0000))
-	t.Cleanup(func() { _ = os.Chmod(filePath, 0600) })
+	dir := filepath.Join(kv.rootDir, "ns")
+	require.NoError(t, os.MkdirAll(dir, 0700))
+	loop := filepath.Join(dir, "key")
+	require.NoError(t, os.Symlink(loop, loop))
 
 	called := false
 	err := kv.Scan(ctx, "ns/", func(_ string, _ []byte) error {
@@ -680,5 +651,9 @@ func TestFileKV_Scan_GetReadError(t *testing.T) {
 		return nil
 	})
 	require.Error(t, err)
+	require.ErrorIs(t, err, syscall.ELOOP)
 	assert.False(t, called)
+
+	var knf *KeyNotFoundError
+	require.False(t, errors.As(err, &knf), "ELOOP must not be reported as key-not-found")
 }

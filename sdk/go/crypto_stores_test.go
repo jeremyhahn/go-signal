@@ -1,8 +1,10 @@
 package signal
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/jeremyhahn/go-libsignal/pkg/ecc"
@@ -707,8 +709,11 @@ func TestNewFileSessionStore_SkipsNonBinFiles(t *testing.T) {
 }
 
 func TestFileSessionStore_StoreSession_WriteFileFails(t *testing.T) {
-	// Remove write permission from the sessions directory so WriteFile fails
-	// inside StoreSession, covering the persist-error return branch.
+	// Covers the persist-error return branch in StoreSession. A directory
+	// occupying the exact path the session file would take makes WriteFile
+	// fail with EISDIR, which holds for every uid — the read-only parent this
+	// used to rely on does not, because CI runs as root
+	// (testing-guidelines.md §Fault Injection).
 	ser := newTestSerializer()
 	dir := t.TempDir()
 	store, err := newFileSessionStore(dir, ser)
@@ -716,16 +721,18 @@ func TestFileSessionStore_StoreSession_WriteFileFails(t *testing.T) {
 		t.Fatalf("newFileSessionStore: %v", err)
 	}
 
-	sessDir := filepath.Join(dir, "sessions")
-	if err := os.Chmod(sessDir, 0500); err != nil {
-		t.Fatalf("Chmod: %v", err)
-	}
-	defer func() { _ = os.Chmod(sessDir, 0700) }()
-
 	addr := protocol.NewSignalAddress("user", 1)
+	if err := os.Mkdir(store.path(addressKey(addr)), 0700); err != nil {
+		t.Fatalf("Mkdir blocker: %v", err)
+	}
+
 	sess := staterecord.NewSession(ser.Session, ser.State)
-	if err := store.StoreSession(addr, sess); err == nil {
+	err = store.StoreSession(addr, sess)
+	if err == nil {
 		t.Fatal("expected error when session file cannot be written")
+	}
+	if !errors.Is(err, syscall.EISDIR) {
+		t.Fatalf("expected EISDIR, got %v", err)
 	}
 }
 
@@ -787,8 +794,10 @@ func TestFileIdentityStore_IsTrustedIdentity_KnownKey(t *testing.T) {
 }
 
 func TestFileIdentityStore_SaveIdentity_WriteFileFails(t *testing.T) {
-	// Remove write permission from the identity_keys directory so WriteFile
-	// fails inside SaveIdentity, covering the persist-error return branch.
+	// Covers the persist-error return branch in SaveIdentity. A directory
+	// occupying the exact path the identity file would take makes WriteFile
+	// fail with EISDIR, which root cannot bypass — unlike the read-only
+	// parent this used to rely on.
 	kp, _ := ecc.GenerateKeyPair()
 	pubKey := identity.NewKey(kp.PublicKey())
 	idKP := identity.NewKeyPair(pubKey, kp.PrivateKey())
@@ -798,16 +807,18 @@ func TestFileIdentityStore_SaveIdentity_WriteFileFails(t *testing.T) {
 		t.Fatalf("newFileIdentityStore: %v", err)
 	}
 
-	idDir := filepath.Join(dir, "identity_keys")
-	if err := os.Chmod(idDir, 0500); err != nil {
-		t.Fatalf("Chmod: %v", err)
-	}
-	defer func() { _ = os.Chmod(idDir, 0700) }()
-
 	addr := protocol.NewSignalAddress("contact", 1)
+	idFile := filepath.Join(dir, "identity_keys", addressKey(addr)+".json")
+	if err := os.Mkdir(idFile, 0700); err != nil {
+		t.Fatalf("Mkdir blocker: %v", err)
+	}
+
 	remoteKP, _ := ecc.GenerateKeyPair()
 	_, err = store.SaveIdentity(addr, identity.NewKey(remoteKP.PublicKey()))
 	if err == nil {
 		t.Fatal("expected error when identity file cannot be written")
+	}
+	if !errors.Is(err, syscall.EISDIR) {
+		t.Fatalf("expected EISDIR, got %v", err)
 	}
 }
