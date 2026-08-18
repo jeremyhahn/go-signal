@@ -206,11 +206,21 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
 
+      # The tag set comes from the Makefile, never restated here. Without it
+      # this job built with no tags at all: no codec_json meant the dao codec
+      # registry had no JSON codec, and cmd/signal/cmd, pkg/daostore and sdk/go
+      # failed on every commit, taking CI Gate — the single required check —
+      # down with them. `make build` is not a substitute: it links two binaries,
+      # while this job's purpose is to compile and test the whole module under
+      # GOFIPS140.
+      - name: Resolve build tags
+        run: echo "BUILD_TAGS=$(make -s print-build-tags)" >> "$GITHUB_ENV"
+
       - name: Build all packages (FIPS mode)
-        run: go build ./...
+        run: go build -tags "$BUILD_TAGS" ./...
 
       - name: Unit tests (FIPS mode)
-        run: go test -count=1 -timeout=900s ./...
+        run: go test -count=1 -timeout=900s -tags "$BUILD_TAGS" ./...
 
   test:
     name: Unit Tests

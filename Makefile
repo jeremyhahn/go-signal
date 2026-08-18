@@ -120,6 +120,15 @@ ifeq ($(WITH_FTS),1)
 endif
 BUILD_TAGS_FLAG := $(if $(strip $(BUILD_TAGS)),-tags "$(strip $(BUILD_TAGS))")
 
+# The one place the default tag set is defined. CI jobs that cannot call a make
+# target directly (the FIPS job builds and tests ./... under GOFIPS140, which no
+# build target covers) read the set from here instead of restating it, so the
+# flags cannot drift out of sync with the feature switches above. A job that
+# omitted them built without codec_json and failed on every dao-backed package.
+print-build-tags: ## Print the default build tag set (for CI and tooling)
+	@echo '$(strip $(BUILD_TAGS))'
+
+.PHONY: print-build-tags
 .PHONY: build build-server build-cli build-frontend dev-web proto
 .PHONY: build-cdsi build-svr2 build-key-transparency build-registration-service build-storage-service build-services
 
