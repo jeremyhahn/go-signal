@@ -10,6 +10,7 @@ import (
 	redisv9 "github.com/redis/go-redis/v9"
 
 	"github.com/jeremyhahn/go-signal/pkg/cache"
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
@@ -25,8 +26,10 @@ var _ cache.Client = (*Client)(nil)
 type Config struct {
 	// URL is the Redis connection URL, e.g. "redis://localhost:6379/0".
 	URL string
-	// Password is the AUTH password (may be empty).
-	Password string
+	// Password is the AUTH password (may be nil or unset). It is held in
+	// protected memory and only materialised for the go-redis option
+	// struct, which is built once at construction time.
+	Password *secrets.SecureString
 	// DB is the database index to select after connecting.
 	DB int
 	// DialTimeout bounds the initial TCP dial.
@@ -43,8 +46,8 @@ func New(cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "redis: parse URL", err)
 	}
-	if cfg.Password != "" {
-		opts.Password = cfg.Password
+	if password := cfg.Password.Plaintext(); password != "" {
+		opts.Password = password
 	}
 	if cfg.DB != 0 {
 		opts.DB = cfg.DB

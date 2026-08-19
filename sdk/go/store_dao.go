@@ -366,7 +366,12 @@ func unmarshalCredentials(value string, creds *Credentials) error {
 	creds.PNI = c.PNI
 	creds.DeviceID = c.DeviceID
 	if c.Password != "" {
-		creds.Password = secrets.NewSecureString(c.Password)
+		password, err := secrets.NewSecureString(c.Password)
+		if err != nil {
+			return err
+		}
+		creds.Password.Destroy()
+		creds.Password = password
 	}
 	return nil
 }

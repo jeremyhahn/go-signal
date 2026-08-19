@@ -351,7 +351,11 @@ func runStart(cmd *cobra.Command, args []string) error {
 		// Fallback: generate a random ephemeral signing key for development.
 		// In production, set zkConfig.signingKey in the YAML configuration.
 		slog.WarnContext(ctx, "no signing key configured; generating ephemeral key — certificates will not survive restarts")
-		signingKey = secrets.NewSecureString(generateEphemeralKey())
+		ephemeral, err := secrets.NewSecureString(generateEphemeralKey())
+		if err != nil {
+			return &StartupError{Stage: "signing key protection", Cause: err}
+		}
+		signingKey = ephemeral
 	}
 
 	// Initialize storage backends based on config.
@@ -497,13 +501,12 @@ func runStart(cmd *cobra.Command, args []string) error {
 	var cacheClient cache.Client
 	switch cfg.Cache.Backend {
 	case "redis":
-		password := ""
-		if cfg.Cache.Redis.Password != nil && !cfg.Cache.Redis.Password.IsDestroyed() {
-			password = cfg.Cache.Redis.Password.Plaintext()
-		}
+		// The password stays in protected memory end to end: the cache
+		// client takes the SecureString itself and only opens it when it
+		// builds the go-redis options.
 		redisClient, err := cacheredis.New(cacheredis.Config{
 			URL:      cfg.Cache.Redis.URL,
-			Password: password,
+			Password: cfg.Cache.Redis.Password,
 			DB:       cfg.Cache.Redis.DB,
 		})
 		if err != nil {
@@ -590,7 +593,10 @@ func runStart(cmd *cobra.Command, args []string) error {
 	apnJobsMgr := jobs.NewManager(jobsStore, logger)
 	// Create an independent copy of the signing key so that certificates
 	// manager holds its own SecureString and cannot alias the config value.
-	signingKeyCopy := secrets.NewSecureString(signingKey.Plaintext())
+	signingKeyCopy, err := secrets.NewSecureString(signingKey.Plaintext())
+	if err != nil {
+		return &StartupError{Stage: "signing key protection", Cause: err}
+	}
 	certificatesMgr := certificates.NewCertificatesManager(signingKeyCopy, logger)
 
 	// Initialize zkgroup ServerSecretParams from the ZKConfig serverSecret.
@@ -688,20 +694,18 @@ func runStart(cmd *cobra.Command, args []string) error {
 	if cfg.CDN.AccessKey != nil {
 		cdnAccessKey = cfg.CDN.AccessKey.Plaintext()
 	}
-	cdnSecretKey := ""
-	if cfg.CDN.SecretKey != nil {
-		cdnSecretKey = cfg.CDN.SecretKey.Plaintext()
-	}
 	stickersMgr := stickers.NewStickersManager(stickers.ManagerConfig{
 		Logger: logger,
 		// CDN config doubles as the S3 credentials for sticker uploads —
 		// Java's StickerController shares the same access key + region
 		// with AttachmentController.
 		S3: stickers.S3Config{
-			Region:          cfg.CDN.Region,
-			Bucket:          cfg.CDN.Bucket,
-			AccessKeyID:     cdnAccessKey,
-			SecretAccessKey: cdnSecretKey,
+			Region:      cfg.CDN.Region,
+			Bucket:      cfg.CDN.Bucket,
+			AccessKeyID: cdnAccessKey,
+			// The secret key is passed through in protected memory; it
+			// is opened only inside the SigV4 key derivation.
+			SecretAccessKey: cfg.CDN.SecretKey,
 		},
 	})
 	directoryMgr := directory.NewDirectoryManager(logger)
@@ -1119,7 +1123,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 			Bucket:    cfg.CDN.Bucket,
 			Region:    cfg.CDN.Region,
 			AccessKey: cdnAccessKey,
-			SecretKey: cdnSecretKey,
+			SecretKey: cfg.CDN.SecretKey,
 		},
 	})
 

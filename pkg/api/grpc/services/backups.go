@@ -226,9 +226,20 @@ func (s *BackupsAnonymousService) GetSvrBCredentials(
 	if err != nil {
 		return nil, backupErrorToGRPC(err)
 	}
+	defer creds.Destroy()
+	// Opened only to populate the response message the client is the bearer
+	// of. Reveal rather than Plaintext: an unavailable credential is an
+	// internal error, not a successful response with an empty password.
+	password, err := creds.Password.Reveal()
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
 	return &backupspb.GetSvrBCredentialsResponse{
 		Outcome: &backupspb.GetSvrBCredentialsResponse_SvrbCredentials{
-			SvrbCredentials: &backupspb.GetSvrBCredentialsResponse_SvrBCredentials{Username: creds.Username, Password: creds.Password},
+			SvrbCredentials: &backupspb.GetSvrBCredentialsResponse_SvrBCredentials{
+				Username: creds.Username,
+				Password: password,
+			},
 		},
 	}, nil
 }

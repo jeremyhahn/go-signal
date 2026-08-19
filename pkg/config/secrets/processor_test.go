@@ -193,7 +193,7 @@ func TestConfigProcessor_Process_SecureStringField_ResolvedURI(t *testing.T) {
 	registry.Register(&mockResolver{scheme: "kms", resolved: "kms-resolved-secret"})
 
 	cfg := &testSecureConfig{
-		Password: NewSecureString("kms://signal/password"),
+		Password: MustNewSecureString("kms://signal/password"),
 	}
 	defer cfg.Password.Destroy()
 
@@ -209,7 +209,7 @@ func TestConfigProcessor_Process_SecureStringField_PlainValue_Unchanged(t *testi
 	registry := NewResolverRegistry()
 
 	cfg := &testSecureConfig{
-		Password: NewSecureString("plain-secret"),
+		Password: MustNewSecureString("plain-secret"),
 	}
 	defer cfg.Password.Destroy()
 
@@ -242,7 +242,7 @@ func TestConfigProcessor_Process_SecureStringField_ResolutionError(t *testing.T)
 	})
 
 	cfg := &testSecureConfig{
-		Password: NewSecureString("kms://fail"),
+		Password: MustNewSecureString("kms://fail"),
 	}
 	if cfg.Password != nil {
 		defer cfg.Password.Destroy()
@@ -262,7 +262,7 @@ func TestConfigProcessor_Process_SecureStringField_EmptyPlaintext_Skipped(t *tes
 
 	// A *SecureString created from empty string should be skipped by processor.
 	cfg := &testSecureConfig{
-		Password: NewSecureString(""),
+		Password: MustNewSecureString(""),
 	}
 	defer cfg.Password.Destroy()
 
@@ -277,7 +277,7 @@ func TestConfigProcessor_Process_SecureStringField_NestedStruct(t *testing.T) {
 
 	cfg := &testSecureConfig{
 		Nested: testSecureNestedConfig{
-			Secret: NewSecureString("kms://signal/nested"),
+			Secret: MustNewSecureString("kms://signal/nested"),
 			Label:  "label",
 		},
 	}
@@ -289,4 +289,22 @@ func TestConfigProcessor_Process_SecureStringField_NestedStruct(t *testing.T) {
 
 	assert.Equal(t, "nested-kms-secret", cfg.Nested.Secret.Plaintext())
 	assert.Equal(t, "label", cfg.Nested.Label)
+}
+
+// Unexported fields cannot be set through reflection; the processor skips
+// them rather than panicking.
+func TestConfigProcessor_SkipsUnsettableFields(t *testing.T) {
+	type inner struct {
+		//nolint:unused // present to exercise the unexported-field skip path
+		secret *SecureString
+		//nolint:unused // present to exercise the unexported-field skip path
+		token string
+	}
+	type outer struct {
+		Inner inner
+	}
+
+	p := NewConfigProcessor(NewResolverRegistry())
+	cfg := &outer{Inner: inner{secret: MustNewSecureString("unreachable"), token: "unreachable"}}
+	require.NoError(t, p.Process(context.Background(), cfg))
 }

@@ -194,7 +194,7 @@ func TestNewClient_LoadsCredentialsFromStore(t *testing.T) {
 		Number:   "+15550000001",
 		UUID:     "some-uuid",
 		DeviceID: 2,
-		Password: secrets.NewSecureString("mypassword"),
+		Password: secrets.MustNewSecureString("mypassword"),
 	}
 	ms := &mockStore{credentials: creds}
 	cfg := ClientConfig{
@@ -239,7 +239,7 @@ func TestClient_Config(t *testing.T) {
 func TestClient_Close_WithNilStore(t *testing.T) {
 	c := &Client{
 		config: ClientConfig{
-			Password: secrets.NewSecureString("pw"),
+			Password: secrets.MustNewSecureString("pw"),
 		},
 	}
 	if err := c.Close(); err != nil {
@@ -247,8 +247,20 @@ func TestClient_Close_WithNilStore(t *testing.T) {
 	}
 }
 
+// mustSecurePassword seals pw for test fixtures, panicking on failure.
+func mustSecurePassword(pw string) *secrets.SecureString {
+	ss, err := NewSecurePassword(pw)
+	if err != nil {
+		panic(err)
+	}
+	return ss
+}
+
 func TestNewSecurePassword(t *testing.T) {
-	ss := NewSecurePassword("hunter2")
+	ss, err := NewSecurePassword("hunter2")
+	if err != nil {
+		t.Fatalf("NewSecurePassword: %v", err)
+	}
 	if ss == nil {
 		t.Fatal("expected non-nil SecureString")
 	}
@@ -256,6 +268,16 @@ func TestNewSecurePassword(t *testing.T) {
 		t.Errorf("Plaintext() = %q", ss.Plaintext())
 	}
 	ss.Destroy()
+}
+
+func TestNewSecurePasswordEmpty(t *testing.T) {
+	ss, err := NewSecurePassword("")
+	if err == nil {
+		t.Fatal("expected an error for an empty password")
+	}
+	if ss != nil {
+		t.Fatal("expected no SecureString when sealing fails")
+	}
 }
 
 func TestNoopLogger_Methods(t *testing.T) {
@@ -305,7 +327,7 @@ func TestNewClient_NilStore_DAOStoreCreationError(t *testing.T) {
 
 func TestInitCrypto_WithCredentials_SetsRegID(t *testing.T) {
 	// Credentials in the store should set regID = creds.DeviceID in initCrypto.
-	creds := &Credentials{UUID: "my-uuid", DeviceID: 7, Password: NewSecurePassword("pw")}
+	creds := &Credentials{UUID: "my-uuid", DeviceID: 7, Password: mustSecurePassword("pw")}
 	ms := &mockStore{credentials: creds}
 	c := newTestClient(t, "http://localhost", ms)
 	if err := c.initCrypto(); err != nil {
@@ -317,7 +339,7 @@ func TestInitCrypto_WithCredentials_SetsRegID(t *testing.T) {
 }
 
 func TestNewClient_WithInvalidCACert(t *testing.T) {
-	badPEM := secrets.NewSecureString("not-a-valid-cert")
+	badPEM := secrets.MustNewSecureString("not-a-valid-cert")
 	defer badPEM.Destroy()
 	cfg := ClientConfig{
 		ServerURL: "http://localhost",

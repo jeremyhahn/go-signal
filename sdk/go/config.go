@@ -7,7 +7,7 @@
 // for self-hosted LAN and WAN deployments.
 //
 // All sensitive material (passwords, keys, certificates) is held in
-// memguard-protected memory and zeroed on Close().
+// protected memory and zeroed on Close().
 package signal
 
 import (
@@ -18,7 +18,7 @@ import (
 )
 
 // ClientConfig holds all configuration for a Signal client connection.
-// Sensitive fields use SecureString for memguard-protected memory.
+// Sensitive fields use SecureString for protected memory.
 type ClientConfig struct {
 	// ServerURL is the base URL of the Signal server.
 	ServerURL string

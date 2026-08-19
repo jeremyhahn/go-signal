@@ -84,8 +84,8 @@ func TestParseToken_HappyPath(t *testing.T) {
 		t.Errorf("Action = %q", got.Action)
 	}
 	// Dots inside the token slot are preserved.
-	if got.Token != "opaque.token.with.dots" {
-		t.Errorf("Token = %q", got.Token)
+	if got.Token.Plaintext() != "opaque.token.with.dots" {
+		t.Errorf("Token = %q", got.Token.Plaintext())
 	}
 	if got.IsShort {
 		t.Error("IsShort should be false")
@@ -100,8 +100,8 @@ func TestParseToken_ShortSuffix(t *testing.T) {
 	if got.Provider != "recaptcha" || !got.IsShort {
 		t.Errorf("expected provider=recaptcha, IsShort=true; got %+v", got)
 	}
-	if got.Token != "abcde" {
-		t.Errorf("Token = %q", got.Token)
+	if got.Token.Plaintext() != "abcde" {
+		t.Errorf("Token = %q", got.Token.Plaintext())
 	}
 }
 
@@ -372,4 +372,30 @@ func TestReCAPTCHAVerifier_ValidSiteKeys(t *testing.T) {
 	if got := (&ReCAPTCHAVerifier{}).ValidSiteKeys(ActionRegistration); got != nil {
 		t.Errorf("expected nil from zero-value verifier, got %+v", got)
 	}
+}
+
+// The parsed solution is a bearer value: Destroy must wipe it, and Verify
+// defers it, so it must be safe to call twice and on nil.
+func TestParsedToken_Destroy_WipesToken(t *testing.T) {
+	got, err := parseToken("recaptcha.sitekey.challenge.solution")
+	if err != nil {
+		t.Fatalf("parseToken: %v", err)
+	}
+	if got.Token.Plaintext() != "solution" {
+		t.Fatalf("Token = %q, want solution", got.Token.Plaintext())
+	}
+	got.Destroy()
+	if left := got.Token.Plaintext(); left != "" {
+		t.Errorf("token survived Destroy: %q", left)
+	}
+}
+
+func TestParsedToken_Destroy_IdempotentAndNilSafe(t *testing.T) {
+	got, err := parseToken("recaptcha.sitekey.challenge.solution")
+	if err != nil {
+		t.Fatalf("parseToken: %v", err)
+	}
+	got.Destroy()
+	got.Destroy()
+	(*parsedToken)(nil).Destroy()
 }

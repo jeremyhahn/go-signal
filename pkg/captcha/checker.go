@@ -3,6 +3,8 @@ package captcha
 import (
 	"context"
 	"strings"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 // tokenSeparator is the dot character between slots in the captcha token
@@ -18,12 +20,25 @@ const shortCodeSuffix = "-short"
 // already normalized to lower-case where appropriate (provider, site key)
 // and unchanged for token bytes.
 type parsedToken struct {
-	Provider  string // "recaptcha" / "hcaptcha" / etc.
-	SiteKey   string // lower-cased
-	Action    Action // parsed enum
-	Token     string // raw provider-issued solution
+	Provider string // "recaptcha" / "hcaptcha" / etc.
+	SiteKey  string // lower-cased
+	Action   Action // parsed enum
+	// Token is the raw provider-issued solution — a single-use bearer
+	// value. The server's copy is held in protected memory and wiped by
+	// Destroy once the provider call returns; the caller's original input
+	// string is a Go string and cannot be wiped, so this bounds the
+	// server-side residency rather than eliminating it.
+	Token     *secrets.SecureString
 	IsShort   bool   // true when input used the "-short" provider suffix
 	RawAction string // original action slot (for metrics / error messages)
+}
+
+// Destroy wipes the protected token. Safe on nil and idempotent.
+func (p *parsedToken) Destroy() {
+	if p == nil {
+		return
+	}
+	p.Token.Destroy()
 }
 
 // parseToken splits a captcha submission of the form
@@ -55,11 +70,15 @@ func parseToken(input string) (*parsedToken, error) {
 	if provider == "" || siteKey == "" || token == "" {
 		return nil, &InvalidTokenFormatError{Reason: "empty slot in captcha token"}
 	}
+	sealed, err := secrets.NewSecureString(token)
+	if err != nil {
+		return nil, err
+	}
 	return &parsedToken{
 		Provider:  provider,
 		SiteKey:   siteKey,
 		Action:    action,
-		Token:     token,
+		Token:     sealed,
 		IsShort:   isShort,
 		RawAction: rawAction,
 	}, nil
@@ -112,10 +131,13 @@ func (c *Checker) Verify(ctx context.Context, expectedAction Action, input, remo
 	if err != nil {
 		return nil, err
 	}
+	defer parsed.Destroy()
 	if parsed.Action != expectedAction {
 		return nil, &InvalidActionError{Action: parsed.RawAction}
 	}
-	token := parsed.Token
+	// The solution is opened here and lives only for the duration of the
+	// provider round-trip; parsed.Token is wiped by the deferred Destroy.
+	token := parsed.Token.Plaintext()
 	if parsed.IsShort {
 		if c.ShortCodes == nil {
 			return nil, &ShortCodeUnsupportedError{}

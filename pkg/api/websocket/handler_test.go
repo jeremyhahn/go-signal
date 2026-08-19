@@ -2048,7 +2048,7 @@ func TestRouteToHTTP_SendResponseError_ClosedSession(t *testing.T) {
 		if err != nil {
 			return
 		}
-		session := signalws.NewSession(conn, "send-resp-err-uuid", 1, secrets.NewSecureString("token"), logger)
+		session := signalws.NewSession(conn, "send-resp-err-uuid", 1, secrets.MustNewSecureString("token"), logger)
 		// Close the session so the final Send in routeToHTTP fails.
 		session.Close()
 		msg := &signalws.WebSocketMessage{

@@ -38,7 +38,7 @@ func TestGetAuthToken_ReturnsCredentials(t *testing.T) {
 	if creds.Username != "user-uuid-1" {
 		t.Errorf("got username %q, want %q", creds.Username, "user-uuid-1")
 	}
-	if creds.Password == "" {
+	if creds.Password.Plaintext() == "" {
 		t.Fatal("expected non-empty password")
 	}
 }
@@ -53,7 +53,7 @@ func TestGetAuthToken_UniquePasswords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if creds1.Password == creds2.Password {
+	if creds1.Password.Plaintext() == creds2.Password.Plaintext() {
 		t.Error("expected unique passwords for each call")
 	}
 }
@@ -130,7 +130,7 @@ func TestGetAuthToken_WithSharedSecret_IsDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if creds1.Password != creds2.Password {
+	if creds1.Password.Plaintext() != creds2.Password.Plaintext() {
 		t.Error("HMAC password must be deterministic for the same input")
 	}
 }
@@ -146,7 +146,7 @@ func TestGetAuthToken_WithSharedSecret_DifferentUUIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if creds1.Password == creds2.Password {
+	if creds1.Password.Plaintext() == creds2.Password.Plaintext() {
 		t.Error("different UUIDs must produce different HMAC passwords")
 	}
 }
@@ -172,8 +172,8 @@ func TestGetAuthToken_WithSharedSecret_PasswordIsHexHMAC(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// HMAC-SHA256 is 32 bytes → 64 hex characters.
-	if len(creds.Password) != 64 {
-		t.Errorf("expected 64-char hex password, got len %d: %q", len(creds.Password), creds.Password)
+	if len(creds.Password.Plaintext()) != 64 {
+		t.Errorf("expected 64-char hex password, got len %d: %q", len(creds.Password.Plaintext()), creds.Password.Plaintext())
 	}
 }
 
@@ -186,10 +186,10 @@ func TestGetAuthToken_WithSharedSecret_DiffersFromStubMode(t *testing.T) {
 	credsStub, _ := mStub.GetAuthToken(context.Background(), uuid)
 	credsHMAC, _ := mHMAC.GetAuthToken(context.Background(), uuid)
 	// Stub mode returns a random UUID (36 chars); HMAC mode returns 64 hex chars.
-	if len(credsHMAC.Password) != 64 {
-		t.Errorf("HMAC password length = %d, want 64", len(credsHMAC.Password))
+	if len(credsHMAC.Password.Plaintext()) != 64 {
+		t.Errorf("HMAC password length = %d, want 64", len(credsHMAC.Password.Plaintext()))
 	}
-	if len(credsStub.Password) == 64 {
+	if len(credsStub.Password.Plaintext()) == 64 {
 		t.Error("stub password should not be 64 chars (random UUID is 36)")
 	}
 }
@@ -218,9 +218,9 @@ func TestGetAuthToken_TableDriven_WithAndWithoutSecret(t *testing.T) {
 			if creds.Username != tc.uuid {
 				t.Errorf("username = %q, want %q", creds.Username, tc.uuid)
 			}
-			if len(creds.Password) != tc.wantPassLen {
+			if len(creds.Password.Plaintext()) != tc.wantPassLen {
 				t.Errorf("password len = %d, want %d (%s): %q",
-					len(creds.Password), tc.wantPassLen, tc.wantPassLenMsg, creds.Password)
+					len(creds.Password.Plaintext()), tc.wantPassLen, tc.wantPassLenMsg, creds.Password.Plaintext())
 			}
 		})
 	}

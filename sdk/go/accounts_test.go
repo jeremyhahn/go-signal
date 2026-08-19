@@ -668,3 +668,52 @@ func TestGeneratePassword_IsRandom(t *testing.T) {
 		t.Error("passwords should be unique")
 	}
 }
+
+// A registration that fails after the auth password is sealed must wipe it:
+// ownership only transfers to the client config on the success path.
+func TestClient_Register_SaveCredentialsFails_WipesPassword(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(RegistrationResult{UUID: "u", PNI: "p"})
+	}))
+	defer srv.Close()
+
+	ms := &mockStore{saveCredErr: errors.New("disk full")}
+	c := newTestClient(t, srv.URL, ms)
+	if _, err := c.Register(context.Background(), "+15550000001", "sess-1"); err == nil {
+		t.Fatal("expected error when SaveCredentials fails")
+	}
+
+	if ms.credentials == nil || ms.credentials.Password == nil {
+		t.Fatal("expected the store to have seen the credential")
+	}
+	if !ms.credentials.Password.IsDestroyed() {
+		t.Error("the sealed auth password must be wiped when registration fails")
+	}
+	if c.config.Password != nil {
+		t.Error("a failed registration must not install a password on the client")
+	}
+}
+
+// The mirror of the above: on success the password is owned by the client
+// config and must still be usable.
+func TestClient_Register_Success_KeepsPassword(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(RegistrationResult{UUID: "u", PNI: "p"})
+	}))
+	defer srv.Close()
+
+	ms := &mockStore{}
+	c := newTestClient(t, srv.URL, ms)
+	if _, err := c.Register(context.Background(), "+15550000001", "sess-1"); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	if c.config.Password == nil || c.config.Password.IsDestroyed() {
+		t.Fatal("the client must own a usable auth password after registration")
+	}
+	if c.config.Password.Plaintext() == "" {
+		t.Error("the auth password must be readable for subsequent requests")
+	}
+}

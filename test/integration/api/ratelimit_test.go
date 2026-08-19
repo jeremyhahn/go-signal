@@ -79,7 +79,7 @@ func setupRateLimitedTestServer(t *testing.T) (*rest.Server, string) {
 
 	accountsMgr := accounts.NewAccountsManager(accountStore, 6)
 	captchaMgr := captcha.NewCaptchaManager(logger)
-	certificatesMgr := certificates.NewCertificatesManager(secrets.NewSecureString("test-signing-key-32bytes-xxxxxx"), logger)
+	certificatesMgr := certificates.NewCertificatesManager(secrets.MustNewSecureString("test-signing-key-32bytes-xxxxxx"), logger)
 	keysMgr := keys.NewKeysManager(keyStore)
 	messagesMgr := messages.NewMessagesManager(messageStore)
 	profilesMgr := profiles.NewProfilesManager(profileStore)

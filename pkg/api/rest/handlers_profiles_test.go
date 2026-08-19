@@ -15,6 +15,7 @@ import (
 	"github.com/jeremyhahn/go-libsignal/pkg/zkgroup"
 
 	"github.com/jeremyhahn/go-signal/pkg/accounts"
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	"github.com/jeremyhahn/go-signal/pkg/profiles"
 )
 
@@ -703,7 +704,7 @@ func newTestServerWithAvatarCDN(t *testing.T) (*Server, *accounts.Account) {
 		Bucket:    "test-bucket",
 		Region:    "us-east-1",
 		AccessKey: "AKIATESTKEY",
-		SecretKey: "TestSecretKey1234567890abcdefgh",
+		SecretKey: secrets.MustNewSecureString("TestSecretKey1234567890abcdefgh"),
 	}
 
 	acct := testAccount()
@@ -763,7 +764,7 @@ func TestBuildAvatarUploadAttributes_WithCDN(t *testing.T) {
 		Bucket:    "my-bucket",
 		Region:    "eu-west-1",
 		AccessKey: "AKIAIOSFODNN7EXAMPLE",
-		SecretKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+		SecretKey: secrets.MustNewSecureString("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
 	}
 
 	attrs, err := s.buildAvatarUploadAttributes("test-uuid-1234")

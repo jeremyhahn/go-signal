@@ -231,7 +231,7 @@ func TestEncryptMessage_WithoutSession(t *testing.T) {
 	// empty session whose chain key is nil, causing cipher.Encrypt to panic.
 	// We recover from that panic so the test passes while still exercising all
 	// statements in encryptMessage up to and including the cipher.Encrypt call.
-	creds := &Credentials{UUID: "my-uuid", DeviceID: 1, Password: NewSecurePassword("pw")}
+	creds := &Credentials{UUID: "my-uuid", DeviceID: 1, Password: mustSecurePassword("pw")}
 	ms := &mockStore{credentials: creds}
 	c := newTestClient(t, "http://localhost", ms)
 
@@ -288,7 +288,7 @@ func TestEncryptMessage_InitCryptoFails(t *testing.T) {
 func TestDecryptMessage_DefaultMsgType(t *testing.T) {
 	// msgType = 0 is not PREKEY_TYPE (3) or WHISPER_TYPE (2) so the switch
 	// hits the default branch, which returns the raw content bytes unchanged.
-	creds := &Credentials{UUID: "my-uuid", DeviceID: 1, Password: NewSecurePassword("pw")}
+	creds := &Credentials{UUID: "my-uuid", DeviceID: 1, Password: mustSecurePassword("pw")}
 	ms := &mockStore{credentials: creds}
 	c := newTestClient(t, "http://localhost", ms)
 	if err := c.initCrypto(); err != nil {

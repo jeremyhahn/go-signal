@@ -140,7 +140,10 @@ func (c *Client) Register(ctx context.Context, number, sessionID string) (*Regis
 
 	// Generate auth password in secure memory.
 	passwordPlain := generatePassword()
-	password := secrets.NewSecureString(passwordPlain)
+	password, err := secrets.NewSecureString(passwordPlain)
+	if err != nil {
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "protect auth password", err)
+	}
 	// Wipe the plaintext immediately.
 	passwordPlainBytes := []byte(passwordPlain)
 	for i := range passwordPlainBytes {
@@ -171,6 +174,15 @@ func (c *Client) Register(ctx context.Context, number, sessionID string) (*Regis
 		"pniPqLastResortPreKey": generateDummyPQPreKey(pniIdentity),
 	}
 
+	// Ownership of the sealed password transfers to the client config at the
+	// end of this function; until then every failure path must wipe it.
+	passwordOwned := true
+	defer func() {
+		if passwordOwned {
+			password.Destroy()
+		}
+	}()
+
 	var result RegistrationResult
 	err = c.doRequestWithAuth(ctx, "POST", "/v1/registration", number, password.Plaintext(), regReq, &result)
 	if err != nil {
@@ -189,10 +201,13 @@ func (c *Client) Register(ctx context.Context, number, sessionID string) (*Regis
 		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "save credentials", err)
 	}
 
-	// Update client config with new credentials. Password is already SecureString.
+	// Update client config with new credentials. Password is already
+	// SecureString; ownership passes to the config here, so the deferred
+	// wipe above stands down.
 	c.config.Account = number
-	c.config.Password = password // SecureString, memguard-protected
+	c.config.Password = password // SecureString, enclave-protected
 	c.config.DeviceID = 1
+	passwordOwned = false
 
 	return &result, nil
 }

@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -148,5 +149,62 @@ func TestHandleCheckSVRSVRAuth_Unauthenticated(t *testing.T) {
 
 	if rr.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", rr.Code)
+	}
+}
+
+// Same guard as the directory-auth body test: the SVR credential must reach
+// the client as usable plaintext even though it is held in protected memory
+// server-side.
+func TestHandleGetSVRSVRAuth_BodyCarriesUsableCredential(t *testing.T) {
+	s, _ := newTestServerWithAccount(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/svr/auth", nil)
+	req.SetBasicAuth(testAccountUUID, testAuthToken)
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v (body %s)", err, rr.Body.String())
+	}
+	if resp.Username != testAccountUUID {
+		t.Errorf("username = %q, want %q", resp.Username, testAccountUUID)
+	}
+	if resp.Password == "" {
+		t.Error("password must not be empty")
+	}
+	if resp.Password == "[REDACTED]" {
+		t.Error("password must not be redacted on the wire")
+	}
+}
+
+// The SVRB archive credential goes out through a dedicated response DTO;
+// assert that path too, since it reads Plaintext() explicitly.
+func TestHandleGetSVRBackupAuth_BodyCarriesUsableCredential(t *testing.T) {
+	s, _ := newTestServerWithAccount(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/v2/backup/auth", nil)
+	req.SetBasicAuth(testAccountUUID, testAuthToken)
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v (body %s)", err, rr.Body.String())
+	}
+	if resp.Password == "" || resp.Password == "[REDACTED]" {
+		t.Errorf("password not usable on the wire: %q", resp.Password)
 	}
 }

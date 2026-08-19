@@ -4,7 +4,6 @@ go 1.26.6
 
 require (
 	github.com/alicebob/miniredis/v2 v2.34.0
-	github.com/awnumar/memguard v0.23.0
 	github.com/coder/websocket v1.8.14
 	github.com/fxamacker/cbor/v2 v2.9.0
 	github.com/go-webauthn/webauthn v0.16.1
@@ -13,6 +12,7 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/jeremyhahn/go-libsignal v0.1.1-alpha
 	github.com/jeremyhahn/go-qrdb v0.1.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.1.0-alpha
 	github.com/prometheus/client_golang v1.23.2
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/robfig/cron/v3 v3.0.1
@@ -34,6 +34,7 @@ require (
 	github.com/RaduBerinde/btreemap v0.0.0-20260105202824-d3184786f603 // indirect
 	github.com/alicebob/gopher-json v0.0.0-20230218143504-906a9b012302 // indirect
 	github.com/awnumar/memcall v0.5.0 // indirect
+	github.com/awnumar/memguard v0.23.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/chewxy/math32 v1.10.1 // indirect
@@ -63,7 +64,6 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jeremyhahn/go-codec v1.3.1 // indirect
 	github.com/jeremyhahn/go-objstore v0.2.1-alpha // indirect
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.1.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.3.0-alpha // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.18.4 // indirect

@@ -51,7 +51,7 @@ func newTestTransport(t *testing.T, f *fakeSES) *Transport {
 	tr, err := NewTransport(Config{
 		Region:          "us-east-1",
 		AccessKeyID:     "AKIDEXAMPLE",
-		SecretAccessKey: secrets.NewSecureString("secret-key"),
+		SecretAccessKey: secrets.MustNewSecureString("secret-key"),
 		FromAddress:     "verify@signal.test",
 		Endpoint:        f.server.URL,
 	})
@@ -66,11 +66,11 @@ func TestNewTransport_RequiredFields(t *testing.T) {
 		name string
 		cfg  Config
 	}{
-		{"no Region", Config{AccessKeyID: "a", SecretAccessKey: secrets.NewSecureString("s"), FromAddress: "f@a"}},
-		{"no AccessKeyID", Config{Region: "r", SecretAccessKey: secrets.NewSecureString("s"), FromAddress: "f@a"}},
+		{"no Region", Config{AccessKeyID: "a", SecretAccessKey: secrets.MustNewSecureString("s"), FromAddress: "f@a"}},
+		{"no AccessKeyID", Config{Region: "r", SecretAccessKey: secrets.MustNewSecureString("s"), FromAddress: "f@a"}},
 		{"no SecretAccessKey", Config{Region: "r", AccessKeyID: "a", FromAddress: "f@a"}},
-		{"empty SecretAccessKey", Config{Region: "r", AccessKeyID: "a", SecretAccessKey: secrets.NewSecureString(""), FromAddress: "f@a"}},
-		{"no FromAddress", Config{Region: "r", AccessKeyID: "a", SecretAccessKey: secrets.NewSecureString("s")}},
+		{"empty SecretAccessKey", Config{Region: "r", AccessKeyID: "a", SecretAccessKey: secrets.MustNewSecureString(""), FromAddress: "f@a"}},
+		{"no FromAddress", Config{Region: "r", AccessKeyID: "a", SecretAccessKey: secrets.MustNewSecureString("s")}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -84,7 +84,7 @@ func TestNewTransport_RequiredFields(t *testing.T) {
 func TestNewTransport_DefaultsEndpointAndSubject(t *testing.T) {
 	tr, err := NewTransport(Config{
 		Region: "us-east-1", AccessKeyID: "a",
-		SecretAccessKey: secrets.NewSecureString("s"), FromAddress: "f@a",
+		SecretAccessKey: secrets.MustNewSecureString("s"), FromAddress: "f@a",
 	})
 	if err != nil {
 		t.Fatalf("NewTransport: %v", err)
@@ -100,7 +100,7 @@ func TestNewTransport_DefaultsEndpointAndSubject(t *testing.T) {
 func TestTransport_Name(t *testing.T) {
 	tr, _ := NewTransport(Config{
 		Region: "us-east-1", AccessKeyID: "a",
-		SecretAccessKey: secrets.NewSecureString("s"), FromAddress: "f@a",
+		SecretAccessKey: secrets.MustNewSecureString("s"), FromAddress: "f@a",
 	})
 	if tr.Name() != "ses" {
 		t.Errorf("Name = %q", tr.Name())
@@ -193,7 +193,7 @@ func TestSendCode_UnparsableBodyFallsBackToRaw(t *testing.T) {
 func TestSendCode_TransportErrorWrapped(t *testing.T) {
 	tr, err := NewTransport(Config{
 		Region: "us-east-1", AccessKeyID: "a",
-		SecretAccessKey: secrets.NewSecureString("s"), FromAddress: "f@a",
+		SecretAccessKey: secrets.MustNewSecureString("s"), FromAddress: "f@a",
 		Endpoint: "http://127.0.0.1:1",
 	})
 	if err != nil {

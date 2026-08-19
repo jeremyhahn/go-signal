@@ -118,15 +118,26 @@ func (h *Handler) HandleAuthenticated(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Seal the session credential before the upgrade: once the connection is
+	// hijacked there is no HTTP status left to report a failure with, and a
+	// session must never run with an unprotected (or unset) password.
+	sessionPassword, err := secrets.NewSecureString(password)
+	if err != nil {
+		h.logger.Error("failed to protect session credential", slog.String("error", err.Error()))
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
 	// Upgrade to WebSocket with validated origin checking.
 	conn, err := ws.Accept(w, r, h.acceptOptions())
 	if err != nil {
+		sessionPassword.Destroy()
 		h.logger.Error("websocket upgrade failed", slog.String("error", err.Error()))
 		return
 	}
 
 	deviceID := accounts.PrimaryDeviceID
-	session := signalws.NewSession(conn, acct.UUID, deviceID, secrets.NewSecureString(password), h.logger)
+	session := signalws.NewSession(conn, acct.UUID, deviceID, sessionPassword, h.logger)
 	// Do NOT force a frame format here. ReadPump auto-detects the format from
 	// the first inbound frame type (binary → protobuf, text → JSON). Forcing
 	// protobuf here would lock the session before ReadPump can detect a JSON

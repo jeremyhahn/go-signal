@@ -20,7 +20,7 @@ func (m *mockResolver) Resolve(_ context.Context, _ string) (*SecureString, erro
 	if m.err != nil {
 		return nil, m.err
 	}
-	return NewSecureString(m.resolved), nil
+	return MustNewSecureString(m.resolved), nil
 }
 
 func TestResolverRegistry_Resolve_RegisteredScheme(t *testing.T) {

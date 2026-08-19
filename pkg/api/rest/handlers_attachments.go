@@ -54,7 +54,19 @@ func (s *Server) handleAttachmentUploadForm(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
-		auth := "Basic " + base64.StdEncoding.EncodeToString([]byte(creds.Username+":"+creds.Password))
+		// The TUS credential is opened only to build the Authorization
+		// header the client forwards, then wiped. An unavailable credential
+		// fails the request rather than emitting a header with an empty
+		// password the TUS server would reject.
+		password, err := creds.Password.Reveal()
+		if err != nil {
+			creds.Destroy()
+			s.logger.Error("attachment credentials unavailable", "error", err.Error())
+			writeError(w, http.StatusInternalServerError, "internal server error")
+			return
+		}
+		auth := "Basic " + base64.StdEncoding.EncodeToString([]byte(creds.Username+":"+password))
+		creds.Destroy()
 		headers["Authorization"] = auth
 		headers["Upload-Metadata"] = "filename " + base64.StdEncoding.EncodeToString([]byte(key))
 		uploadURL = s.tusURI + "/attachments"

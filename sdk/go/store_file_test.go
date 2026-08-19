@@ -68,7 +68,7 @@ func TestFileStore_CredentialsRoundTrip(t *testing.T) {
 		UUID:     "test-uuid",
 		PNI:      "test-pni",
 		DeviceID: 1,
-		Password: secrets.NewSecureString("my-secret-password"),
+		Password: secrets.MustNewSecureString("my-secret-password"),
 	}
 	require.NoError(t, store.SaveCredentials(creds))
 
@@ -391,7 +391,7 @@ func TestFileStore_SaveCredentials_AuthTokenIsDirectory(t *testing.T) {
 	creds := &Credentials{
 		Number:   "+15550000001",
 		DeviceID: 1,
-		Password: secrets.NewSecureString("super-secret"),
+		Password: secrets.MustNewSecureString("super-secret"),
 	}
 	err = store.SaveCredentials(creds)
 	assert.Error(t, err)
@@ -420,4 +420,17 @@ func TestFileStore_GetGroups_ReadError(t *testing.T) {
 
 	_, err = store.GetGroups()
 	assert.Error(t, err)
+}
+
+// A corrupt credentials file is reported rather than silently treated as an
+// absent credential.
+func TestFileStore_GetCredentials_CorruptFile(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewFileStore(dir)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "credentials.json"), []byte("{not json"), 0o600))
+
+	creds, err := store.GetCredentials()
+	require.Error(t, err)
+	assert.Nil(t, creds)
 }

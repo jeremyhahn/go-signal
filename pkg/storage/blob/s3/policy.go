@@ -18,6 +18,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 // dateFormat is the YYYYMMDD form used in SigV4 credential scopes.
@@ -122,9 +124,11 @@ func EncodePolicy(policy string) string {
 }
 
 // PolicySigner produces the SigV4 HMAC of a base64-encoded policy. The
-// secret is held in-process; it is never logged or surfaced to clients.
+// secret is held in protected memory for the life of the signer; it is
+// never logged or surfaced to clients, and is materialised only for the
+// duration of one signing-key derivation.
 type PolicySigner struct {
-	SecretAccessKey string
+	SecretAccessKey *secrets.SecureString
 	Region          string
 }
 
@@ -132,14 +136,16 @@ type PolicySigner struct {
 // given date. Returns lowercase hex per AWS spec. Mirrors Java's
 // PolicySigner.getSignature.
 func (s *PolicySigner) Sign(now time.Time, encodedPolicy string) (string, error) {
-	if s.SecretAccessKey == "" {
+	// One open: the plaintext is read once and used only for the key chain.
+	secret := s.SecretAccessKey.Plaintext()
+	if secret == "" {
 		return "", errors.New("s3: PolicySigner.SecretAccessKey is required")
 	}
 	if s.Region == "" {
 		return "", errors.New("s3: PolicySigner.Region is required")
 	}
 	date := now.UTC().Format(dateFormat)
-	key := deriveSigningKey(s.SecretAccessKey, date, s.Region, "s3")
+	key := deriveSigningKey(secret, date, s.Region, "s3")
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(encodedPolicy))
 	return hex.EncodeToString(mac.Sum(nil)), nil

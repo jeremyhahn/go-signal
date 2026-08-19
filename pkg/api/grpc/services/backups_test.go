@@ -16,6 +16,7 @@ import (
 	backupspb "github.com/jeremyhahn/go-signal/pkg/api/grpc/genproto/backups"
 	"github.com/jeremyhahn/go-signal/pkg/api/grpc/interceptors"
 	"github.com/jeremyhahn/go-signal/pkg/backups"
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	"github.com/jeremyhahn/go-signal/pkg/limits"
 	"github.com/jeremyhahn/go-signal/pkg/service"
 	storagememory "github.com/jeremyhahn/go-signal/pkg/storage/memory"
@@ -50,7 +51,10 @@ type grpcManagerFixture struct {
 	clientCtx     *zkgroup.BackupAuthCredentialRequestContext
 }
 
-func newGRPCFixture(t *testing.T) *grpcBackupsFixture {
+// newGRPCFixture builds the shared backups fixture. Optional mutators run
+// against the ManagerOptions before the manager is constructed, so a test can
+// enable a subsystem (e.g. SVRB) that is disabled by default.
+func newGRPCFixture(t *testing.T, opts ...func(*backups.ManagerOptions)) *grpcBackupsFixture {
 	t.Helper()
 
 	store := storagememory.NewMemoryBackupStore()
@@ -64,13 +68,17 @@ func newGRPCFixture(t *testing.T) *grpcBackupsFixture {
 	clock := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	store.SetClock(func() time.Time { return clock })
 
-	mgr := backups.NewManager(backups.ManagerOptions{
+	managerOpts := backups.ManagerOptions{
 		Store:              store,
 		Blob:               blob,
 		ServerSecretParams: serverSecret,
 		AttachmentLimiter:  limits.NewTokenBucketLimiter(limits.BucketConfig{BucketSize: 10, RefillRate: 10}),
 		Clock:              func() time.Time { return clock },
-	})
+	}
+	for _, opt := range opts {
+		opt(&managerOpts)
+	}
+	mgr := backups.NewManager(managerOpts)
 
 	var backupKey [32]byte
 	for i := range backupKey {
@@ -1986,5 +1994,72 @@ func TestBackupsAnonymous_DeleteAll_MissingPresentation(t *testing.T) {
 	}
 	if resp.GetFailedAuthentication() == nil {
 		t.Errorf("expected FailedAuthentication, got %T", resp.Outcome)
+	}
+}
+
+// fixtureSVRBGenerator is a stand-in for a configured SVRB deployment: it
+// issues a credential whose password is held in protected memory, exactly as
+// a real generator must.
+type fixtureSVRBGenerator struct{}
+
+func (fixtureSVRBGenerator) GenerateFor(_ context.Context, svrbID string) (*backups.ExternalServiceCredentials, error) {
+	return &backups.ExternalServiceCredentials{
+		Username: svrbID,
+		Password: secrets.MustNewSecureString("svrb-secret"),
+	}, nil
+}
+
+// The SVRB password is held in protected memory end to end and opened only
+// when the response message is built. Assert the client actually receives the
+// plaintext — a redacted or empty password would be an unusable credential
+// that every status-only assertion would still pass.
+func TestBackupsAnonymousService_GetSvrBCredentials_SuccessCarriesPlaintextPassword(t *testing.T) {
+	f := newGRPCFixture(t, func(o *backups.ManagerOptions) { o.SVRB = fixtureSVRBGenerator{} })
+	sp := f.mintPresentation(t, backups.BackupLevelFree, backups.CredentialTypeMessages)
+
+	resp, err := f.anonSvc.GetSvrBCredentials(context.Background(), &backupspb.GetSvrBCredentialsRequest{
+		SignedPresentation: sp,
+	})
+	if err != nil {
+		t.Fatalf("GetSvrBCredentials: %v", err)
+	}
+	creds := resp.GetSvrbCredentials()
+	if creds == nil {
+		t.Fatalf("expected SvrbCredentials, got %T", resp.Outcome)
+	}
+	if creds.Username == "" {
+		t.Error("expected a non-empty username")
+	}
+	if creds.Password != "svrb-secret" {
+		t.Errorf("password = %q, want svrb-secret", creds.Password)
+	}
+}
+
+// wipedSVRBGenerator issues a credential whose protected password has already
+// been destroyed — the failure mode a fail-open response builder would turn
+// into a success carrying an empty password.
+type wipedSVRBGenerator struct{}
+
+func (wipedSVRBGenerator) GenerateFor(_ context.Context, svrbID string) (*backups.ExternalServiceCredentials, error) {
+	creds := &backups.ExternalServiceCredentials{
+		Username: svrbID,
+		Password: secrets.MustNewSecureString("svrb-secret"),
+	}
+	creds.Destroy()
+	return creds, nil
+}
+
+func TestBackupsAnonymousService_GetSvrBCredentials_UnavailablePasswordFailsClosed(t *testing.T) {
+	f := newGRPCFixture(t, func(o *backups.ManagerOptions) { o.SVRB = wipedSVRBGenerator{} })
+	sp := f.mintPresentation(t, backups.BackupLevelFree, backups.CredentialTypeMessages)
+
+	resp, err := f.anonSvc.GetSvrBCredentials(context.Background(), &backupspb.GetSvrBCredentialsRequest{
+		SignedPresentation: sp,
+	})
+	if err == nil {
+		t.Fatalf("expected an error, got response %v", resp)
+	}
+	if status.Code(err) != codes.Internal {
+		t.Errorf("code = %v, want Internal", status.Code(err))
 	}
 }

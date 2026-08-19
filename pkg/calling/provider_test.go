@@ -15,7 +15,7 @@ import (
 // newTestAPIToken creates a SecureString for the given token string in tests.
 // The caller is responsible for calling Destroy when done with the provider.
 func newTestAPIToken(token string) *secrets.SecureString {
-	return secrets.NewSecureString(token)
+	return secrets.MustNewSecureString(token)
 }
 
 func TestStaticTurnProvider_RetrieveCredentials(t *testing.T) {

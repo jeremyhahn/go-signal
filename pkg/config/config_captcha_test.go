@@ -57,7 +57,7 @@ func TestCaptchaConfig_ZeroValue(t *testing.T) {
 func TestCaptchaConfig_Fields(t *testing.T) {
 	c := CaptchaConfig{
 		Provider:       "hcaptcha",
-		SecretKey:      secrets.NewSecureString("my-secret"),
+		SecretKey:      secrets.MustNewSecureString("my-secret"),
 		SiteKey:        "my-site",
 		ScoreThreshold: 0.7,
 	}

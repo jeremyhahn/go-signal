@@ -17,6 +17,7 @@ import (
 
 	"github.com/jeremyhahn/go-signal/pkg/accounts"
 	"github.com/jeremyhahn/go-signal/pkg/backups"
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	"github.com/jeremyhahn/go-signal/pkg/limits"
 	"github.com/jeremyhahn/go-signal/pkg/service"
 	storagememory "github.com/jeremyhahn/go-signal/pkg/storage/memory"
@@ -2519,7 +2520,7 @@ func TestHandleGetSVRBAuth_SuccessPath(t *testing.T) {
 	f, inj := newErrInjectRestServer(t)
 	inj.generateSVRBAuthResult = &backups.ExternalServiceCredentials{
 		Username: "svrb-user",
-		Password: "svrb-pass",
+		Password: secrets.MustNewSecureString("svrb-pass"),
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/archives/auth/svrb", nil)
@@ -2579,7 +2580,7 @@ func (n *noopBackupService) GenerateReadAuth(_ context.Context, _ *backups.Authe
 	return map[string]string{}, nil
 }
 func (n *noopBackupService) GenerateSVRBAuth(_ context.Context, _ *backups.AuthenticatedUser) (*backups.ExternalServiceCredentials, error) {
-	return &backups.ExternalServiceCredentials{Username: "u", Password: "p"}, nil
+	return &backups.ExternalServiceCredentials{Username: "u", Password: secrets.MustNewSecureString("p")}, nil
 }
 func (n *noopBackupService) GetCopyQuota(_ context.Context, _ *backups.AuthenticatedUser, params []backups.CopyParameters) (*backups.CopyQuota, error) {
 	// Return a quota with all items rejected (OutOfQuota) to exercise the non-success branch.
@@ -2662,5 +2663,30 @@ func TestHandleGetBackupAuth_HappyPath(t *testing.T) {
 	}
 	if len(resp.Credentials) == 0 {
 		t.Error("expected credentials in response")
+	}
+}
+
+// A credential whose protected password is already gone must not be
+// serialized as an empty password with a 200 — the client would take it for a
+// usable SVRB credential.
+func TestHandleGetSVRBAuth_UnavailablePasswordFailsClosed(t *testing.T) {
+	f, inj := newErrInjectRestServer(t)
+	unavailable := &backups.ExternalServiceCredentials{
+		Username: "svrb-user",
+		Password: secrets.MustNewSecureString("svrb-pass"),
+	}
+	unavailable.Destroy()
+	inj.generateSVRBAuthResult = unavailable
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/archives/auth/svrb", nil)
+	f.setZKHeaders(t, req, backups.BackupLevelFree, backups.CredentialTypeMessages)
+	rr := httptest.NewRecorder()
+	f.server.httpServer.Handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), `"password"`) {
+		t.Errorf("error response must not carry a credential: %s", rr.Body.String())
 	}
 }

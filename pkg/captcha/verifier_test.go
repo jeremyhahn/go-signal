@@ -77,7 +77,7 @@ func TestCaptchaVerifier_InterfaceCompliance(t *testing.T) {
 // Ensure HCaptchaVerifier and ReCAPTCHAVerifier satisfy the interface when
 // constructed successfully.
 func TestCaptchaVerifier_HCaptchaImplementsInterface(t *testing.T) {
-	v, err := NewHCaptchaVerifier(HCaptchaConfig{SecretKey: secrets.NewSecureString("dummy")})
+	v, err := NewHCaptchaVerifier(HCaptchaConfig{SecretKey: secrets.MustNewSecureString("dummy")})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestCaptchaVerifier_HCaptchaImplementsInterface(t *testing.T) {
 }
 
 func TestCaptchaVerifier_ReCAPTCHAImplementsInterface(t *testing.T) {
-	v, err := NewReCAPTCHAVerifier(ReCAPTCHAConfig{SecretKey: secrets.NewSecureString("dummy")})
+	v, err := NewReCAPTCHAVerifier(ReCAPTCHAConfig{SecretKey: secrets.MustNewSecureString("dummy")})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

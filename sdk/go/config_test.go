@@ -14,7 +14,7 @@ func TestClientConfig_Destroy_NilFields(t *testing.T) {
 
 func TestClientConfig_Destroy_WithPassword(t *testing.T) {
 	cfg := &ClientConfig{
-		Password: secrets.NewSecureString("hunter2"),
+		Password: secrets.MustNewSecureString("hunter2"),
 	}
 	cfg.Destroy()
 	// After Destroy the password buffer should be zeroed/destroyed.
@@ -25,7 +25,7 @@ func TestClientConfig_Destroy_WithPassword(t *testing.T) {
 
 func TestClientConfig_Destroy_WithCACert(t *testing.T) {
 	cfg := &ClientConfig{
-		CACert: secrets.NewSecureString("-----BEGIN CERTIFICATE-----"),
+		CACert: secrets.MustNewSecureString("-----BEGIN CERTIFICATE-----"),
 	}
 	cfg.Destroy()
 	if cfg.CACert != nil && !cfg.CACert.IsDestroyed() {
@@ -35,8 +35,8 @@ func TestClientConfig_Destroy_WithCACert(t *testing.T) {
 
 func TestClientConfig_Destroy_BothFields(t *testing.T) {
 	cfg := &ClientConfig{
-		Password: secrets.NewSecureString("pass"),
-		CACert:   secrets.NewSecureString("cert"),
+		Password: secrets.MustNewSecureString("pass"),
+		CACert:   secrets.MustNewSecureString("cert"),
 	}
 	cfg.Destroy()
 	// No panic and both fields destroyed.
@@ -50,7 +50,7 @@ func TestCredentials_Destroy_Nil(t *testing.T) {
 func TestCredentials_Destroy_WithPassword(t *testing.T) {
 	c := &Credentials{
 		Number:   "+15550000001",
-		Password: secrets.NewSecureString("secret"),
+		Password: secrets.MustNewSecureString("secret"),
 	}
 	c.Destroy()
 	if c.Password != nil && !c.Password.IsDestroyed() {

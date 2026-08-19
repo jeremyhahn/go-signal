@@ -3,6 +3,7 @@ package rest
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -123,10 +124,20 @@ func (s *Server) handleSetProfile(w http.ResponseWriter, r *http.Request) {
 	// upload attributes so the client can upload the avatar to the CDN.
 	if req.AvatarUpload && !req.SameAvatar {
 		attrs, err := s.buildAvatarUploadAttributes(acct.UUID)
-		if err != nil {
+		switch {
+		case errors.Is(err, errAvatarCDNNotConfigured):
 			s.logger.Error("avatar upload requested but CDN is not configured",
 				slog.String("uuid", acct.UUID), slog.String("error", err.Error()))
 			writeError(w, http.StatusServiceUnavailable, "avatar upload is not configured")
+			return
+		case err != nil:
+			// The CDN is configured but its credential could not be read
+			// back out of protected memory: that is our failure, not a
+			// deployment gap, and it must not produce a signed-with-nothing
+			// upload form.
+			s.logger.Error("avatar upload signing failed",
+				slog.String("uuid", acct.UUID), slog.String("error", err.Error()))
+			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		writeJSON(w, http.StatusOK, attrs)
@@ -170,7 +181,17 @@ func (s *Server) buildAvatarUploadAttributes(accountUUID string) (ProfileAvatarU
 		amzDate,
 	)
 	policyB64 := base64.StdEncoding.EncodeToString([]byte(policyJSON))
-	signature := auth.SignS3PostPolicy(s.avatarCDN.SecretKey, dateStamp, s.avatarCDN.Region, policyB64)
+	// The secret key lives in protected memory; it is opened here for the
+	// single HMAC chain and the copy goes out of scope immediately. Reveal,
+	// not Plaintext: Enabled() checked the secret earlier, but a destroy or
+	// an enclave failure between that check and this read must fail the
+	// request rather than sign the policy with an empty key and hand the
+	// client an upload form S3 will reject.
+	secretKey, err := s.avatarCDN.SecretKey.Reveal()
+	if err != nil {
+		return ProfileAvatarUploadAttributes{}, err
+	}
+	signature := auth.SignS3PostPolicy(secretKey, dateStamp, s.avatarCDN.Region, policyB64)
 
 	return ProfileAvatarUploadAttributes{
 		Key:        avatarKey,

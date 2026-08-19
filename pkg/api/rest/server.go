@@ -19,6 +19,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/calling"
 	"github.com/jeremyhahn/go-signal/pkg/captcha"
 	"github.com/jeremyhahn/go-signal/pkg/certificates"
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	"github.com/jeremyhahn/go-signal/pkg/devices"
 	"github.com/jeremyhahn/go-signal/pkg/directory"
 	"github.com/jeremyhahn/go-signal/pkg/keys"
@@ -145,12 +146,15 @@ type AvatarCDNConfig struct {
 	Bucket    string
 	Region    string
 	AccessKey string
-	SecretKey string
+	// SecretKey is the S3 secret access key. It is held in protected
+	// memory for the life of the process and only materialised inside
+	// the POST-policy signing step.
+	SecretKey *secrets.SecureString
 }
 
 // Enabled reports whether enough is configured to sign avatar uploads.
 func (c AvatarCDNConfig) Enabled() bool {
-	return c.Bucket != "" && c.Region != "" && c.AccessKey != "" && c.SecretKey != ""
+	return c.Bucket != "" && c.Region != "" && c.AccessKey != "" && !c.SecretKey.IsDestroyed()
 }
 
 // ServerConfig holds the configuration required to create a new Server.

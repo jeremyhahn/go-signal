@@ -8,13 +8,15 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
-	"github.com/awnumar/memguard"
 	"github.com/google/uuid"
 	"github.com/jeremyhahn/go-libsignal/pkg/zkcredential"
 	"github.com/jeremyhahn/go-libsignal/pkg/zkgroup"
+	"github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
@@ -55,14 +57,23 @@ type CertificatesManager struct {
 	// fallback and HMAC group credentials when zkgroup is not configured.
 	signingKey *secrets.SecureString
 
-	// ed25519Enclave holds the Ed25519 private key in a memguard-protected
-	// enclave. When non-nil, Ed25519 signing replaces HMAC-SHA256. The key
-	// material is only briefly exposed during signing and is immediately
-	// re-sealed or destroyed after use.
-	ed25519Enclave *memguard.Enclave
+	// keyMu guards ed25519Secret and ed25519PubKeyID. Readers hold it for
+	// the whole open-copy-use sequence, so a rotation cannot destroy a
+	// secret an in-flight signature is still reading; SetEd25519SigningKey
+	// and Destroy take it exclusively. Rotation is rare and signing is not,
+	// hence RWMutex rather than a bare Mutex.
+	keyMu sync.RWMutex
+
+	// ed25519Secret holds the Ed25519 private key in the shared
+	// protected-memory abstraction. When non-nil, Ed25519 signing replaces
+	// HMAC-SHA256. The key material is only briefly exposed during signing
+	// and the working copy is destroyed immediately after use.
+	// Guarded by keyMu.
+	ed25519Secret *secure.Secret
 
 	// ed25519PubKeyID is an opaque key identifier embedded in delivery
 	// certificates so clients can select the correct verification key.
+	// Guarded by keyMu.
 	ed25519PubKeyID uint32
 
 	// authServerSecret is the full zkgroup server secret used to issue
@@ -94,14 +105,12 @@ func (m *CertificatesManager) Destroy() {
 		m.signingKey.Destroy()
 		m.signingKey = nil
 	}
-	if m.ed25519Enclave != nil {
-		// Open and immediately destroy the locked buffer to wipe the key bytes.
-		buf, err := m.ed25519Enclave.Open()
-		if err == nil {
-			buf.Destroy()
-		}
-		m.ed25519Enclave = nil
+	m.keyMu.Lock()
+	if m.ed25519Secret != nil {
+		m.ed25519Secret.Destroy()
+		m.ed25519Secret = nil
 	}
+	m.keyMu.Unlock()
 	// Zero zkgroup server secrets by releasing the pointer references so GC
 	// can collect them; the underlying C memory is managed by the zkgroup
 	// library itself.
@@ -138,12 +147,24 @@ func (m *CertificatesManager) SetEd25519SigningKey(privKey ed25519.PrivateKey, p
 			Want: ed25519PrivKeySize,
 		}}
 	}
-	// NewBufferFromBytes copies the bytes into a locked memory region and
-	// zeros the source slice on return. Seal converts it to an immutable
-	// Enclave that cannot be accidentally modified.
-	buf := memguard.NewBufferFromBytes(privKey)
-	m.ed25519Enclave = buf.Seal()
+	// NewSecret copies the bytes into an enclave and zeros the source slice
+	// on return; the sealed material can only be read back through Open.
+	sec, err := secure.NewSecret(privKey)
+	if err != nil {
+		return &Ed25519KeyError{Cause: err}
+	}
+	// Seal first, then swap, then wipe the key we replaced: a rotation must
+	// not leave the previous private key resident and unreachable, and a
+	// failed seal above must not have disturbed the key in use.
+	// The swap and the wipe both happen under the write lock: a reader that
+	// already holds the retired secret holds the read lock, so Lock waits it
+	// out and the destroy cannot land mid-signature.
+	m.keyMu.Lock()
+	previous := m.ed25519Secret
+	m.ed25519Secret = sec
 	m.ed25519PubKeyID = pubKeyID
+	previous.Destroy()
+	m.keyMu.Unlock()
 	return nil
 }
 
@@ -152,26 +173,63 @@ func (m *CertificatesManager) SetEd25519SigningKey(privKey ed25519.PrivateKey, p
 // The private key is only briefly unlocked to derive the public key and is
 // re-sealed immediately after use.
 func (m *CertificatesManager) Ed25519PublicKey() ed25519.PublicKey {
-	if m.ed25519Enclave == nil {
+	var pub ed25519.PublicKey
+	// Derive the public key from the locked bytes via a temporary copy; the
+	// copy is zeroed by useEd25519Key before this returns.
+	_, err := m.useEd25519Key(func(priv ed25519.PrivateKey) error {
+		derived, ok := priv.Public().(ed25519.PublicKey)
+		if !ok {
+			return &Ed25519KeyError{Cause: errNotAnEd25519Key}
+		}
+		pub = derived
 		return nil
-	}
-	buf, err := m.ed25519Enclave.Open()
+	})
 	if err != nil {
 		return nil
 	}
-	defer buf.Destroy()
-	// Derive the public key from the locked bytes via a temporary copy.
-	// The copy is zeroed before returning to avoid lingering key material.
-	priv := ed25519.PrivateKey(make([]byte, len(buf.Bytes())))
-	copy(priv, buf.Bytes())
-	pub, ok := priv.Public().(ed25519.PublicKey)
-	for i := range priv {
-		priv[i] = 0
-	}
-	if !ok {
-		return nil
-	}
 	return pub
+}
+
+// errNotAnEd25519Key is returned when a sealed key does not yield an Ed25519
+// public key — structurally impossible for a key that passed the length check
+// in SetEd25519SigningKey, but the type assertion is not ours to elide.
+var errNotAnEd25519Key = errors.New("certificates: sealed key is not an Ed25519 private key")
+
+// useEd25519Key runs fn with a temporary heap copy of the configured Ed25519
+// private key, or reports that no key is configured. The key lock is held for
+// read across the whole call, so a concurrent SetEd25519SigningKey cannot wipe
+// the secret while fn is using it; the heap copy is zeroed on the way out.
+//
+// The copy exists because crypto/ed25519 registers a weak pointer on the key
+// (required by Go's FIPS140 cache) and so cannot be handed protected memory
+// directly.
+func (m *CertificatesManager) useEd25519Key(fn func(priv ed25519.PrivateKey) error) (bool, error) {
+	m.keyMu.RLock()
+	defer m.keyMu.RUnlock()
+
+	if m.ed25519Secret == nil {
+		return false, nil
+	}
+	buf, err := m.ed25519Secret.Open()
+	if err != nil {
+		return true, err
+	}
+	priv := make(ed25519.PrivateKey, len(buf.Bytes()))
+	copy(priv, buf.Bytes())
+	buf.Destroy()
+	defer func() {
+		for i := range priv {
+			priv[i] = 0
+		}
+	}()
+	return true, fn(priv)
+}
+
+// hasEd25519Key reports whether an Ed25519 signing key is configured.
+func (m *CertificatesManager) hasEd25519Key() bool {
+	m.keyMu.RLock()
+	defer m.keyMu.RUnlock()
+	return m.ed25519Secret != nil
 }
 
 // GetDeliveryCertificate generates a delivery certificate for the specified
@@ -229,7 +287,7 @@ func (m *CertificatesManager) GetDeliveryCertificate(
 		slog.String("uuid", uuid),
 		slog.Int64("expiry", expiryMillis),
 		slog.Bool("includeE164", includeE164),
-		slog.Bool("ed25519", m.ed25519Enclave != nil),
+		slog.Bool("ed25519", m.hasEd25519Key()),
 	)
 
 	return &DeliveryCertificate{
@@ -426,22 +484,15 @@ func (m *CertificatesManager) signCertificate(cert *SenderCertificate) ([]byte, 
 		return nil, err
 	}
 
-	if m.ed25519Enclave != nil {
-		// Unlock the enclave into a temporary heap-allocated copy so that
-		// crypto/ed25519 can register a weak pointer on the key (required
-		// by Go's FIPS140 cache). The copy is zeroed immediately after use
-		// to limit exposure of key material on the heap.
-		buf, err := m.ed25519Enclave.Open()
-		if err != nil {
-			return nil, err
-		}
-		heapKey := make(ed25519.PrivateKey, len(buf.Bytes()))
-		copy(heapKey, buf.Bytes())
-		buf.Destroy()
-		sig := ed25519.Sign(heapKey, data)
-		for i := range heapKey {
-			heapKey[i] = 0
-		}
+	var sig []byte
+	configured, err := m.useEd25519Key(func(priv ed25519.PrivateKey) error {
+		sig = ed25519.Sign(priv, data)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if configured {
 		return sig, nil
 	}
 

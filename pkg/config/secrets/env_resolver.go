@@ -30,7 +30,7 @@ func (r *EnvResolver) Scheme() string {
 func (r *EnvResolver) Resolve(_ context.Context, value string) (*SecureString, error) {
 	varName, ok := parseEnvVar(value)
 	if !ok {
-		return NewSecureString(value), nil
+		return NewOptionalSecureString(value)
 	}
 
 	envValue, exists := os.LookupEnv(varName)
@@ -38,7 +38,9 @@ func (r *EnvResolver) Resolve(_ context.Context, value string) (*SecureString, e
 		return nil, &EnvVarNotSetError{VarName: varName}
 	}
 
-	return NewSecureString(envValue), nil
+	// An exported-but-empty variable is a legitimate configuration state;
+	// it is the unset variable above that is an error.
+	return NewOptionalSecureString(envValue)
 }
 
 // IsEnvVar reports whether the value is an environment variable reference.

@@ -120,7 +120,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 
 	accountsMgr := accounts.NewAccountsManager(accountStore, 6)
 	captchaMgr := captcha.NewCaptchaManager(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	certificatesMgr := certificates.NewCertificatesManager(secrets.NewSecureString("test-signing-key"), slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	certificatesMgr := certificates.NewCertificatesManager(secrets.MustNewSecureString("test-signing-key"), slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	keysMgr := keys.NewKeysManager(keyStore)
 	messagesMgr := messages.NewMessagesManager(messageStore)
 	profilesMgr := profiles.NewProfilesManager(profileStore)

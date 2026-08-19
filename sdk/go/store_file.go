@@ -15,7 +15,7 @@ import (
 // FileStore is a file-based implementation of Store that persists data
 // as JSON files in a directory hierarchy. Sensitive credential material
 // is stored in a separate file with restricted permissions and loaded
-// into memguard-protected memory on read.
+// into protected memory on read.
 type FileStore struct {
 	mu      sync.RWMutex
 	rootDir string
@@ -77,10 +77,14 @@ func (s *FileStore) GetCredentials() (*Credentials, error) {
 	var password *secrets.SecureString
 	pwBytes, err := os.ReadFile(s.path(".auth_token"))
 	if err == nil && len(pwBytes) > 0 {
-		password = secrets.NewSecureString(string(pwBytes))
-		// Wipe the intermediate buffer immediately.
+		password, err = secrets.NewSecureString(string(pwBytes))
+		// Wipe the intermediate buffer immediately, whether or not sealing
+		// succeeded.
 		for i := range pwBytes {
 			pwBytes[i] = 0
+		}
+		if err != nil {
+			return nil, err
 		}
 	}
 

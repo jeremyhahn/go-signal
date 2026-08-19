@@ -38,7 +38,7 @@ func TestGetAuth_ReturnsCredentials(t *testing.T) {
 	if creds.Username != "user-uuid-1" {
 		t.Errorf("got username %q, want %q", creds.Username, "user-uuid-1")
 	}
-	if creds.Password == "" {
+	if creds.Password.Plaintext() == "" {
 		t.Fatal("expected non-empty password")
 	}
 }
@@ -53,7 +53,7 @@ func TestGetAuth_UniquePasswords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if creds1.Password == creds2.Password {
+	if creds1.Password.Plaintext() == creds2.Password.Plaintext() {
 		t.Error("expected unique passwords for each call")
 	}
 }

@@ -119,3 +119,40 @@ func TestIsSentinel(t *testing.T) {
 	assert.False(t, IsSentinel(""))
 	assert.False(t, IsSentinel("Auto"))
 }
+
+// A sealing failure while generating a secret aborts the resolution instead
+// of caching or returning an unset value.
+func TestAutoGenResolver_SealFailure_Generate(t *testing.T) {
+	r := NewAutoGenResolver(16)
+	failSealing(t)
+
+	s, err := r.Resolve(context.Background(), "auto")
+	require.Error(t, err)
+	assert.Nil(t, s)
+	assert.Empty(t, r.cache, "a failed seal must not leave an entry behind")
+}
+
+// The same holds when serving an already-cached secret: the per-caller copy
+// is sealed, and a failure there is reported rather than papered over.
+func TestAutoGenResolver_SealFailure_CachedCopy(t *testing.T) {
+	r := NewAutoGenResolver(16)
+	first, err := r.Resolve(context.Background(), "auto")
+	require.NoError(t, err)
+	require.NotEmpty(t, first.Plaintext())
+
+	failSealing(t)
+	s, err := r.Resolve(context.Background(), "auto")
+	require.Error(t, err)
+	assert.Nil(t, s)
+}
+
+// A non-sentinel value is passed through, so a sealing failure there is
+// reported too.
+func TestAutoGenResolver_SealFailure_Passthrough(t *testing.T) {
+	r := NewAutoGenResolver(16)
+	failSealing(t)
+
+	s, err := r.Resolve(context.Background(), "plain-value")
+	require.Error(t, err)
+	assert.Nil(t, s)
+}

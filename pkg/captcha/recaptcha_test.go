@@ -16,7 +16,7 @@ import (
 // --------------------------------------------------------------------------
 
 func TestNewReCAPTCHAVerifier_Success(t *testing.T) {
-	v, err := NewReCAPTCHAVerifier(ReCAPTCHAConfig{SecretKey: secrets.NewSecureString("secret")})
+	v, err := NewReCAPTCHAVerifier(ReCAPTCHAConfig{SecretKey: secrets.MustNewSecureString("secret")})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -37,7 +37,7 @@ func TestNewReCAPTCHAVerifier_EmptySecretKey(t *testing.T) {
 }
 
 func TestNewReCAPTCHAVerifier_UsesDefaultEndpoint(t *testing.T) {
-	v, err := NewReCAPTCHAVerifier(ReCAPTCHAConfig{SecretKey: secrets.NewSecureString("s")})
+	v, err := NewReCAPTCHAVerifier(ReCAPTCHAConfig{SecretKey: secrets.MustNewSecureString("s")})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestNewReCAPTCHAVerifier_UsesDefaultEndpoint(t *testing.T) {
 }
 
 func TestNewReCAPTCHAVerifier_CustomEndpointUsed(t *testing.T) {
-	v, err := NewReCAPTCHAVerifier(ReCAPTCHAConfig{SecretKey: secrets.NewSecureString("s"), Endpoint: "http://test"})
+	v, err := NewReCAPTCHAVerifier(ReCAPTCHAConfig{SecretKey: secrets.MustNewSecureString("s"), Endpoint: "http://test"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestNewReCAPTCHAVerifier_CustomEndpointUsed(t *testing.T) {
 
 func TestNewReCAPTCHAVerifier_CustomHTTPClient(t *testing.T) {
 	client := &http.Client{}
-	v, err := NewReCAPTCHAVerifier(ReCAPTCHAConfig{SecretKey: secrets.NewSecureString("s"), HTTPClient: client})
+	v, err := NewReCAPTCHAVerifier(ReCAPTCHAConfig{SecretKey: secrets.MustNewSecureString("s"), HTTPClient: client})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestReCAPTCHAVerifier_Verify_V2Success(t *testing.T) {
 	defer srv.Close()
 
 	v, _ := NewReCAPTCHAVerifier(ReCAPTCHAConfig{
-		SecretKey:  secrets.NewSecureString("secret"),
+		SecretKey:  secrets.MustNewSecureString("secret"),
 		Endpoint:   srv.URL,
 		HTTPClient: srv.Client(),
 	})
@@ -118,7 +118,7 @@ func TestReCAPTCHAVerifier_Verify_V3SuccessWithScore(t *testing.T) {
 	defer srv.Close()
 
 	v, _ := NewReCAPTCHAVerifier(ReCAPTCHAConfig{
-		SecretKey:  secrets.NewSecureString("secret"),
+		SecretKey:  secrets.MustNewSecureString("secret"),
 		Endpoint:   srv.URL,
 		HTTPClient: srv.Client(),
 	})
@@ -155,7 +155,7 @@ func TestReCAPTCHAVerifier_Verify_LowScoreReturnedByUpstream(t *testing.T) {
 	defer srv.Close()
 
 	v, _ := NewReCAPTCHAVerifier(ReCAPTCHAConfig{
-		SecretKey:  secrets.NewSecureString("secret"),
+		SecretKey:  secrets.MustNewSecureString("secret"),
 		Endpoint:   srv.URL,
 		HTTPClient: srv.Client(),
 	})
@@ -190,7 +190,7 @@ func TestReCAPTCHAVerifier_Verify_Failure(t *testing.T) {
 	defer srv.Close()
 
 	v, _ := NewReCAPTCHAVerifier(ReCAPTCHAConfig{
-		SecretKey:  secrets.NewSecureString("secret"),
+		SecretKey:  secrets.MustNewSecureString("secret"),
 		Endpoint:   srv.URL,
 		HTTPClient: srv.Client(),
 	})
@@ -216,7 +216,7 @@ func TestReCAPTCHAVerifier_Verify_NetworkError(t *testing.T) {
 	srv.Close()
 
 	v, _ := NewReCAPTCHAVerifier(ReCAPTCHAConfig{
-		SecretKey:  secrets.NewSecureString("secret"),
+		SecretKey:  secrets.MustNewSecureString("secret"),
 		Endpoint:   srv.URL,
 		HTTPClient: srv.Client(),
 	})
@@ -245,7 +245,7 @@ func TestReCAPTCHAVerifier_Verify_ParseError(t *testing.T) {
 	defer srv.Close()
 
 	v, _ := NewReCAPTCHAVerifier(ReCAPTCHAConfig{
-		SecretKey:  secrets.NewSecureString("secret"),
+		SecretKey:  secrets.MustNewSecureString("secret"),
 		Endpoint:   srv.URL,
 		HTTPClient: srv.Client(),
 	})
@@ -274,7 +274,7 @@ func TestReCAPTCHAVerifier_Verify_ContextCancelled(t *testing.T) {
 	defer srv.Close()
 
 	v, _ := NewReCAPTCHAVerifier(ReCAPTCHAConfig{
-		SecretKey:  secrets.NewSecureString("secret"),
+		SecretKey:  secrets.MustNewSecureString("secret"),
 		Endpoint:   srv.URL,
 		HTTPClient: srv.Client(),
 	})

@@ -655,9 +655,20 @@ func (s *Server) handleGetSVRBAuth(w http.ResponseWriter, r *http.Request) {
 		writeBackupError(w, err)
 		return
 	}
+	// The credential leaves protected memory only here, to be written to
+	// the client that is its intended bearer. Reveal rather than Plaintext:
+	// a credential that cannot be read back is a failure, not an empty
+	// password the client would treat as usable.
+	defer creds.Destroy()
+	password, err := creds.Password.Reveal()
+	if err != nil {
+		s.logger.Error("svrb credential unavailable", "error", err.Error())
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	writeJSON(w, http.StatusOK, ExternalServiceCredentialsResponse{
 		Username: creds.Username,
-		Password: creds.Password,
+		Password: password,
 	})
 }
 

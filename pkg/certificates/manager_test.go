@@ -19,7 +19,7 @@ func newTestManager(signingKey []byte) *CertificatesManager {
 	logger := slog.New(slog.NewTextHandler(
 		discardWriter{}, &slog.HandlerOptions{Level: slog.LevelDebug},
 	))
-	return NewCertificatesManager(secrets.NewSecureString(string(signingKey)), logger)
+	return NewCertificatesManager(secrets.MustNewSecureString(string(signingKey)), logger)
 }
 
 // discardWriter is an io.Writer that discards all output.

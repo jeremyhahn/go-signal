@@ -49,7 +49,7 @@ func TestDAOStore_CredentialsRoundTrip(t *testing.T) {
 		Number:   "+15555550100",
 		UUID:     "test-uuid",
 		DeviceID: 1,
-		Password: NewSecurePassword("test-password"),
+		Password: mustSecurePassword("test-password"),
 	})
 	require.NoError(t, err)
 
@@ -74,7 +74,7 @@ func TestDAOStore_SaveCredentials_UpdateExisting(t *testing.T) {
 		Number:   "+15555550100",
 		UUID:     "first-uuid",
 		DeviceID: 1,
-		Password: NewSecurePassword("pw1"),
+		Password: mustSecurePassword("pw1"),
 	}))
 
 	// Second save — updates the existing entity (covers the "existing != nil" branch).
@@ -82,7 +82,7 @@ func TestDAOStore_SaveCredentials_UpdateExisting(t *testing.T) {
 		Number:   "+15555550200",
 		UUID:     "second-uuid",
 		DeviceID: 2,
-		Password: NewSecurePassword("pw2"),
+		Password: mustSecurePassword("pw2"),
 	}))
 
 	got, err := store.GetCredentials()
@@ -245,4 +245,44 @@ func TestDAOStore_DeleteStickerPack_Idempotent(t *testing.T) {
 
 	// Deleting a non-existent pack should not error.
 	assert.NoError(t, store.DeleteStickerPack("nonexistent"))
+}
+
+func TestUnmarshalCredentials_InvalidJSON(t *testing.T) {
+	var creds Credentials
+	if err := unmarshalCredentials("not-json", &creds); err == nil {
+		t.Fatal("expected an error for malformed credential JSON")
+	}
+}
+
+// Decoding into credentials that already hold a password must wipe the
+// previous protected allocation rather than abandon it.
+func TestUnmarshalCredentials_DestroysReplacedPassword(t *testing.T) {
+	creds := &Credentials{Password: mustSecurePassword("old-password")}
+	first := creds.Password
+
+	value := `{"number":"+15551234567","uuid":"u","pni":"p","password":"new-password","deviceId":2}`
+	if err := unmarshalCredentials(value, creds); err != nil {
+		t.Fatalf("unmarshalCredentials: %v", err)
+	}
+	if got := creds.Password.Plaintext(); got != "new-password" {
+		t.Errorf("password = %q, want %q", got, "new-password")
+	}
+	if !first.IsDestroyed() {
+		t.Error("the replaced password must be wiped, not abandoned")
+	}
+	if creds.DeviceID != 2 {
+		t.Errorf("deviceID = %d, want 2", creds.DeviceID)
+	}
+}
+
+// A stored credential with no password leaves the field untouched.
+func TestUnmarshalCredentials_NoPassword(t *testing.T) {
+	var creds Credentials
+	value := `{"number":"+15551234567","uuid":"u","pni":"p","password":"","deviceId":1}`
+	if err := unmarshalCredentials(value, &creds); err != nil {
+		t.Fatalf("unmarshalCredentials: %v", err)
+	}
+	if creds.Password != nil {
+		t.Error("expected no password to be sealed")
+	}
 }

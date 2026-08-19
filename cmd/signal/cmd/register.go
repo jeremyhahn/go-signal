@@ -70,11 +70,15 @@ func newClient() (*signal.Client, error) {
 		if err != nil {
 			return nil, &CLIError{Op: "read CA cert", Cause: err}
 		}
-		cfg.CACert = signal.NewSecurePassword(string(certData))
+		caCert, err := signal.NewSecurePassword(string(certData))
 		// Wipe the file buffer.
 		for i := range certData {
 			certData[i] = 0
 		}
+		if err != nil {
+			return nil, &CLIError{Op: "protect CA cert", Cause: err}
+		}
+		cfg.CACert = caCert
 	}
 
 	return signal.NewClient(cfg)

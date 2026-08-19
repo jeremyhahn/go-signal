@@ -10,6 +10,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -77,8 +79,8 @@ func TestSetEd25519SigningKey_ValidKey(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Verify the enclave was populated by checking the public key is derivable.
-	if m.ed25519Enclave == nil {
-		t.Error("expected ed25519Enclave to be set")
+	if m.ed25519Secret == nil {
+		t.Error("expected ed25519Secret to be set")
 	}
 	if m.ed25519PubKeyID != 1 {
 		t.Errorf("pubKeyID = %d, want 1", m.ed25519PubKeyID)
@@ -122,9 +124,9 @@ func TestSetEd25519SigningKey_KeyIsDefensiveCopy(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// memguard.NewBufferFromBytes zeroes the source slice; the enclave holds
-	// its own copy. Verify that the manager can still derive the correct public
-	// key even after the original slice has been mutated (zeroed by memguard).
+	// secure.NewSecret zeroes the source slice; the enclave holds its own
+	// copy. Verify that the manager can still derive the correct public key
+	// even after the original slice has been wiped.
 	got := m.Ed25519PublicKey()
 	if got == nil {
 		t.Fatal("expected non-nil public key after SetEd25519SigningKey")
@@ -165,14 +167,14 @@ func TestDestroy_WipesEd25519Key(t *testing.T) {
 	if err := m.SetEd25519SigningKey(priv, 0); err != nil {
 		t.Fatalf("SetEd25519SigningKey: %v", err)
 	}
-	if m.ed25519Enclave == nil {
+	if m.ed25519Secret == nil {
 		t.Fatal("expected enclave to be set before Destroy")
 	}
 
 	m.Destroy()
 
-	if m.ed25519Enclave != nil {
-		t.Error("expected ed25519Enclave to be nil after Destroy")
+	if m.ed25519Secret != nil {
+		t.Error("expected ed25519Secret to be nil after Destroy")
 	}
 }
 
@@ -952,7 +954,7 @@ func TestStubProfileKeyCredential_MarshalError(t *testing.T) {
 
 // Verify that SecureString creation from nil-sized signing key does not panic.
 func TestNewCertificatesManager_EmptySecureString(t *testing.T) {
-	m := NewCertificatesManager(secrets.NewSecureString(""), nil)
+	m := NewCertificatesManager(secrets.MustNewSecureString(""), nil)
 	if m == nil {
 		t.Fatal("expected non-nil manager")
 	}
@@ -1179,5 +1181,124 @@ func TestGetExpiringProfileKeyCredential_ZKGroupIssuanceError_CorruptProof(t *te
 	}
 	if target.Operation != "issue-expiring-profile-key-credential" {
 		t.Errorf("Operation = %q, want %q", target.Operation, "issue-expiring-profile-key-credential")
+	}
+}
+
+// Rotating the signing key must wipe the key it replaced: the old private key
+// cannot be left resident and unreachable for the life of the process.
+func TestSetEd25519SigningKey_RotationWipesPreviousKey(t *testing.T) {
+	_, first, _ := ed25519.GenerateKey(rand.Reader)
+	_, second, _ := ed25519.GenerateKey(rand.Reader)
+	m := newTestManager([]byte("key"))
+
+	if err := m.SetEd25519SigningKey(first, 1); err != nil {
+		t.Fatalf("first SetEd25519SigningKey: %v", err)
+	}
+	previous := m.ed25519Secret
+
+	if err := m.SetEd25519SigningKey(second, 2); err != nil {
+		t.Fatalf("second SetEd25519SigningKey: %v", err)
+	}
+	if m.ed25519Secret == previous {
+		t.Fatal("expected a new secret after rotation")
+	}
+	if _, err := previous.Open(); err == nil {
+		t.Error("the replaced signing key must be wiped, not abandoned")
+	}
+	if m.ed25519PubKeyID != 2 {
+		t.Errorf("pubKeyID = %d, want 2", m.ed25519PubKeyID)
+	}
+}
+
+// A rejected key must leave the key already in use untouched.
+func TestSetEd25519SigningKey_InvalidKeyKeepsCurrentKey(t *testing.T) {
+	_, valid, _ := ed25519.GenerateKey(rand.Reader)
+	m := newTestManager([]byte("key"))
+
+	if err := m.SetEd25519SigningKey(valid, 7); err != nil {
+		t.Fatalf("SetEd25519SigningKey: %v", err)
+	}
+	current := m.ed25519Secret
+
+	if err := m.SetEd25519SigningKey(ed25519.PrivateKey{0x01}, 8); err == nil {
+		t.Fatal("expected an error for an invalid key size")
+	}
+	if m.ed25519Secret != current {
+		t.Error("a rejected key must not replace the key in use")
+	}
+	if m.Ed25519PublicKey() == nil {
+		t.Error("the key in use must still be openable")
+	}
+	if m.ed25519PubKeyID != 7 {
+		t.Errorf("pubKeyID = %d, want 7", m.ed25519PubKeyID)
+	}
+}
+
+// Rotation must not break signing that is already in flight: a reader holds
+// the key lock across the whole open-copy-sign sequence, so the secret it is
+// using cannot be wiped underneath it. Run under -race, this also pins that
+// ed25519Secret/ed25519PubKeyID are never touched unsynchronised.
+func TestSetEd25519SigningKey_ConcurrentRotationAndSigning(t *testing.T) {
+	m := newTestManager([]byte("key"))
+	_, initial, _ := ed25519.GenerateKey(rand.Reader)
+	if err := m.SetEd25519SigningKey(initial, 0); err != nil {
+		t.Fatalf("SetEd25519SigningKey: %v", err)
+	}
+
+	const rotations = 20
+	const signers = 8
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, rotations*signers)
+	start := make(chan struct{})
+
+	for i := range signers {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			<-start
+			for range rotations {
+				cert, err := m.GetDeliveryCertificate(
+					context.Background(),
+					"11111111-1111-1111-1111-111111111111",
+					strconv.Itoa(id),
+					1,
+					[]byte("identity-key"),
+					true,
+				)
+				if err != nil {
+					errCh <- err
+					return
+				}
+				if len(cert.Certificate) == 0 {
+					errCh <- errors.New("empty certificate")
+					return
+				}
+			}
+		}(i)
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		for i := range rotations {
+			_, next, _ := ed25519.GenerateKey(rand.Reader)
+			if err := m.SetEd25519SigningKey(next, uint32(i+1)); err != nil {
+				errCh <- err
+				return
+			}
+		}
+	}()
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Fatalf("concurrent rotation broke an in-flight signature: %v", err)
+	}
+	if m.Ed25519PublicKey() == nil {
+		t.Error("the manager must still hold a usable key after rotation")
 	}
 }

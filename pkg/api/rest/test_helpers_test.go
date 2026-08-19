@@ -414,7 +414,7 @@ func newTestServerWithVerification(t *testing.T) (*Server, *noopVerificationTran
 	})
 	ktMgr := keytransparency.NewKeyTransparencyManager(logger)
 	captchaMgr := captcha.NewCaptchaManager(logger)
-	certsMgr := certificates.NewCertificatesManager(secrets.NewSecureString("test-signing-key-32bytes-xxxxxx"), logger)
+	certsMgr := certificates.NewCertificatesManager(secrets.MustNewSecureString("test-signing-key-32bytes-xxxxxx"), logger)
 
 	usernameStore := &memUsernameStore{
 		hashToUUID:   make(map[string]string),
@@ -505,7 +505,7 @@ func buildTestServerWithVerificationMgr(t *testing.T, verificationMgr *sessionsh
 	})
 	ktMgr := keytransparency.NewKeyTransparencyManager(logger)
 	captchaMgr := captcha.NewCaptchaManager(logger)
-	certsMgr := certificates.NewCertificatesManager(secrets.NewSecureString("test-signing-key-32bytes-xxxxxx"), logger)
+	certsMgr := certificates.NewCertificatesManager(secrets.MustNewSecureString("test-signing-key-32bytes-xxxxxx"), logger)
 
 	usernameStore := &memUsernameStore{
 		hashToUUID:   make(map[string]string),

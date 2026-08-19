@@ -493,19 +493,19 @@ func TestConfig_Destroy(t *testing.T) {
 		Storage: StorageConfig{
 			Backend: "memory",
 			Postgres: PostgresConfig{
-				Password: secrets.NewSecureString("db-password"),
+				Password: secrets.MustNewSecureString("db-password"),
 			},
 		},
 		Cache: CacheConfig{
 			Redis: RedisConfig{
-				Password: secrets.NewSecureString("redis-password"),
+				Password: secrets.MustNewSecureString("redis-password"),
 			},
 		},
 		ZKConfig: ZKConfig{
-			ServerSecret: secrets.NewSecureString("zk-secret"),
+			ServerSecret: secrets.MustNewSecureString("zk-secret"),
 		},
 		Captcha: CaptchaConfig{
-			SecretKey: secrets.NewSecureString("captcha-secret"),
+			SecretKey: secrets.MustNewSecureString("captcha-secret"),
 		},
 	}
 
@@ -540,7 +540,7 @@ func TestConfig_Destroy_Idempotent(t *testing.T) {
 		Storage: StorageConfig{
 			Backend: "memory",
 			Postgres: PostgresConfig{
-				Password: secrets.NewSecureString("db-password"),
+				Password: secrets.MustNewSecureString("db-password"),
 			},
 		},
 	}
@@ -556,8 +556,8 @@ func validProductionConfig() *Config {
 		Server:          ServerConfig{HTTPPort: 443, MaxDevices: 6, TLSCertFile: "/tls/c.pem", TLSKeyFile: "/tls/k.pem", AllowedOrigins: []string{"https://chat.example.com"}},
 		Storage:         StorageConfig{Backend: "postgres"},
 		Cache:           CacheConfig{Backend: "redis"},
-		ZKConfig:        ZKConfig{Enabled: true, ServerSecret: secrets.NewSecureString("zk-secret")},
-		CallingZKConfig: CallingZKConfig{ServerSecret: secrets.NewSecureString("calling-secret")},
+		ZKConfig:        ZKConfig{Enabled: true, ServerSecret: secrets.MustNewSecureString("zk-secret")},
+		CallingZKConfig: CallingZKConfig{ServerSecret: secrets.MustNewSecureString("calling-secret")},
 		Verification:    VerificationConfig{Transport: "twilio"},
 		Captcha:         CaptchaConfig{Provider: "hcaptcha"},
 		Limits:          LimitsConfig{Messages: RateLimitConfig{BucketSize: 200, LeakRatePerMin: 60}},
@@ -605,7 +605,7 @@ func TestValidate_ProductionGate_DetectsEachViolation(t *testing.T) {
 		"zk disabled":           {func(c *Config) { c.ZKConfig.Enabled = false }, "zkConfig"},
 		"zk empty secret":       {func(c *Config) { c.ZKConfig.ServerSecret = nil }, "zkConfig"},
 		"calling zk empty":      {func(c *Config) { c.CallingZKConfig.ServerSecret = nil }, "callingZkConfig"},
-		"calling zk test value": {func(c *Config) { c.CallingZKConfig.ServerSecret = secrets.NewSecureString(testCallingZKSecret) }, "well-known development secret"},
+		"calling zk test value": {func(c *Config) { c.CallingZKConfig.ServerSecret = secrets.MustNewSecureString(testCallingZKSecret) }, "well-known development secret"},
 		"no tls cert":           {func(c *Config) { c.Server.TLSCertFile = "" }, "tlsCertFile"},
 		"no tls key":            {func(c *Config) { c.Server.TLSKeyFile = "" }, "tlsKeyFile"},
 		"wildcard origin":       {func(c *Config) { c.Server.AllowedOrigins = []string{"*"} }, "allowedOrigins"},

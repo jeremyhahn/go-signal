@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 // fixedClock returns a constant Unix timestamp so tests pin signatures
@@ -28,9 +30,9 @@ func TestGenerate_ProducesTokenWithoutPrependedUsername(t *testing.T) {
 	if creds.Username != "attachments/abc" {
 		t.Errorf("Username = %q", creds.Username)
 	}
-	parts := strings.Split(creds.Password, ":")
+	parts := strings.Split(creds.Password.Plaintext(), ":")
 	if len(parts) != 2 {
-		t.Fatalf("password must be ts:sig; got %q (%d parts)", creds.Password, len(parts))
+		t.Fatalf("password must be ts:sig; got %q (%d parts)", creds.Password.Plaintext(), len(parts))
 	}
 	if parts[0] != "1700000000" {
 		t.Errorf("ts = %q, want 1700000000", parts[0])
@@ -46,9 +48,9 @@ func TestGenerate_PrependedUsername(t *testing.T) {
 		Key: []byte("secret"), Clock: fixedClock(now), PrependUsername: true,
 	})
 	creds, _ := g.Generate("uid")
-	parts := strings.Split(creds.Password, ":")
+	parts := strings.Split(creds.Password.Plaintext(), ":")
 	if len(parts) != 3 {
-		t.Fatalf("password must be id:ts:sig; got %q", creds.Password)
+		t.Fatalf("password must be id:ts:sig; got %q", creds.Password.Plaintext())
 	}
 	if parts[0] != "uid" {
 		t.Errorf("password[0] = %q, want uid", parts[0])
@@ -89,10 +91,10 @@ func TestValidate_RejectsExpired(t *testing.T) {
 func TestValidate_RejectsSignatureTamper(t *testing.T) {
 	g, _ := NewGenerator(GeneratorConfig{Key: []byte("k"), Clock: fixedClock(time.Unix(1, 0))})
 	creds, _ := g.Generate("uid")
-	parts := strings.Split(creds.Password, ":")
+	parts := strings.Split(creds.Password.Plaintext(), ":")
 	// Flip the last hex char of the signature.
 	flipped := parts[0] + ":" + flipLastChar(parts[1])
-	bad := &Credentials{Username: creds.Username, Password: flipped}
+	bad := &Credentials{Username: creds.Username, Password: secrets.MustNewSecureString(flipped)}
 	if _, err := g.Validate(bad, 0); err == nil {
 		t.Fatal("expected signature mismatch")
 	}
@@ -100,7 +102,7 @@ func TestValidate_RejectsSignatureTamper(t *testing.T) {
 
 func TestValidate_RejectsMalformedPassword(t *testing.T) {
 	g, _ := NewGenerator(GeneratorConfig{Key: []byte("k")})
-	bad := &Credentials{Username: "u", Password: "no-colon"}
+	bad := &Credentials{Username: "u", Password: secrets.MustNewSecureString("no-colon")}
 	if _, err := g.Validate(bad, 0); err == nil {
 		t.Fatal("expected malformed error")
 	}
@@ -121,8 +123,8 @@ func TestValidate_PrependedUsername(t *testing.T) {
 		t.Fatalf("Validate prepended: %v", err)
 	}
 	// Wrong username in the password must fail.
-	parts := strings.Split(creds.Password, ":")
-	tampered := &Credentials{Username: creds.Username, Password: "other:" + parts[1] + ":" + parts[2]}
+	parts := strings.Split(creds.Password.Plaintext(), ":")
+	tampered := &Credentials{Username: creds.Username, Password: secrets.MustNewSecureString("other:" + parts[1] + ":" + parts[2])}
 	if _, err := g.Validate(tampered, time.Minute); err == nil {
 		t.Fatal("expected mismatch error for tampered identity")
 	}
@@ -152,5 +154,42 @@ func TestNewGenerator_DefaultsClockToNow(t *testing.T) {
 	// Validate against the same generator within a permissive window.
 	if _, err := g.Validate(creds, time.Minute); err != nil {
 		t.Errorf("default clock round-trip failed: %v", err)
+	}
+}
+
+// Destroy must wipe the protected password so a credential that has been
+// written to a response cannot be recovered from the issuing struct, and it
+// must tolerate repeated and nil calls (handlers defer it).
+func TestCredentials_Destroy_WipesPassword(t *testing.T) {
+	g, _ := NewGenerator(GeneratorConfig{Key: []byte("secret")})
+	creds, err := g.Generate("id")
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if creds.Password.Plaintext() == "" {
+		t.Fatal("expected a non-empty password before Destroy")
+	}
+	creds.Destroy()
+	if got := creds.Password.Plaintext(); got != "" {
+		t.Errorf("password survived Destroy: %q", got)
+	}
+}
+
+func TestCredentials_Destroy_IdempotentAndNilSafe(t *testing.T) {
+	g, _ := NewGenerator(GeneratorConfig{Key: []byte("secret")})
+	creds, _ := g.Generate("id")
+	creds.Destroy()
+	creds.Destroy()
+	(*Credentials)(nil).Destroy()
+}
+
+// A destroyed credential must fail validation rather than passing with an
+// empty password.
+func TestValidate_RejectsDestroyedCredentials(t *testing.T) {
+	g, _ := NewGenerator(GeneratorConfig{Key: []byte("secret")})
+	creds, _ := g.Generate("id")
+	creds.Destroy()
+	if _, err := g.Validate(creds, time.Hour); err == nil {
+		t.Error("expected error validating a destroyed credential")
 	}
 }

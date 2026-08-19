@@ -28,7 +28,7 @@ func init() {
 }
 
 // Client is the main entry point for the Signal SDK. All sensitive material
-// is held in memguard-protected memory and zeroed on Close().
+// is held in protected memory and zeroed on Close().
 type Client struct {
 	config     ClientConfig
 	httpClient *http.Client
@@ -131,6 +131,8 @@ func (c *Client) getPassword() string {
 
 // NewSecurePassword creates a SecureString from a plain password string,
 // wiping the source. Convenience for CLI flag → SecureString conversion.
-func NewSecurePassword(password string) *secrets.SecureString {
+// An empty password, or a failure to obtain a protected allocation, is
+// returned as an error rather than yielding an unusable credential.
+func NewSecurePassword(password string) (*secrets.SecureString, error) {
 	return secrets.NewSecureString(password)
 }

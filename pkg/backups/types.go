@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-libsignal/pkg/zkgroup"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 // BackupID is the 16-byte backup identifier carried by every backup-auth
@@ -253,9 +255,23 @@ type RecalculationResult struct {
 // ExternalServiceCredentials is the username/password pair returned by
 // [Service.GenerateSVRBAuth] for clients to authenticate against the SVRB
 // service. Mirrors Java's auth.ExternalServiceCredentials record.
+//
+// Password is a bearer credential, so it is held in protected memory from
+// issuance until a handler serialises it onto the response. Handlers read it
+// with Password.Reveal() at that single boundary — an unavailable credential
+// is an error, not an empty password — and Destroy the credential
+// afterwards.
 type ExternalServiceCredentials struct {
 	Username string
-	Password string
+	Password *secrets.SecureString
+}
+
+// Destroy wipes the protected password. Safe on nil and idempotent.
+func (c *ExternalServiceCredentials) Destroy() {
+	if c == nil {
+		return
+	}
+	c.Password.Destroy()
 }
 
 // CDN path lengths used to validate prefixes given to [BlobStore.Delete] /

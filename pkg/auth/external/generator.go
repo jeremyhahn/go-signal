@@ -22,14 +22,30 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 // Credentials is the token pair returned by Generator.Generate. Username
 // and Password follow Java's two-tuple naming so HTTP basic-auth wiring is
 // 1:1.
+//
+// Password is a bearer credential for an external service, so it is held in
+// protected memory between issuance and the point where a handler puts it on
+// the wire. Callers read it with Password.Reveal() at that boundary — an
+// unavailable credential must fail the request rather than travel as an empty
+// password — and Destroy the credential once the response is written.
 type Credentials struct {
 	Username string
-	Password string
+	Password *secrets.SecureString
+}
+
+// Destroy wipes the protected password. Safe on nil and idempotent.
+func (c *Credentials) Destroy() {
+	if c == nil {
+		return
+	}
+	c.Password.Destroy()
 }
 
 // GeneratorConfig configures a Generator. The Key field is the HMAC
@@ -83,7 +99,11 @@ func (g *Generator) Generate(identity string) (*Credentials, error) {
 	} else {
 		password = ts + ":" + sig
 	}
-	return &Credentials{Username: identity, Password: password}, nil
+	sealed, err := secrets.NewSecureString(password)
+	if err != nil {
+		return nil, err
+	}
+	return &Credentials{Username: identity, Password: sealed}, nil
 }
 
 // Validate verifies that creds was issued by this Generator and is not
@@ -94,7 +114,7 @@ func (g *Generator) Validate(creds *Credentials, maxAge time.Duration) (time.Tim
 	if creds == nil {
 		return time.Time{}, errors.New("external: nil credentials")
 	}
-	parts := strings.Split(creds.Password, ":")
+	parts := strings.Split(creds.Password.Plaintext(), ":")
 	var tsStr, sig string
 	switch {
 	case len(parts) == 3 && g.cfg.PrependUsername:

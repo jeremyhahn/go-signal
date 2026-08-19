@@ -2,6 +2,8 @@ package securevaluerecovery
 
 import (
 	"testing"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 func TestSVRCredentials_ZeroValue(t *testing.T) {
@@ -9,21 +11,21 @@ func TestSVRCredentials_ZeroValue(t *testing.T) {
 	if creds.Username != "" {
 		t.Errorf("expected empty username, got %q", creds.Username)
 	}
-	if creds.Password != "" {
-		t.Errorf("expected empty password, got %q", creds.Password)
+	if creds.Password.Plaintext() != "" {
+		t.Errorf("expected empty password, got %q", creds.Password.Plaintext())
 	}
 }
 
 func TestSVRCredentials_Fields(t *testing.T) {
 	creds := SVRCredentials{
 		Username: "svr-user",
-		Password: "svr-pass",
+		Password: secrets.MustNewSecureString("svr-pass"),
 	}
 	if creds.Username != "svr-user" {
 		t.Errorf("got %q, want %q", creds.Username, "svr-user")
 	}
-	if creds.Password != "svr-pass" {
-		t.Errorf("got %q, want %q", creds.Password, "svr-pass")
+	if creds.Password.Plaintext() != "svr-pass" {
+		t.Errorf("got %q, want %q", creds.Password.Plaintext(), "svr-pass")
 	}
 }
 

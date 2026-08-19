@@ -82,7 +82,7 @@ func TestVerificationConfig_ApplyDefaults_PartialTransport(t *testing.T) {
 }
 
 func TestVerificationConfig_SMTPConfig_Fields(t *testing.T) {
-	smtpPassword := secrets.NewSecureString("secret")
+	smtpPassword := secrets.MustNewSecureString("secret")
 	defer smtpPassword.Destroy()
 
 	cfg := &VerificationConfig{

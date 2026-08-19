@@ -80,7 +80,7 @@ func TestConnectWebSocket_WithCredentials_HTTP(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	creds := &Credentials{UUID: "test-uuid", DeviceID: 1, Password: NewSecurePassword("pw")}
+	creds := &Credentials{UUID: "test-uuid", DeviceID: 1, Password: mustSecurePassword("pw")}
 	ms := &mockStore{credentials: creds}
 	c := newTestClient(t, srv.URL, ms) // srv.URL is "http://..."
 
@@ -134,7 +134,7 @@ func TestConnectWebSocket_WithCACert(t *testing.T) {
 
 	// ConnectWebSocket reads c.config.CACert; setting it here after NewClient
 	// avoids the strict PEM validation in NewClient itself.
-	c.config.CACert = NewSecurePassword("-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----")
+	c.config.CACert = mustSecurePassword("-----BEGIN CERTIFICATE-----\nfake\n-----END CERTIFICATE-----")
 	defer c.config.CACert.Destroy()
 
 	// Dial will fail (not a WS server); the CACert block still runs.

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	s3policy "github.com/jeremyhahn/go-signal/pkg/storage/blob/s3"
 )
 
@@ -29,15 +30,17 @@ const (
 // embedded-CDN URL form (no signed POST policy) so dev deployments keep
 // working without S3 credentials.
 type S3Config struct {
-	Region          string
-	Bucket          string
-	AccessKeyID     string
-	SecretAccessKey string
+	Region      string
+	Bucket      string
+	AccessKeyID string
+	// SecretAccessKey is the S3 secret access key. It is held in protected
+	// memory and only materialised when the policy signer is built.
+	SecretAccessKey *secrets.SecureString
 }
 
 // configured returns true when every required S3 field is populated.
 func (c S3Config) configured() bool {
-	return c.Region != "" && c.Bucket != "" && c.AccessKeyID != "" && c.SecretAccessKey != ""
+	return c.Region != "" && c.Bucket != "" && c.AccessKeyID != "" && !c.SecretAccessKey.IsDestroyed()
 }
 
 // StickersManager issues sticker-pack upload forms. When wired with S3

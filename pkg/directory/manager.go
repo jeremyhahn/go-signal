@@ -8,6 +8,8 @@ import (
 	"log/slog"
 
 	"github.com/google/uuid"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 // DirectoryManager manages contact discovery (CDSI) credentials. The
@@ -42,15 +44,23 @@ func (m *DirectoryManager) SetSharedSecret(secret string) {
 // (matches the legacy stub behaviour).
 func (m *DirectoryManager) GetAuthToken(_ context.Context, accountUUID string) (*DirectoryCredentials, error) {
 	if len(m.sharedSecret) == 0 {
+		password, err := secrets.NewSecureString(uuid.NewString())
+		if err != nil {
+			return nil, err
+		}
 		return &DirectoryCredentials{
 			Username: accountUUID,
-			Password: uuid.NewString(),
+			Password: password,
 		}, nil
 	}
 	mac := hmac.New(sha256.New, m.sharedSecret)
 	mac.Write([]byte(accountUUID))
+	password, err := secrets.NewSecureString(hex.EncodeToString(mac.Sum(nil)))
+	if err != nil {
+		return nil, err
+	}
 	return &DirectoryCredentials{
 		Username: accountUUID,
-		Password: hex.EncodeToString(mac.Sum(nil)),
+		Password: password,
 	}, nil
 }

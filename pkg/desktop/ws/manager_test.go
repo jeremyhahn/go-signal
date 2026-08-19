@@ -174,10 +174,14 @@ func (h *syncHandler) len() int {
 
 // testWSCreds returns a minimal Credentials for WebSocket auth.
 func testWSCreds() *signal.Credentials {
+	password, err := signal.NewSecurePassword("ws-test-pw")
+	if err != nil {
+		panic(err)
+	}
 	return &signal.Credentials{
 		UUID:     "ws-test-uuid",
 		DeviceID: 1,
-		Password: signal.NewSecurePassword("ws-test-pw"),
+		Password: password,
 	}
 }
 

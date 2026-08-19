@@ -22,7 +22,7 @@ func (s *stubResolver) Resolve(_ context.Context, _ string) (*SecureString, erro
 	if s.err != nil {
 		return nil, s.err
 	}
-	return NewSecureString(s.value), nil
+	return MustNewSecureString(s.value), nil
 }
 
 func TestNewCachingResolver_RejectsBadInputs(t *testing.T) {
@@ -128,5 +128,58 @@ func TestCachingResolver_Scheme(t *testing.T) {
 	c := NewCachingResolver(&stubResolver{scheme: "kms"}, time.Minute)
 	if c.Scheme() != "kms" {
 		t.Errorf("Scheme proxy mismatch: %q", c.Scheme())
+	}
+}
+
+// The per-caller copy handed out on a cache hit is sealed; a failure there is
+// reported rather than returning an unset secret the caller would treat as
+// valid.
+func TestCachingResolver_SealFailure_CacheHit(t *testing.T) {
+	underlying := &stubResolver{value: "cached-secret"}
+	c := NewCachingResolver(underlying, time.Minute)
+
+	first, err := c.Resolve(context.Background(), "kms://key")
+	if err != nil {
+		t.Fatalf("first Resolve: %v", err)
+	}
+	if got := first.Plaintext(); got != "cached-secret" {
+		t.Fatalf("first Resolve = %q", got)
+	}
+
+	failSealing(t)
+	s, err := c.Resolve(context.Background(), "kms://key")
+	if err == nil {
+		t.Fatal("expected the cache-hit copy to fail closed")
+	}
+	if s != nil {
+		t.Error("expected no secret when sealing fails")
+	}
+}
+
+// prebuiltResolver hands back a secret sealed before any fault injection, so
+// the fetch path can be driven while sealing is failing.
+type prebuiltResolver struct {
+	secret *SecureString
+}
+
+func (p *prebuiltResolver) Scheme() string { return "kms" }
+
+func (p *prebuiltResolver) Resolve(_ context.Context, _ string) (*SecureString, error) {
+	return p.secret, nil
+}
+
+// Same on the fetch path: the cache keeps the fresh secret, but the caller's
+// copy failing to seal is an error, not an empty success.
+func TestCachingResolver_SealFailure_AfterFetch(t *testing.T) {
+	underlying := &prebuiltResolver{secret: MustNewSecureString("fresh-secret")}
+	c := NewCachingResolver(underlying, time.Minute)
+	failSealing(t)
+
+	s, err := c.Resolve(context.Background(), "kms://key")
+	if err == nil {
+		t.Fatal("expected the caller copy to fail closed")
+	}
+	if s != nil {
+		t.Error("expected no secret when sealing fails")
 	}
 }

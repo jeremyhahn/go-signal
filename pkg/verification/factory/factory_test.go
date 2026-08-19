@@ -27,7 +27,7 @@ func TestBuild_TwilioSuccess(t *testing.T) {
 		Transport: "twilio",
 		Twilio: config.TwilioConfig{
 			AccountSID:       "AC123",
-			AuthToken:        secrets.NewSecureString("token"),
+			AuthToken:        secrets.MustNewSecureString("token"),
 			VerifyServiceSID: "VA123",
 			Channel:          "sms",
 		},

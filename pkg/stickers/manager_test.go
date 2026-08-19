@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 func testLogger() *slog.Logger {
@@ -52,7 +54,7 @@ func TestNewStickersManager_S3WiredWhenConfigured(t *testing.T) {
 	m := NewStickersManager(ManagerConfig{
 		Logger: testLogger(),
 		S3: S3Config{
-			Region: "us-east-1", Bucket: "b", AccessKeyID: "k", SecretAccessKey: "s",
+			Region: "us-east-1", Bucket: "b", AccessKeyID: "k", SecretAccessKey: secrets.MustNewSecureString("s"),
 		},
 	})
 	if m.generator == nil || m.signer == nil {
@@ -269,7 +271,7 @@ func TestGetUploadForm_SignedFormWhenS3Configured(t *testing.T) {
 		Logger: testLogger(),
 		S3: S3Config{
 			Region: "us-east-1", Bucket: "signal-stickers",
-			AccessKeyID: "AKID", SecretAccessKey: "secret",
+			AccessKeyID: "AKID", SecretAccessKey: secrets.MustNewSecureString("secret"),
 		},
 	})
 	m.SetClock(func() time.Time { return time.Date(2015, 8, 30, 12, 36, 0, 0, time.UTC) })
@@ -364,7 +366,7 @@ func TestGetUploadForm_S3ConfiguredSignerFailurePropagates(t *testing.T) {
 	m := NewStickersManager(ManagerConfig{
 		Logger: testLogger(),
 		S3: S3Config{
-			Region: "us-east-1", Bucket: "b", AccessKeyID: "k", SecretAccessKey: "s",
+			Region: "us-east-1", Bucket: "b", AccessKeyID: "k", SecretAccessKey: secrets.MustNewSecureString("s"),
 		},
 	})
 	// Replace the generator's required field after construction to force

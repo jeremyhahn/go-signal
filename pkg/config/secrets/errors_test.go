@@ -75,3 +75,27 @@ func TestEnvVarNotSetError_Error_EmptyVarName(t *testing.T) {
 	err := &EnvVarNotSetError{VarName: ""}
 	assert.Equal(t, "secrets: environment variable not set: ", err.Error())
 }
+
+func TestEmptySecretError_Error(t *testing.T) {
+	err := &EmptySecretError{}
+	assert.Equal(t, "secrets: cannot seal an empty value into protected memory", err.Error())
+}
+
+func TestSealError_ErrorAndUnwrap(t *testing.T) {
+	cause := errors.New("no protected pages available")
+	err := &SealError{Cause: cause}
+	assert.Contains(t, err.Error(), "no protected pages available")
+	assert.Equal(t, cause, err.Unwrap())
+	assert.ErrorIs(t, err, cause)
+}
+
+func TestUnavailableSecretError_Error(t *testing.T) {
+	assert.Equal(t,
+		"secrets: secret is unavailable: unset or destroyed",
+		(&UnavailableSecretError{}).Error())
+
+	cause := errors.New("enclave reaped")
+	wrapped := &UnavailableSecretError{Cause: cause}
+	assert.Contains(t, wrapped.Error(), "enclave reaped")
+	assert.ErrorIs(t, wrapped, cause)
+}

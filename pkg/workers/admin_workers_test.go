@@ -21,7 +21,7 @@ import (
 func newTestCertsMgr(t *testing.T) *certificates.CertificatesManager {
 	t.Helper()
 	return certificates.NewCertificatesManager(
-		secrets.NewSecureString("test-signing-key"),
+		secrets.MustNewSecureString("test-signing-key"),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 }

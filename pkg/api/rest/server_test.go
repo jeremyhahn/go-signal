@@ -16,11 +16,21 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 // --------------------------------------------------------------------------
 // AvatarCDNConfig.Enabled
 // --------------------------------------------------------------------------
+
+// destroyedSecret returns a SecureString whose protected memory has already
+// been wiped, modelling a config value destroyed during shutdown.
+func destroyedSecret() *secrets.SecureString {
+	s := secrets.MustNewSecureString("s")
+	s.Destroy()
+	return s
+}
 
 func TestAvatarCDNConfig_Enabled(t *testing.T) {
 	tests := []struct {
@@ -30,7 +40,7 @@ func TestAvatarCDNConfig_Enabled(t *testing.T) {
 	}{
 		{
 			name:     "all fields set",
-			cfg:      AvatarCDNConfig{Bucket: "b", Region: "r", AccessKey: "a", SecretKey: "s"},
+			cfg:      AvatarCDNConfig{Bucket: "b", Region: "r", AccessKey: "a", SecretKey: secrets.MustNewSecureString("s")},
 			expected: true,
 		},
 		{
@@ -40,22 +50,30 @@ func TestAvatarCDNConfig_Enabled(t *testing.T) {
 		},
 		{
 			name:     "missing bucket",
-			cfg:      AvatarCDNConfig{Region: "r", AccessKey: "a", SecretKey: "s"},
+			cfg:      AvatarCDNConfig{Region: "r", AccessKey: "a", SecretKey: secrets.MustNewSecureString("s")},
 			expected: false,
 		},
 		{
 			name:     "missing region",
-			cfg:      AvatarCDNConfig{Bucket: "b", AccessKey: "a", SecretKey: "s"},
+			cfg:      AvatarCDNConfig{Bucket: "b", AccessKey: "a", SecretKey: secrets.MustNewSecureString("s")},
 			expected: false,
 		},
 		{
 			name:     "missing access key",
-			cfg:      AvatarCDNConfig{Bucket: "b", Region: "r", SecretKey: "s"},
+			cfg:      AvatarCDNConfig{Bucket: "b", Region: "r", SecretKey: secrets.MustNewSecureString("s")},
 			expected: false,
 		},
 		{
 			name:     "missing secret key",
 			cfg:      AvatarCDNConfig{Bucket: "b", Region: "r", AccessKey: "a"},
+			expected: false,
+		},
+		{
+			// A destroyed SecureString must fail closed exactly like an
+			// absent one, or avatar uploads would be signed with an
+			// empty key.
+			name:     "destroyed secret key",
+			cfg:      AvatarCDNConfig{Bucket: "b", Region: "r", AccessKey: "a", SecretKey: destroyedSecret()},
 			expected: false,
 		},
 	}

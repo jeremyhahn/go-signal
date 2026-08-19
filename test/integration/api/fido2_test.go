@@ -160,7 +160,7 @@ func setupFIDO2TestEnv(t *testing.T) *fido2Env {
 
 	accountsMgr := accounts.NewAccountsManager(accountStore, 6)
 	captchaMgr := captcha.NewCaptchaManager(logger)
-	certsMgr := certificates.NewCertificatesManager(secrets.NewSecureString("test-signing-key-32bytes-xxxxxx"), logger)
+	certsMgr := certificates.NewCertificatesManager(secrets.MustNewSecureString("test-signing-key-32bytes-xxxxxx"), logger)
 	keysMgr := keys.NewKeysManager(keyStore)
 	messagesMgr := messages.NewMessagesManager(messageStore)
 	profilesMgr := profiles.NewProfilesManager(profileStore)

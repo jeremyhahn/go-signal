@@ -376,7 +376,7 @@ func TestClient_Send_EncryptedPath(t *testing.T) {
 	defer srv.Close()
 
 	// Client needs credentials so localAddress() can build a SignalAddress.
-	creds := &Credentials{UUID: "sender-uuid", DeviceID: 1, Password: NewSecurePassword("pw")}
+	creds := &Credentials{UUID: "sender-uuid", DeviceID: 1, Password: mustSecurePassword("pw")}
 	ms := &mockStore{credentials: creds}
 	c := newTestClient(t, srv.URL, ms)
 
@@ -431,7 +431,7 @@ func TestClient_Send_EncryptedPath_WithPreKey(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	creds := &Credentials{UUID: "alice-uuid", DeviceID: 2, Password: NewSecurePassword("pw2")}
+	creds := &Credentials{UUID: "alice-uuid", DeviceID: 2, Password: mustSecurePassword("pw2")}
 	ms := &mockStore{credentials: creds}
 	c := newTestClient(t, srv.URL, ms)
 
@@ -466,7 +466,7 @@ func TestClient_Receive_WithPreKeyTypeMessage(t *testing.T) {
 	defer srv.Close()
 
 	// Credentials are required for decryptMessage's localAddress() call.
-	creds := &Credentials{UUID: "me-uuid", DeviceID: 1, Password: NewSecurePassword("pw")}
+	creds := &Credentials{UUID: "me-uuid", DeviceID: 1, Password: mustSecurePassword("pw")}
 	c := newTestClientWithCreds(t, srv.URL, creds)
 
 	msgs, err := c.Receive(context.Background(), nil)
@@ -496,7 +496,7 @@ func TestClient_Receive_WithWhisperTypeMessage(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	creds := &Credentials{UUID: "receiver-uuid", DeviceID: 1, Password: NewSecurePassword("pw")}
+	creds := &Credentials{UUID: "receiver-uuid", DeviceID: 1, Password: mustSecurePassword("pw")}
 	c := newTestClientWithCreds(t, srv.URL, creds)
 
 	msgs, err := c.Receive(context.Background(), nil)
