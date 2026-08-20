@@ -6,6 +6,58 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.0-alpha] - 2026-08-19
+
+MINOR rather than PATCH: this span carries **breaking API changes**, and
+pre-1.0 that is where breakage lives (release-versioning.md §1).
+
+### Security
+
+- **Long-lived HMAC shared secrets and issued bearer credentials now live in protected memory**, not ordinary Go heap. Every one of them was previously an unwipeable `[]byte` or `string`, resident for the process lifetime, readable in a core dump and swappable to disk. Covered: `external.GeneratorConfig.Key`, `DirectoryManager` and `SecureStorageManager` shared secrets, the `extservice` storage/svr client secrets, `config.{StorageService,CDSI,SVR2}.SharedSecret`, `Attachments.TusSharedSecret`, and the `DirectoryCredentials` / `StorageCredentials` / `external.Credentials` passwords. (#7, #9, #12, #14)
+- **A borrow-scoped accessor.** `SecureString.WithBytes` hands the callback the protected pages themselves under a read lock held across the whole reveal, and `Destroy` takes the write lock — so a wipe waits out the readers in flight instead of unmapping under them. Removing the lock reproduces a real `DATA RACE`.
+- **Fail-closed everywhere a secret can go missing.** A secret that cannot be revealed, cloned or protected aborts startup or fails the operation; it never degrades to the legacy random-UUID stub, which issues credentials the peer rejects while looking like success.
+- **`Clone` distinguishes "not configured" from "allocation failed".** Conflating them let memory pressure silently downgrade a configured deployment to stub credentials.
+- **Credential mode and key are published as one immutable atomic state.** Two independent atomics allowed a rotation to strand HMAC mode with no key (issuance fails permanently) or serve a stub over a live key.
+- **Ownership transfer clones first and validates the clone**, closing a check-then-clone TOCTOU at five construction/rotation sites.
+- **A failed config load wipes what it had already sealed.** `yaml.v3` populates field by field and reports type errors at the end, so a partially decoded `Config` already owns protected allocations the caller never receives. `Config.Destroy` also gained the missing `Storage.Postgres.URL` — a DSN carries its credentials inline.
+- Credentials are assembled and verified in wipeable byte buffers rather than Go strings, which cannot be wiped.
+
+### Added
+
+- `pkg/config/secrets`: `WithBytes`, `NewSecureStringFromBytes`, and a fallible `Clone`.
+- `Destroy` on the directory and secure-storage managers, the external credential generator, and the credential types; all wired into the daemon shutdown path and registered at construction so an aborted startup leaves nothing resident.
+- Typed `SharedSecretUnavailableError` in `pkg/directory` and `pkg/securestorage`.
+
+### Changed — BREAKING
+
+- `secrets.NewSecureString` returns `(*SecureString, error)`; `Reveal() (string, error)` added alongside `Plaintext()`. (#7)
+- `SecureString.Clone` returns `(*SecureString, error)`.
+- `external.GeneratorConfig.Key`, `DirectoryCredentials.Password`, `StorageCredentials.Password` and `external.Credentials.Password` are `*secrets.SecureString`.
+- `config.{StorageService,CDSI,SVR2}.SharedSecret` are `*secrets.SecureString` — **no YAML schema change**; the same scalar unmarshals, and `kms://` resolution still applies.
+- `DirectoryManager.SetSharedSecret` and `SecureStorageManager.SetSharedSecret` return `error`.
+- First-party dependencies moved to their latest tags: go-libsignal `v0.1.2-alpha`, go-qrdb and its `sdk/go` `v0.7.0-alpha`, go-codec `v1.4.0`, go-objstore `v0.2.2-alpha`, go-quicraft `v0.6.2-alpha`. go-codec v1.4.0 drops the archived `hamba/avro/v2` and with it three advisories with no fix available (GO-2026-5046/5047/5048). (#6)
+
+### Fixed
+
+- The storage-auth handler never destroyed the credential it issued — one abandoned protected allocation per request once the field became protected.
+- The dev-fallback ephemeral signing key was never wiped; unlike the other two branches it is owned by `runStart`, so `cfg.Destroy()` never reached it.
+
+### CI
+
+- `make vet` runs under the repo's build tags **and** again with `integration`: a compile error behind a build tag made "vet clean" true and incomplete at the same time.
+- `golangci-lint` pinned to `v2.12.2`. v2.13.0 ships `honnef.co/go/tools v0.8.0-rc.1`, whose `nilness` analyzer panics on the `getsentry/sentry-go` dependency — a crash that produces a red gate with **zero findings**, which reads as "your code is bad". Measured identically on `main` without any of this span's changes.
+
+### Notes
+
+The residual protected-memory gaps deliberately left out of scope — `IsDestroyed` not distinguishing absent from unopenable, `Destroy` not being terminal, and credential material still transiting Go strings at the JSON and Basic-auth boundaries — are tracked in **#15** with fix shape and verification per item.
+
+## [0.1.1-alpha] - 2026-08-13
+
+Retitled from `[Unreleased]`: the entries below were already in the CHANGELOG when
+`v0.1.1-alpha` was tagged, and the features they describe are present in that
+tag's tree (verified file-by-file), so they shipped in that release and were
+simply never moved out of the unreleased section.
+
 ### Added
 
 - Embedded storage-service (contact/settings sync), enabled by default in monolithic mode (`storageService.remoteUrl` empty). Implements the real protobuf storage protocol — `GET /v1/storage/manifest[/version/{v}]`, `PUT /v1/storage` (`WriteOperation`), `PUT /v1/storage/read` (`ReadOperation` → `StorageItems`) — backed by `ManifestStore` with monotonic versioning and `409`-on-conflict. Validated wire-compatible with libsignal-service-java. (`pkg/securestorage`, `pkg/api/rest/handlers_storage_manifest.go`, `pkg/securestorage/proto/storage.proto`)
