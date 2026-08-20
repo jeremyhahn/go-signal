@@ -15,13 +15,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	memstorage "github.com/jeremyhahn/go-signal/pkg/storage/memory"
 )
 
 func newTestMux(t *testing.T, secret string) (*httptest.Server, *memstorage.MemoryManifestStore) {
 	t.Helper()
 	store := memstorage.NewMemoryManifestStore()
-	mux := NewMux(store, []byte(secret), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	mux := NewMux(store, secrets.MustNewSecureString(secret), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv, store

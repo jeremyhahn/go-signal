@@ -538,9 +538,16 @@ fmt: ## Check gofmt formatting
 	@echo "==> Checking formatting..."
 	@test -z "$$($(GOFMT) -l .)" || (echo "Files need formatting:"; $(GOFMT) -l .; exit 1)
 
-vet: ## Run go vet
-	@echo "==> Running go vet..."
-	$(GOVET) ./...
+vet: ## Run go vet, under the repo's build tags and again with the integration tag
+	@echo "==> Running go vet (tags: $(or $(strip $(BUILD_TAGS)),none))..."
+	$(GOVET) $(BUILD_TAGS_FLAG) ./...
+# Build-tagged files are invisible to the pass above, so "vet clean" could be
+# true and incomplete at the same time: a file behind the `integration` tag
+# once failed to compile while this target reported success. Vetting the tagged
+# tree as well is what closes that hole, and it is the same masked-measurement
+# class as a grep pointed at too narrow a path.
+	@echo "==> Running go vet (tags: integration $(strip $(BUILD_TAGS)))..."
+	$(GOVET) -tags "integration $(strip $(BUILD_TAGS))" ./...
 
 lint: ## Run golangci-lint
 	@echo "==> Running linter..."

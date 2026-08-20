@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-signal/pkg/extservice/common"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 func decodeBasic(hdr string) (user, pass string, ok bool) {
@@ -59,7 +61,7 @@ func TestHTTPClient_HappyPath(t *testing.T) {
 	t.Cleanup(srv.Close)
 	c, err := NewHTTP(HTTPConfig{
 		BaseURL:      srv.URL,
-		SharedSecret: "secret-1",
+		SharedSecret: secrets.MustNewSecureString("secret-1"),
 		Timeout:      2 * time.Second,
 	})
 	if err != nil {
@@ -74,7 +76,7 @@ func TestHTTPClient_HappyPath(t *testing.T) {
 func TestHTTPClient_404IsSuccess(t *testing.T) {
 	srv := newStub(t, "s", http.StatusNotFound)
 	t.Cleanup(srv.Close)
-	c, _ := NewHTTP(HTTPConfig{BaseURL: srv.URL, SharedSecret: "s"})
+	c, _ := NewHTTP(HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString("s")})
 	t.Cleanup(func() { _ = c.Close() })
 	if err := c.DeleteStoredData(context.Background(), "alice"); err != nil {
 		t.Errorf("404 should be success; got %v", err)
@@ -84,7 +86,7 @@ func TestHTTPClient_404IsSuccess(t *testing.T) {
 func TestHTTPClient_5xxReturnsTypedError(t *testing.T) {
 	srv := newStub(t, "s", http.StatusInternalServerError)
 	t.Cleanup(srv.Close)
-	c, _ := NewHTTP(HTTPConfig{BaseURL: srv.URL, SharedSecret: "s"})
+	c, _ := NewHTTP(HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString("s")})
 	t.Cleanup(func() { _ = c.Close() })
 	err := c.DeleteStoredData(context.Background(), "alice")
 	var e *Error
@@ -99,7 +101,7 @@ func TestHTTPClient_5xxReturnsTypedError(t *testing.T) {
 func TestHTTPClient_AuthMismatch(t *testing.T) {
 	srv := newStub(t, "right", http.StatusNoContent)
 	t.Cleanup(srv.Close)
-	c, _ := NewHTTP(HTTPConfig{BaseURL: srv.URL, SharedSecret: "wrong"})
+	c, _ := NewHTTP(HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString("wrong")})
 	t.Cleanup(func() { _ = c.Close() })
 	err := c.DeleteStoredData(context.Background(), "alice")
 	if err == nil {

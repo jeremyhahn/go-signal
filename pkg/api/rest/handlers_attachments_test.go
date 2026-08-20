@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-signal/pkg/auth/external"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 func TestHandleAttachmentUploadForm_Success(t *testing.T) {
@@ -44,7 +46,7 @@ func TestHandleAttachmentUploadForm_Success(t *testing.T) {
 
 func TestHandleAttachmentUploadForm_ExternalTUS_AttachesBasicAuth(t *testing.T) {
 	s, _ := newTestServerWithAccount(t)
-	gen, err := external.NewGenerator(external.GeneratorConfig{Key: []byte("tus-secret")})
+	gen, err := external.NewGenerator(external.GeneratorConfig{Key: secrets.MustNewSecureString("tus-secret")})
 	if err != nil {
 		t.Fatalf("external.NewGenerator: %v", err)
 	}

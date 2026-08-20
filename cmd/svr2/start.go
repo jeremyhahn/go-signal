@@ -23,6 +23,7 @@ import (
 
 	"github.com/jeremyhahn/go-signal/pkg/attestation"
 	"github.com/jeremyhahn/go-signal/pkg/config"
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 	"github.com/jeremyhahn/go-signal/pkg/health"
 	"github.com/jeremyhahn/go-signal/pkg/metrics"
@@ -50,6 +51,13 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Wipe every protected configuration secret on the way out, registered
+	// before the first validation can return so an aborted startup leaves
+	// nothing resident. Matters most when the command is driven in-process
+	// rather than followed immediately by process exit. Destroy is
+	// idempotent and nil-safe.
+	defer cfg.Destroy()
+
 	att, err := buildAttester(cfg.SVR2, logger)
 	if err != nil {
 		return signalerrors.Wrap(signalerrors.ErrInternal, "attester", err)
@@ -63,10 +71,10 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		return signalerrors.Wrap(signalerrors.ErrInternal, "svr2 storage", err)
 	}
 	dispatcher := svr2.NewDispatcher(storage)
-	hmacSecret := []byte(cfg.SVR2.SharedSecret)
-	if len(hmacSecret) == 0 {
+	if cfg.SVR2.SharedSecret.IsDestroyed() {
 		return errors.New("svr2: shared secret is required")
 	}
+	hmacSecret := cfg.SVR2.SharedSecret
 
 	wsListen := cfg.SVR2.WSListen
 	if wsListen == "" {
@@ -199,7 +207,8 @@ func newWebSocketHandler(
 	logger *slog.Logger,
 	att attestation.Attester,
 	dispatcher *svr2.Dispatcher,
-	staticPub, staticPriv, hmacSecret []byte,
+	staticPub, staticPriv []byte,
+	hmacSecret *secrets.SecureString,
 ) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		identity, ok := validateBasicAuth(r, hmacSecret)
@@ -281,7 +290,7 @@ func newWebSocketHandler(
 // newAdminHandler builds the /v1/delete handler. signald authenticates
 // with the same HMAC-derived Basic credentials it gives mobile clients;
 // the username is the account identity to delete.
-func newAdminHandler(logger *slog.Logger, storage svr2.Storage, hmacSecret []byte) http.Handler {
+func newAdminHandler(logger *slog.Logger, storage svr2.Storage, hmacSecret *secrets.SecureString) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -306,7 +315,19 @@ func newAdminHandler(logger *slog.Logger, storage svr2.Storage, hmacSecret []byt
 // password is an HMAC-SHA256(secret, username) digest. Returns the
 // username on success — the SVR2 identity for downstream lookups.
 // Java's ExternalServiceCredentials uses the same construction.
-func validateBasicAuth(r *http.Request, secret []byte) (string, bool) {
+//
+// The secret is revealed from protected memory only for the length of the
+// digest comparison; an unset or wiped secret authenticates nothing.
+func validateBasicAuth(r *http.Request, secret *secrets.SecureString) (string, bool) {
+	var (
+		identity string
+		ok       bool
+	)
+	secret.WithBytes(func(key []byte) { identity, ok = validateBasicAuthKey(r, key) })
+	return identity, ok
+}
+
+func validateBasicAuthKey(r *http.Request, secret []byte) (string, bool) {
 	const prefix = "Basic "
 	hdr := r.Header.Get("Authorization")
 	if !strings.HasPrefix(hdr, prefix) {

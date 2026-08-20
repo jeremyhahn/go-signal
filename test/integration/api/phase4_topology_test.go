@@ -43,6 +43,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
+
 	"github.com/coder/websocket"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -422,7 +424,12 @@ func TestPhase4Topology(t *testing.T) {
 	if err := tp.storageStore.PutManifest(ctx, accountUUID, &securestorage.StorageManifest{Version: 1, Value: []byte("m")}); err != nil {
 		t.Fatalf("storage seed: %v", err)
 	}
-	storageAdmin, err := storage.NewHTTP(storage.HTTPConfig{BaseURL: tp.storageURL, SharedSecret: string(tp.storageSec)})
+	storageSecret, err := secrets.NewSecureStringFromBytes(append([]byte(nil), tp.storageSec...))
+	if err != nil {
+		t.Fatalf("seal storage shared secret: %v", err)
+	}
+	defer storageSecret.Destroy()
+	storageAdmin, err := storage.NewHTTP(storage.HTTPConfig{BaseURL: tp.storageURL, SharedSecret: storageSecret})
 	if err != nil {
 		t.Fatalf("storage admin client: %v", err)
 	}
@@ -438,7 +445,12 @@ func TestPhase4Topology(t *testing.T) {
 	if err := tp.svr2Store.Put(ctx, accountUUID, &svr2.Record{Version: 1, MaxTries: 5}); err != nil {
 		t.Fatalf("svr2 seed: %v", err)
 	}
-	svrAdmin, err := svr.NewHTTP(svr.HTTPConfig{BaseURL: tp.svr2AdminURL, SharedSecret: string(tp.svr2Secret)})
+	svrSecret, err := secrets.NewSecureStringFromBytes(append([]byte(nil), tp.svr2Secret...))
+	if err != nil {
+		t.Fatalf("seal svr2 shared secret: %v", err)
+	}
+	defer svrSecret.Destroy()
+	svrAdmin, err := svr.NewHTTP(svr.HTTPConfig{BaseURL: tp.svr2AdminURL, SharedSecret: svrSecret})
 	if err != nil {
 		t.Fatalf("svr2 admin client: %v", err)
 	}

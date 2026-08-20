@@ -330,6 +330,14 @@ func runStart(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
 
+	// Every owner of long-lived key material registers its wipe as a defer
+	// the moment it is created, so a startup that aborts part-way — a store
+	// that will not open, a worker that will not start — still leaves no
+	// secret resident. Destroy is idempotent on all of them, so the ordered
+	// shutdown block at the end of runStart stays the normal-path owner of
+	// wipe-after-draining and these defers are the backstop.
+	defer cfg.Destroy()
+
 	httpAddr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.HTTPPort)
 
 	slog.InfoContext(ctx, "starting Signal server",
@@ -355,6 +363,13 @@ func runStart(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return &StartupError{Stage: "signing key protection", Cause: err}
 		}
+		// This one is not drawn from cfg, so cfg.Destroy() does not reach it:
+		// the other two branches alias a config field and are wiped with the
+		// config, while this key is owned by runStart alone and would
+		// otherwise stay resident for the life of the process. Registered
+		// here rather than at the use sites because the key is read again at
+		// certificate-manager construction and at zkgroup setup below.
+		defer ephemeral.Destroy()
 		signingKey = ephemeral
 	}
 
@@ -598,6 +613,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return &StartupError{Stage: "signing key protection", Cause: err}
 	}
 	certificatesMgr := certificates.NewCertificatesManager(signingKeyCopy, logger)
+	defer certificatesMgr.Destroy()
 
 	// Initialize zkgroup ServerSecretParams from the ZKConfig serverSecret.
 	// This enables zkgroup-native AuthCredentialWithPni group credentials and
@@ -709,9 +725,19 @@ func runStart(cmd *cobra.Command, args []string) error {
 		},
 	})
 	directoryMgr := directory.NewDirectoryManager(logger)
-	directoryMgr.SetSharedSecret(cfg.CDSI.SharedSecret)
+	defer directoryMgr.Destroy()
+	// A shared secret that cannot be placed in protected memory aborts startup
+	// rather than falling through to the legacy random-UUID stub: a deployment
+	// that configured CDSI must not come up silently issuing credentials cdsi
+	// will reject.
+	if err := directoryMgr.SetSharedSecret(cfg.CDSI.SharedSecret); err != nil {
+		return &StartupError{Stage: "CDSI shared secret protection", Cause: err}
+	}
 	secureStorageMgr := securestorage.NewSecureStorageManager(logger)
-	secureStorageMgr.SetSharedSecret(cfg.StorageService.SharedSecret)
+	defer secureStorageMgr.Destroy()
+	if err := secureStorageMgr.SetSharedSecret(cfg.StorageService.SharedSecret); err != nil {
+		return &StartupError{Stage: "storage-service shared secret protection", Cause: err}
+	}
 	// Enable the in-process storage-service (contact/settings sync) in
 	// monolithic deployments — i.e. when no external storage-service is wired
 	// via RemoteURL. The wire protocol is validated against the canonical
@@ -924,6 +950,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		SurveyPublisher:     surveyPub,
 		Logger:              logger,
 	})
+	defer callingMgr.Destroy()
 
 	// Build the push manager from configured APNs + FCM credentials. When a
 	// provider's secrets are absent (typical for dev), the manager falls back
@@ -1144,14 +1171,16 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// the external TUS server can validate that Signal authorized the
 	// upload. When tusUri / tusSharedSecret are unset the v4 attachment
 	// endpoint falls back to the embedded /cdn3 route (dev mode).
-	if cfg.Attachments.TusURI != "" && cfg.Attachments.TusSharedSecret != nil &&
-		cfg.Attachments.TusSharedSecret.Plaintext() != "" {
+	var tusGenerator *external.Generator
+	defer func() { tusGenerator.Destroy() }()
+	if cfg.Attachments.TusURI != "" && !cfg.Attachments.TusSharedSecret.IsDestroyed() {
 		gen, err := external.NewGenerator(external.GeneratorConfig{
-			Key: []byte(cfg.Attachments.TusSharedSecret.Plaintext()),
+			Key: cfg.Attachments.TusSharedSecret,
 		})
 		if err != nil {
 			return &StartupError{Stage: "attachment TUS credentials generator", Cause: err}
 		}
+		tusGenerator = gen
 		srv.SetAttachmentTus(cfg.Attachments.TusURI, gen)
 		slog.InfoContext(ctx, "external TUS attachment upload configured", slog.String("uri", cfg.Attachments.TusURI))
 	}
@@ -1275,9 +1304,14 @@ func runStart(cmd *cobra.Command, args []string) error {
 	fraudChecker.Stop()
 	rateLimits.Stop()
 
-	// 4. Wipe sensitive key material from protected memory.
+	// 4. Wipe sensitive key material from protected memory. Every owner of a
+	// long-lived secret is destroyed here, not just the config it was drawn
+	// from — each of these holds its own protected clone.
 	certificatesMgr.Destroy()
 	callingMgr.Destroy()
+	directoryMgr.Destroy()
+	secureStorageMgr.Destroy()
+	tusGenerator.Destroy()
 	cfg.Destroy()
 
 	slog.InfoContext(ctx, "Signal server stopped")

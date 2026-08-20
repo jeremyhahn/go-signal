@@ -5,6 +5,7 @@ package secrets
 
 import (
 	"encoding/json"
+	"sync"
 
 	"github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 )
@@ -34,7 +35,25 @@ var sealSecret = secure.NewSecret
 // The String() method intentionally returns "[REDACTED]" to prevent
 // accidental exposure in structured log output. Use Plaintext() or
 // Bytes() to access the actual value.
+//
+// A SecureString is safe for concurrent use, and specifically for the pairing
+// that matters: reveals (Reveal, Plaintext, Bytes, WithBytes, IsDestroyed,
+// Clone) may overlap each other freely, while Destroy waits out the reveals
+// already in flight and every reveal after it fails closed. A long-lived HMAC
+// key can therefore be revealed on many request goroutines at once while a
+// shutdown path wipes it exactly once.
+//
+// The mutex guards this type's own pointer to the secret, which is what a
+// wipe mutates. The upstream secure.Secret documents Open-vs-Open and
+// Destroy-vs-Destroy but not Open-vs-Destroy, so an atomic on the handle
+// alone would stop future loads without bounding the lifetime of material a
+// reader has already obtained (security-review.md §7). Holding the read lock
+// across the whole reveal is what makes Destroy mean "no reader is looking".
+//
+// Because it carries a lock, a SecureString must be passed as a pointer and
+// never copied by value; go vet's copylocks check enforces this.
 type SecureString struct {
+	mu  sync.RWMutex
 	sec *secure.Secret
 }
 
@@ -109,7 +128,12 @@ func (s *SecureString) String() string {
 // a secret which is not available fails the operation instead of being
 // serialised as an empty value the peer would treat as valid.
 func (s *SecureString) Reveal() (string, error) {
-	if s == nil || s.sec == nil {
+	if s == nil {
+		return "", &UnavailableSecretError{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.sec == nil {
 		return "", &UnavailableSecretError{}
 	}
 	buf, err := s.sec.Open()
@@ -137,7 +161,12 @@ func (s *SecureString) Plaintext() string {
 // when done. Returns nil if the SecureString has been destroyed or was
 // never set.
 func (s *SecureString) Bytes() []byte {
-	if s == nil || s.sec == nil {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.sec == nil {
 		return nil
 	}
 	buf, err := s.sec.Open()
@@ -153,7 +182,12 @@ func (s *SecureString) Bytes() []byte {
 // IsDestroyed reports whether the underlying secret has been destroyed
 // or was never set (i.e. was created from an empty string).
 func (s *SecureString) IsDestroyed() bool {
-	if s == nil || s.sec == nil {
+	if s == nil {
+		return true
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.sec == nil {
 		return true
 	}
 	// Attempt to open; if it fails the secret has been destroyed.
@@ -169,7 +203,15 @@ func (s *SecureString) IsDestroyed() bool {
 // After Destroy, IsDestroyed returns true and Plaintext/Bytes return
 // empty values. Calling Destroy more than once is safe.
 func (s *SecureString) Destroy() {
-	if s == nil || s.sec == nil {
+	if s == nil {
+		return
+	}
+	// The write lock is what makes this a lifetime boundary rather than a
+	// pointer update: it waits for the reveals already in flight, so no
+	// reader is holding an open buffer when the enclave goes away.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sec == nil {
 		return
 	}
 	s.sec.Destroy()
@@ -202,8 +244,14 @@ func (s *SecureString) UnmarshalYAML(unmarshal func(any) error) error {
 	}
 	// Decoding into a SecureString that already holds a value replaces it;
 	// wipe the previous allocation rather than abandoning it, and only once
-	// the replacement is in hand.
-	s.Destroy()
+	// the replacement is in hand. Wipe and install under one write lock, so a
+	// concurrent reveal sees either the old value or the new one and never
+	// the gap between them.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sec != nil {
+		s.sec.Destroy()
+	}
 	s.sec = created.sec
 	return nil
 }

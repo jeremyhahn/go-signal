@@ -22,9 +22,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 	"github.com/jeremyhahn/go-signal/pkg/extservice/common"
 )
+
+// cloneSecret is SecureString.Clone, indirected so the fail-closed path that
+// depends on a protected-memory allocation failure can be exercised. That
+// failure cannot be provoked from outside. Production code never reassigns it.
+var cloneSecret = (*secrets.SecureString).Clone
 
 // Client is the chat-server -> storage-service admin surface.
 type Client interface {
@@ -38,8 +44,11 @@ type Client interface {
 
 // HTTPConfig configures the HTTP client.
 type HTTPConfig struct {
-	BaseURL      string
-	SharedSecret string
+	BaseURL string
+	// SharedSecret is the HMAC secret shared with storage-service for
+	// credential derivation. NewHTTP clones it, so the caller keeps
+	// ownership of the value it passes in.
+	SharedSecret *secrets.SecureString
 	Timeout      time.Duration
 	TLSConfig    *tls.Config
 }
@@ -47,17 +56,34 @@ type HTTPConfig struct {
 // HTTPClient implements Client by issuing DELETE /v1/storage requests.
 type HTTPClient struct {
 	baseURL string
-	secret  []byte
+	// secret is held in protected memory and revealed only for the length
+	// of one credential derivation. Close wipes it.
+	secret  *secrets.SecureString
 	timeout time.Duration
 	http    *http.Client
 }
 
 // NewHTTP constructs an HTTPClient.
+//
+// The shared secret is cloned first and the clone is what gets validated —
+// checking cfg.SharedSecret and cloning it afterwards leaves a window in which
+// the caller destroys its own copy between the two, and the constructor
+// reports success holding a secret that can never sign a request.
 func NewHTTP(cfg HTTPConfig) (*HTTPClient, error) {
 	if cfg.BaseURL == "" {
 		return nil, signalerrors.New(signalerrors.ErrInvalidArgument, "storage: BaseURL is required")
 	}
-	if cfg.SharedSecret == "" {
+	// An allocation failure is distinct from an absent secret; reporting it as
+	// "SharedSecret is required" would hide a protected-memory failure behind
+	// a configuration error.
+	secret, err := cloneSecret(cfg.SharedSecret)
+	if err != nil {
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "storage: protecting the shared secret", err)
+	}
+	if secret.IsDestroyed() {
+		// An unset clone holds nothing to wipe today; destroying it anyway
+		// keeps the ownership contract total on the error path.
+		secret.Destroy()
 		return nil, signalerrors.New(signalerrors.ErrInvalidArgument, "storage: SharedSecret is required")
 	}
 	timeout := cfg.Timeout
@@ -71,7 +97,7 @@ func NewHTTP(cfg HTTPConfig) (*HTTPClient, error) {
 	}
 	return &HTTPClient{
 		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
-		secret:  []byte(cfg.SharedSecret),
+		secret:  secret,
 		timeout: timeout,
 		http: &http.Client{
 			Timeout:   timeout,
@@ -83,11 +109,15 @@ func NewHTTP(cfg HTTPConfig) (*HTTPClient, error) {
 // DeleteStoredData issues DELETE /v1/storage with HMAC Basic auth.
 // 404 is treated as success per the Java reference.
 func (c *HTTPClient) DeleteStoredData(ctx context.Context, accountUUID string) error {
+	authHeader := common.BasicAuthHeaderSecret(accountUUID, c.secret)
+	if authHeader == "" {
+		return signalerrors.New(signalerrors.ErrInvalidArgument, "storage: client has been closed")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+"/v1/storage", nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", common.BasicAuthHeader(accountUUID, c.secret))
+	req.Header.Set("Authorization", authHeader)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
@@ -103,9 +133,11 @@ func (c *HTTPClient) DeleteStoredData(ctx context.Context, accountUUID string) e
 	}
 }
 
-// Close releases the underlying HTTP transport's idle connections.
+// Close releases the underlying HTTP transport's idle connections and wipes
+// the shared secret from protected memory. Subsequent calls fail closed.
 func (c *HTTPClient) Close() error {
 	c.http.CloseIdleConnections()
+	c.secret.Destroy()
 	return nil
 }
 

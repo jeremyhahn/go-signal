@@ -81,8 +81,9 @@ type StorageServiceConfig struct {
 	HTTPListen string `yaml:"httpListen"`
 
 	// SharedSecret is the HMAC secret signald and storage-service
-	// share for credential derivation. Required.
-	SharedSecret string `yaml:"sharedSecret"`
+	// share for credential derivation. Required. Held in protected
+	// memory and wiped by Config.Destroy.
+	SharedSecret *secrets.SecureString `yaml:"sharedSecret"`
 
 	// RemoteURL is the storage-service admin endpoint signald calls
 	// for DELETE-on-account-deletion (matches Java's
@@ -114,8 +115,9 @@ type CDSIConfig struct {
 	// SharedSecret is the HMAC secret signald shares with cdsi for
 	// credential derivation. Mobile clients present
 	// HMAC(sharedSecret, accountUUID) as the Basic auth password on
-	// WebSocket upgrade. Required.
-	SharedSecret string `yaml:"sharedSecret"`
+	// WebSocket upgrade. Required. Held in protected memory and wiped
+	// by Config.Destroy.
+	SharedSecret *secrets.SecureString `yaml:"sharedSecret"`
 
 	// SignaldDirectoryAddr is the gRPC endpoint cdsi calls at startup
 	// to populate its local directory index from signald's
@@ -155,8 +157,9 @@ type SVR2Config struct {
 	// SharedSecret is the HMAC secret the chat-server uses to sign
 	// SVR2 client credentials. svr2 validates inbound credentials
 	// against the same secret. Required when Attestation != "" so
-	// the binary knows which keyspace to trust.
-	SharedSecret string `yaml:"sharedSecret"`
+	// the binary knows which keyspace to trust. Held in protected
+	// memory and wiped by Config.Destroy.
+	SharedSecret *secrets.SecureString `yaml:"sharedSecret"`
 
 	// RemoteURL is the chat-server-side admin endpoint used by
 	// signald's SecureValueRecoveryClient for DELETE-on-account
@@ -515,7 +518,21 @@ type DirectoryConfig struct {
 	Enabled bool `yaml:"enabled"`
 }
 
+// destroyConfig is Config.Destroy, indirected so the failed-load cleanup path
+// can be observed by tests — a wipe of a Config the caller never receives has
+// no other observable effect. Production code never reassigns it. Mirrors the
+// sealSecret seam in pkg/config/secrets.
+var destroyConfig = (*Config).Destroy
+
 // Load reads and parses a YAML configuration file.
+//
+// A load that fails wipes whatever it had already sealed. yaml.v3 populates
+// field by field and reports type errors only at the end, so a Config that
+// failed to decode — or that decoded and then failed Validate — can already
+// own protected allocations. Those never reach the caller, so the caller can
+// never wipe them; without this they would stay resident for the life of the
+// process. That matters most where a failed load is not immediately followed
+// by exit: an in-process reload, or a supervisor retrying a bad file.
 func Load(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -530,6 +547,15 @@ func Load(path string) (*Config, error) {
 	}()
 
 	config := &Config{}
+	// Guarded by the success flag rather than placed on each error path, so a
+	// future early return cannot forget it.
+	loaded := false
+	defer func() {
+		if !loaded {
+			destroyConfig(config)
+		}
+	}()
+
 	if err := yaml.Unmarshal(data, config); err != nil {
 		return nil, &ConfigParseError{Path: path, Cause: err}
 	}
@@ -538,13 +564,26 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
+	loaded = true
 	return config, nil
 }
 
 // Destroy wipes all sensitive configuration values from protected memory.
 // Call this during shutdown to ensure no secret material remains resident.
 func (c *Config) Destroy() {
+	// Nil-safe so every daemon can register `defer cfg.Destroy()` on entry,
+	// before it has established that a config was loaded at all.
+	if c == nil {
+		return
+	}
+	// Every *secrets.SecureString reachable from Config must appear here.
+	// The list is hand-maintained and has drifted once already
+	// (Storage.Postgres.URL was missing), so
+	// TestDestroy_WipesEveryProtectedFieldInTheConfigTree walks the tree by
+	// reflection and fails if a field is added to Config without being added
+	// here. Add the field to both, or the test will say so.
 	for _, ss := range []*secrets.SecureString{
+		c.Storage.Postgres.URL,
 		c.Storage.Postgres.Password,
 		c.Cache.Redis.Password,
 		c.Push.APN.PrivateKey,
@@ -560,6 +599,10 @@ func (c *Config) Destroy() {
 		c.Captcha.SecretKey,
 		c.Verification.SMTP.Password,
 		c.Verification.Twilio.AuthToken,
+		c.Attachments.TusSharedSecret,
+		c.StorageService.SharedSecret,
+		c.CDSI.SharedSecret,
+		c.SVR2.SharedSecret,
 	} {
 		if ss != nil {
 			ss.Destroy()

@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"testing"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 func testLogger() *slog.Logger {
@@ -87,41 +89,41 @@ func TestGetAuthToken_CancelledContext(t *testing.T) {
 
 func TestSetSharedSecret_EmptyStringClearsSecret(t *testing.T) {
 	m := NewDirectoryManager(testLogger())
-	m.SetSharedSecret("")
-	if m.sharedSecret != nil {
+	_ = m.SetSharedSecret(secrets.MustNewSecureString(""))
+	if m.state.Load().secret != nil {
 		t.Error("expected nil sharedSecret after empty string")
 	}
 }
 
 func TestSetSharedSecret_NonEmptyStoresSecret(t *testing.T) {
 	m := NewDirectoryManager(testLogger())
-	m.SetSharedSecret("my-secret")
-	if string(m.sharedSecret) != "my-secret" {
-		t.Errorf("expected sharedSecret %q, got %q", "my-secret", string(m.sharedSecret))
+	_ = m.SetSharedSecret(secrets.MustNewSecureString("my-secret"))
+	if m.state.Load().secret.Plaintext() != "my-secret" {
+		t.Errorf("expected sharedSecret %q, got %q", "my-secret", m.state.Load().secret.Plaintext())
 	}
 }
 
 func TestSetSharedSecret_ResetToEmpty(t *testing.T) {
 	m := NewDirectoryManager(testLogger())
-	m.SetSharedSecret("first-secret")
-	m.SetSharedSecret("")
-	if m.sharedSecret != nil {
+	_ = m.SetSharedSecret(secrets.MustNewSecureString("first-secret"))
+	_ = m.SetSharedSecret(secrets.MustNewSecureString(""))
+	if m.state.Load().secret != nil {
 		t.Error("expected nil sharedSecret after reset with empty string")
 	}
 }
 
 func TestSetSharedSecret_OverwriteExisting(t *testing.T) {
 	m := NewDirectoryManager(testLogger())
-	m.SetSharedSecret("first")
-	m.SetSharedSecret("second")
-	if string(m.sharedSecret) != "second" {
-		t.Errorf("expected sharedSecret %q, got %q", "second", string(m.sharedSecret))
+	_ = m.SetSharedSecret(secrets.MustNewSecureString("first"))
+	_ = m.SetSharedSecret(secrets.MustNewSecureString("second"))
+	if m.state.Load().secret.Plaintext() != "second" {
+		t.Errorf("expected sharedSecret %q, got %q", "second", m.state.Load().secret.Plaintext())
 	}
 }
 
 func TestGetAuthToken_WithSharedSecret_IsDeterministic(t *testing.T) {
 	m := NewDirectoryManager(testLogger())
-	m.SetSharedSecret("deterministic-secret")
+	_ = m.SetSharedSecret(secrets.MustNewSecureString("deterministic-secret"))
 	creds1, err := m.GetAuthToken(context.Background(), "test-uuid")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -137,7 +139,7 @@ func TestGetAuthToken_WithSharedSecret_IsDeterministic(t *testing.T) {
 
 func TestGetAuthToken_WithSharedSecret_DifferentUUIDs(t *testing.T) {
 	m := NewDirectoryManager(testLogger())
-	m.SetSharedSecret("deterministic-secret")
+	_ = m.SetSharedSecret(secrets.MustNewSecureString("deterministic-secret"))
 	creds1, err := m.GetAuthToken(context.Background(), "uuid-one")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -153,7 +155,7 @@ func TestGetAuthToken_WithSharedSecret_DifferentUUIDs(t *testing.T) {
 
 func TestGetAuthToken_WithSharedSecret_UsernameIsAccountUUID(t *testing.T) {
 	m := NewDirectoryManager(testLogger())
-	m.SetSharedSecret("any-secret")
+	_ = m.SetSharedSecret(secrets.MustNewSecureString("any-secret"))
 	const accountUUID = "account-uuid-123"
 	creds, err := m.GetAuthToken(context.Background(), accountUUID)
 	if err != nil {
@@ -166,7 +168,7 @@ func TestGetAuthToken_WithSharedSecret_UsernameIsAccountUUID(t *testing.T) {
 
 func TestGetAuthToken_WithSharedSecret_PasswordIsHexHMAC(t *testing.T) {
 	m := NewDirectoryManager(testLogger())
-	m.SetSharedSecret("any-secret")
+	_ = m.SetSharedSecret(secrets.MustNewSecureString("any-secret"))
 	creds, err := m.GetAuthToken(context.Background(), "test-uuid")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -180,7 +182,7 @@ func TestGetAuthToken_WithSharedSecret_PasswordIsHexHMAC(t *testing.T) {
 func TestGetAuthToken_WithSharedSecret_DiffersFromStubMode(t *testing.T) {
 	mStub := NewDirectoryManager(testLogger())
 	mHMAC := NewDirectoryManager(testLogger())
-	mHMAC.SetSharedSecret("test-secret")
+	_ = mHMAC.SetSharedSecret(secrets.MustNewSecureString("test-secret"))
 
 	const uuid = "shared-uuid"
 	credsStub, _ := mStub.GetAuthToken(context.Background(), uuid)
@@ -209,7 +211,7 @@ func TestGetAuthToken_TableDriven_WithAndWithoutSecret(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := NewDirectoryManager(testLogger())
 			if tc.secret != "" {
-				m.SetSharedSecret(tc.secret)
+				_ = m.SetSharedSecret(secrets.MustNewSecureString(tc.secret))
 			}
 			creds, err := m.GetAuthToken(context.Background(), tc.uuid)
 			if err != nil {

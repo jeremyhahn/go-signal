@@ -13,6 +13,8 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"strings"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 // BasicAuthHeader builds the HTTP Basic auth header value Signal's
@@ -58,4 +60,36 @@ func ValidateBasicAuth(authHeader string, sharedSecret []byte) (string, bool) {
 		return "", false
 	}
 	return username, true
+}
+
+// BasicAuthHeaderSecret is BasicAuthHeader with the shared secret drawn from
+// protected memory. The key is revealed only for the length of the HMAC and
+// wiped again before this returns, so a long-lived credential-signing secret
+// never has to sit on the heap as a plain []byte.
+//
+// Returns "" when the secret is unset or destroyed — the caller must treat
+// that as a failure to authenticate rather than sending an unsigned header.
+func BasicAuthHeaderSecret(identity string, sharedSecret *secrets.SecureString) string {
+	var header string
+	sharedSecret.WithBytes(func(key []byte) {
+		header = BasicAuthHeader(identity, key)
+	})
+	return header
+}
+
+// ValidateBasicAuthSecret is ValidateBasicAuth with the shared secret drawn
+// from protected memory, with the same reveal-and-wipe discipline as
+// BasicAuthHeaderSecret.
+//
+// Returns ("", false) when the secret is unset or destroyed, so a wiped
+// secret fails closed instead of authenticating anything.
+func ValidateBasicAuthSecret(authHeader string, sharedSecret *secrets.SecureString) (string, bool) {
+	var (
+		username string
+		ok       bool
+	)
+	sharedSecret.WithBytes(func(key []byte) {
+		username, ok = ValidateBasicAuth(authHeader, key)
+	})
+	return username, ok
 }

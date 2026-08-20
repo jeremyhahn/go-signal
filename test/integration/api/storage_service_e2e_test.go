@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
+
 	"github.com/jeremyhahn/go-signal/pkg/extservice/storage"
 	"github.com/jeremyhahn/go-signal/pkg/securestorage"
 	memstorage "github.com/jeremyhahn/go-signal/pkg/storage/memory"
@@ -209,7 +211,7 @@ func TestStorageServiceE2E_AdminDeleteViaSignaldClient(t *testing.T) {
 
 	cli, err := storage.NewHTTP(storage.HTTPConfig{
 		BaseURL:      srv.URL,
-		SharedSecret: sharedSecret,
+		SharedSecret: secrets.MustNewSecureString(sharedSecret),
 		Timeout:      2 * time.Second,
 	})
 	if err != nil {

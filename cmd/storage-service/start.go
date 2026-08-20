@@ -21,6 +21,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jeremyhahn/go-signal/pkg/config"
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 	"github.com/jeremyhahn/go-signal/pkg/health"
 	"github.com/jeremyhahn/go-signal/pkg/metrics"
@@ -47,7 +48,14 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if cfg.StorageService.SharedSecret == "" {
+	// Wipe every protected configuration secret on the way out, registered
+	// before the first validation can return so an aborted startup leaves
+	// nothing resident. Matters most when the command is driven in-process
+	// rather than followed immediately by process exit. Destroy is
+	// idempotent and nil-safe.
+	defer cfg.Destroy()
+
+	if cfg.StorageService.SharedSecret.IsDestroyed() {
 		return errors.New("storage-service: shared secret is required")
 	}
 
@@ -64,7 +72,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	metricsReg := metrics.NewRegistry("storage-service")
 	mux := http.NewServeMux()
 	health.MountAdmin(mux, probes, metricsReg)
-	mux.Handle("/", NewMux(store, []byte(cfg.StorageService.SharedSecret), logger))
+	mux.Handle("/", NewMux(store, cfg.StorageService.SharedSecret, logger))
 
 	srv := &http.Server{
 		Addr:              listen,
@@ -132,7 +140,7 @@ func buildManifestStore(ctx context.Context, cfg config.StorageConfig, logger *s
 // NewMux returns the http.Handler exposing the full storage-service
 // REST surface. Factored out of runStart so e2e tests can mount it
 // onto httptest.NewServer.
-func NewMux(store securestorage.ManifestStore, hmacSecret []byte, logger *slog.Logger) http.Handler {
+func NewMux(store securestorage.ManifestStore, hmacSecret *secrets.SecureString, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /v1/storage/manifest", basicAuth(hmacSecret, getManifest(store)))
 	mux.Handle("PUT /v1/storage/manifest", basicAuth(hmacSecret, putManifest(store)))
@@ -150,7 +158,7 @@ type identityCtxKey struct{}
 // basicAuth wraps an http.Handler with HMAC-Basic credential
 // validation. On success it stores the identity in the request
 // context so handlers can look it up via identityFromContext.
-func basicAuth(secret []byte, next http.HandlerFunc) http.Handler {
+func basicAuth(secret *secrets.SecureString, next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		identity, ok := validateBasicAuth(r, secret)
 		if !ok {
@@ -169,7 +177,21 @@ func identityFromContext(ctx context.Context) string {
 	return ""
 }
 
-func validateBasicAuth(r *http.Request, secret []byte) (string, bool) {
+// validateBasicAuth parses an HTTP Basic header and confirms the password is
+// an HMAC-SHA256(secret, username) digest, returning the username on success.
+//
+// The secret is revealed from protected memory only for the length of the
+// digest comparison; an unset or wiped secret authenticates nothing.
+func validateBasicAuth(r *http.Request, secret *secrets.SecureString) (string, bool) {
+	var (
+		identity string
+		ok       bool
+	)
+	secret.WithBytes(func(key []byte) { identity, ok = validateBasicAuthKey(r, key) })
+	return identity, ok
+}
+
+func validateBasicAuthKey(r *http.Request, secret []byte) (string, bool) {
 	const prefix = "Basic "
 	hdr := r.Header.Get("Authorization")
 	if !strings.HasPrefix(hdr, prefix) {

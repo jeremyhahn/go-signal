@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
+
 	"github.com/coder/websocket"
 	"google.golang.org/protobuf/proto"
 
@@ -321,7 +323,7 @@ func TestSVR2E2E_AdminDeleteViaHTTPClient(t *testing.T) {
 
 	cli, err := svr.NewHTTP(svr.HTTPConfig{
 		BaseURL:      adminURL,
-		SharedSecret: sharedSecret,
+		SharedSecret: secrets.MustNewSecureString(sharedSecret),
 	})
 	if err != nil {
 		t.Fatalf("NewHTTP: %v", err)

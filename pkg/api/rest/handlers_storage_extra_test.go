@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/jeremyhahn/go-signal/pkg/accounts"
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	"github.com/jeremyhahn/go-signal/pkg/securestorage"
 	"github.com/jeremyhahn/go-signal/pkg/securestorage/storagepb"
 	"github.com/jeremyhahn/go-signal/pkg/service"
@@ -59,7 +60,7 @@ func (s *stubSecureStorageService) GetAuth(_ context.Context, accountUUID string
 	if s.authErr != nil {
 		return nil, s.authErr
 	}
-	return &securestorage.StorageCredentials{Username: accountUUID, Password: "pwd"}, nil
+	return &securestorage.StorageCredentials{Username: accountUUID, Password: secrets.MustNewSecureString("pwd")}, nil
 }
 
 // compile-time interface check.

@@ -43,10 +43,28 @@ jobs:
       - name: Run go vet
         run: make vet
 
-      # Latest linter, no version pin: devops.md §9 — an undocumented pin is a
-      # defect. .golangci.yml enables the §8 security linters.
+      # Pinned to match software/templates/github-actions/ci.yml. devops.md §9
+      # forbids an UNDOCUMENTED pin, so here is the documentation:
+      #
+      # v2.13.0 (released 2026-08-19T22:55Z) ships honnef.co/go/tools
+      # v0.8.0-rc.1 — a release candidate — whose nilness analyzer PANICS on the
+      # getsentry/sentry-go dependency:
+      #
+      #   nilness: package "sentry": internal error: unhandled builtin recover
+      #   Running error: can't run linter goanalysis_metalinter
+      #
+      # That is a tool crash, not a finding: the job exits non-zero with zero
+      # file:line results, so the gate reads as "your code is bad" while saying
+      # nothing about the code. Measured on this branch AND on dev/main with
+      # none of this PR's changes — identical panic, so it is the toolchain.
+      # v2.12.2 ships honnef.co/go/tools v0.7.0 and is clean on both.
+      #
+      # UNPIN once upstream ships a golangci-lint carrying a non-RC
+      # honnef.co/go/tools that lints this module without panicking.
+      #
+      # .golangci.yml enables the §8 security linters.
       - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 
       - name: Run golangci-lint
         run: make lint

@@ -76,7 +76,7 @@ func TestSecureStorageService_GetAuth_ReturnsCredentials(t *testing.T) {
 	if creds.Username != "user-1" {
 		t.Errorf("expected username %q, got %q", "user-1", creds.Username)
 	}
-	if creds.Password == "" {
+	if creds.Password.Plaintext() == "" {
 		t.Error("expected non-empty password")
 	}
 }

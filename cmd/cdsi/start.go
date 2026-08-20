@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/attestation"
 	"github.com/jeremyhahn/go-signal/pkg/cdsi"
 	"github.com/jeremyhahn/go-signal/pkg/config"
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 	"github.com/jeremyhahn/go-signal/pkg/health"
 	"github.com/jeremyhahn/go-signal/pkg/health/checks"
@@ -51,7 +52,14 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	if cfg.CDSI.SharedSecret == "" {
+	// Wipe every protected configuration secret on the way out, registered
+	// before the first validation can return so an aborted startup leaves
+	// nothing resident. Matters most when the command is driven in-process
+	// rather than followed immediately by process exit. Destroy is
+	// idempotent and nil-safe.
+	defer cfg.Destroy()
+
+	if cfg.CDSI.SharedSecret.IsDestroyed() {
 		return errors.New("cdsi: shared secret is required")
 	}
 	if cfg.CDSI.SignaldDirectoryAddr == "" {
@@ -106,7 +114,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		wsListen = defaultWSListen
 	}
 	wsMux := http.NewServeMux()
-	wsMux.Handle("/v1/lookup", newWebSocketHandler(logger, att, dispatcher, staticPub, staticPriv, []byte(cfg.CDSI.SharedSecret)))
+	wsMux.Handle("/v1/lookup", newWebSocketHandler(logger, att, dispatcher, staticPub, staticPriv, cfg.CDSI.SharedSecret))
 	probes := health.New()
 	metricsReg := metrics.NewRegistry("cdsi")
 	// signald's DirectoryService is cdsi's only critical upstream — if
@@ -190,7 +198,8 @@ func newWebSocketHandler(
 	logger *slog.Logger,
 	att attestation.Attester,
 	dispatcher *cdsi.Dispatcher,
-	staticPub, staticPriv, hmacSecret []byte,
+	staticPub, staticPriv []byte,
+	hmacSecret *secrets.SecureString,
 ) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		identity, ok := validateBasicAuth(r, hmacSecret)
@@ -257,7 +266,21 @@ func newWebSocketHandler(
 	})
 }
 
-func validateBasicAuth(r *http.Request, secret []byte) (string, bool) {
+// validateBasicAuth parses an HTTP Basic header and confirms the password is
+// an HMAC-SHA256(secret, username) digest, returning the username on success.
+//
+// The secret is revealed from protected memory only for the length of the
+// digest comparison; an unset or wiped secret authenticates nothing.
+func validateBasicAuth(r *http.Request, secret *secrets.SecureString) (string, bool) {
+	var (
+		identity string
+		ok       bool
+	)
+	secret.WithBytes(func(key []byte) { identity, ok = validateBasicAuthKey(r, key) })
+	return identity, ok
+}
+
+func validateBasicAuthKey(r *http.Request, secret []byte) (string, bool) {
 	const prefix = "Basic "
 	hdr := r.Header.Get("Authorization")
 	if !strings.HasPrefix(hdr, prefix) {

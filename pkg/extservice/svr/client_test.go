@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-signal/pkg/extservice/common"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 func decodeBasic(hdr string) (user, pass string, ok bool) {
@@ -60,7 +62,7 @@ func TestHTTPClient_RemoveData_HappyPath(t *testing.T) {
 
 	c, err := NewHTTP(HTTPConfig{
 		BaseURL:      srv.URL,
-		SharedSecret: "test-secret",
+		SharedSecret: secrets.MustNewSecureString("test-secret"),
 		Timeout:      2 * time.Second,
 	})
 	if err != nil {
@@ -76,7 +78,7 @@ func TestHTTPClient_RemoveData_HappyPath(t *testing.T) {
 func TestHTTPClient_RemoveData_TreatsNotFoundAsSuccess(t *testing.T) {
 	srv := newSVRStub(t, "test-secret", http.StatusNotFound)
 	t.Cleanup(srv.Close)
-	c, _ := NewHTTP(HTTPConfig{BaseURL: srv.URL, SharedSecret: "test-secret"})
+	c, _ := NewHTTP(HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString("test-secret")})
 	t.Cleanup(func() { _ = c.Close() })
 	if err := c.RemoveData(context.Background(), "alice"); err != nil {
 		t.Errorf("404 should be treated as success; got %v", err)
@@ -86,7 +88,7 @@ func TestHTTPClient_RemoveData_TreatsNotFoundAsSuccess(t *testing.T) {
 func TestHTTPClient_RemoveData_5xxReturnsTypedError(t *testing.T) {
 	srv := newSVRStub(t, "test-secret", http.StatusInternalServerError)
 	t.Cleanup(srv.Close)
-	c, _ := NewHTTP(HTTPConfig{BaseURL: srv.URL, SharedSecret: "test-secret"})
+	c, _ := NewHTTP(HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString("test-secret")})
 	t.Cleanup(func() { _ = c.Close() })
 	err := c.RemoveData(context.Background(), "alice")
 	var e *Error
@@ -101,7 +103,7 @@ func TestHTTPClient_RemoveData_5xxReturnsTypedError(t *testing.T) {
 func TestHTTPClient_RemoveData_AuthRequired(t *testing.T) {
 	srv := newSVRStub(t, "right-secret", http.StatusNoContent)
 	t.Cleanup(srv.Close)
-	c, _ := NewHTTP(HTTPConfig{BaseURL: srv.URL, SharedSecret: "wrong-secret"})
+	c, _ := NewHTTP(HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString("wrong-secret")})
 	t.Cleanup(func() { _ = c.Close() })
 	err := c.RemoveData(context.Background(), "alice")
 	if err == nil {

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 // stubStore is a ManifestStore whose behaviour is fully controlled by injected
@@ -53,17 +55,17 @@ var errStoreOp = errors.New("store operation failed")
 
 func TestSetSharedSecret_EmptyStringClearsSecret(t *testing.T) {
 	m := NewSecureStorageManager(testLogger())
-	m.SetSharedSecret("some-secret")
-	m.SetSharedSecret("")
-	if m.sharedSecret != nil {
+	_ = m.SetSharedSecret(secrets.MustNewSecureString("some-secret"))
+	_ = m.SetSharedSecret(secrets.MustNewSecureString(""))
+	if m.state.Load().secret != nil {
 		t.Error("expected nil sharedSecret after setting empty string")
 	}
 }
 
 func TestSetSharedSecret_NonEmptySetsSecret(t *testing.T) {
 	m := NewSecureStorageManager(testLogger())
-	m.SetSharedSecret("my-secret")
-	if len(m.sharedSecret) == 0 {
+	_ = m.SetSharedSecret(secrets.MustNewSecureString("my-secret"))
+	if m.state.Load().secret.IsDestroyed() {
 		t.Error("expected non-empty sharedSecret after setting non-empty string")
 	}
 }
@@ -93,7 +95,7 @@ func TestStorageEnabled_TrueWhenStoreConfigured(t *testing.T) {
 
 func TestGetAuth_HMACBranchWithSharedSecret(t *testing.T) {
 	m := NewSecureStorageManager(testLogger())
-	m.SetSharedSecret("test-secret")
+	_ = m.SetSharedSecret(secrets.MustNewSecureString("test-secret"))
 
 	creds, err := m.GetAuth(context.Background(), "user-uuid-1")
 	if err != nil {
@@ -103,32 +105,35 @@ func TestGetAuth_HMACBranchWithSharedSecret(t *testing.T) {
 		t.Errorf("got username %q, want %q", creds.Username, "user-uuid-1")
 	}
 	// Password should be a hex-encoded HMAC-SHA256 (64 hex chars = 32 bytes).
-	if len(creds.Password) != 64 {
-		t.Errorf("expected 64-char hex HMAC password, got len %d: %q", len(creds.Password), creds.Password)
+	if len(creds.Password.Plaintext()) != 64 {
+		t.Errorf("expected 64-char hex HMAC password, got len %d: %q", len(creds.Password.Plaintext()), creds.Password.Plaintext())
 	}
-	if _, err := hex.DecodeString(creds.Password); err != nil {
+	if _, err := hex.DecodeString(creds.Password.Plaintext()); err != nil {
 		t.Errorf("password is not valid hex: %v", err)
 	}
 }
 
 func TestGetAuth_HMACIsDeterministic(t *testing.T) {
 	m := NewSecureStorageManager(testLogger())
-	m.SetSharedSecret("deterministic-secret")
+	_ = m.SetSharedSecret(secrets.MustNewSecureString("deterministic-secret"))
 
 	c1, _ := m.GetAuth(context.Background(), "uuid-A")
 	c2, _ := m.GetAuth(context.Background(), "uuid-A")
-	if c1.Password != c2.Password {
+	if c1.Password.Plaintext() != c2.Password.Plaintext() {
 		t.Error("HMAC password must be deterministic for the same UUID and secret")
 	}
 }
 
 func TestGetAuth_HMACAcrossUUIDs(t *testing.T) {
 	m := NewSecureStorageManager(testLogger())
-	m.SetSharedSecret("shared-secret")
+	_ = m.SetSharedSecret(secrets.MustNewSecureString("shared-secret"))
 
 	c1, _ := m.GetAuth(context.Background(), "uuid-1")
 	c2, _ := m.GetAuth(context.Background(), "uuid-2")
-	if c1.Password == c2.Password {
+	// Compare the revealed values, not the pointers: two credentials always
+	// have distinct *SecureString pointers, so a pointer comparison here would
+	// pass whatever the passwords are.
+	if c1.Password.Plaintext() == c2.Password.Plaintext() {
 		t.Error("expected different HMAC passwords for different UUIDs")
 	}
 }
