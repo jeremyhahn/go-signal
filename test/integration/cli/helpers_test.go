@@ -21,9 +21,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// CLIKind identifies which implementation a CLIBinary drives. It selects
+// command syntax; Name only labels the process and keys its data directory.
+// The two are distinct because withName derives a second account's binary by
+// suffixing Name, which must not change how commands are built.
+type CLIKind string
+
+const (
+	// KindSignalGo is our Go signal binary.
+	KindSignalGo CLIKind = "signal-go"
+	// KindSignalCLI is the Java signal-cli reference client.
+	KindSignalCLI CLIKind = "signal-cli"
+)
+
 // CLIBinary represents a Signal CLI binary to test against.
 type CLIBinary struct {
+	// Name labels the process in test output and keys its data directory.
+	// Derived binaries (see withName) carry a suffix, so never switch on it.
 	Name string
+	// Kind is the implementation, and the only thing command construction
+	// may branch on.
+	Kind CLIKind
 	Bin  string
 	// ExtraArgs holds binary-specific arguments prepended to every command
 	// (e.g., signal-cli needs different flag names or defaults).
@@ -52,7 +70,8 @@ func binaries(t *testing.T) []CLIBinary {
 	}
 	if _, err := os.Stat(signalBin); err == nil {
 		bins = append(bins, CLIBinary{
-			Name: "signal-go",
+			Name: string(KindSignalGo),
+			Kind: KindSignalGo,
 			Bin:  signalBin,
 			ExtraArgs: []string{
 				"--server", serverURL(),
@@ -68,7 +87,8 @@ func binaries(t *testing.T) []CLIBinary {
 	}
 	if _, err := exec.LookPath(signalCLIBin); err == nil {
 		bins = append(bins, CLIBinary{
-			Name:      "signal-cli",
+			Name:      string(KindSignalCLI),
+			Kind:      KindSignalCLI,
 			Bin:       signalCLIBin,
 			ExtraArgs: nil, // signal-cli connects to server configured at build time
 		})
@@ -177,8 +197,8 @@ func execCLISuccess(t *testing.T, bin CLIBinary, args ...string) cliResult {
 // registerAndVerify registers and verifies an account using the given binary.
 func registerAndVerify(t *testing.T, bin CLIBinary, number string) {
 	t.Helper()
-	if bin.Name == "signal-cli" {
-		// signal-cli uses: register NUMBER, then verify NUMBER CODE
+	if bin.Kind == KindSignalCLI {
+		// signal-cli selects the account with -a: register, then verify CODE.
 		result := execCLIAccount(t, bin, number, "register")
 		combined := result.Stdout + result.Stderr
 		alreadyRegistered := strings.Contains(combined, "already registered") ||

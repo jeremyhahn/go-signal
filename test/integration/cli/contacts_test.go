@@ -16,7 +16,7 @@ import (
 
 func TestCLI_ListContacts(t *testing.T) {
 	for _, bin := range binaries(t) {
-		if bin.Name == "signal-cli" {
+		if bin.Kind == KindSignalCLI {
 			continue
 		}
 		t.Run(bin.Name, func(t *testing.T) {
@@ -31,7 +31,7 @@ func TestCLI_ListContacts(t *testing.T) {
 
 func TestCLI_UpdateContact(t *testing.T) {
 	for _, bin := range binaries(t) {
-		if bin.Name == "signal-cli" {
+		if bin.Kind == KindSignalCLI {
 			continue
 		}
 		t.Run(bin.Name, func(t *testing.T) {
@@ -55,7 +55,7 @@ func TestCLI_UpdateContact(t *testing.T) {
 
 func TestCLI_RemoveContact(t *testing.T) {
 	for _, bin := range binaries(t) {
-		if bin.Name == "signal-cli" {
+		if bin.Kind == KindSignalCLI {
 			continue
 		}
 		t.Run(bin.Name, func(t *testing.T) {
@@ -73,7 +73,7 @@ func TestCLI_RemoveContact(t *testing.T) {
 
 func TestCLI_BlockAndUnblock(t *testing.T) {
 	for _, bin := range binaries(t) {
-		if bin.Name == "signal-cli" {
+		if bin.Kind == KindSignalCLI {
 			continue
 		}
 		t.Run(bin.Name, func(t *testing.T) {

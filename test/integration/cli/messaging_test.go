@@ -135,7 +135,7 @@ func TestCLI_SendContacts(t *testing.T) {
 
 func getAccountUUID(t *testing.T, bin CLIBinary, number string) string {
 	t.Helper()
-	if strings.HasPrefix(bin.Name, "signal-go") {
+	if bin.Kind == KindSignalGo {
 		result := execCLIAccount(t, bin, number, "whoami")
 		require.Equal(t, 0, result.ExitCode)
 		data := parseJSON(t, result)
@@ -144,6 +144,10 @@ func getAccountUUID(t *testing.T, bin CLIBinary, number string) string {
 	return number
 }
 
+// withName derives a binary for a second account in the same test: the
+// suffixed Name gives it its own data directory and labels it distinctly in
+// the log. Kind is copied unchanged, so the derived binary still builds
+// commands for the implementation it actually drives.
 func withName(bin CLIBinary, suffix string) CLIBinary {
 	b := bin
 	b.Name = bin.Name + "-" + suffix

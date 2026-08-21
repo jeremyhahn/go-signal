@@ -15,7 +15,7 @@ import (
 
 func TestCLI_ListGroups(t *testing.T) {
 	for _, bin := range binaries(t) {
-		if bin.Name == "signal-cli" {
+		if bin.Kind == KindSignalCLI {
 			continue // signal-cli groups require full e2e encryption
 		}
 		t.Run(bin.Name, func(t *testing.T) {
@@ -30,7 +30,7 @@ func TestCLI_ListGroups(t *testing.T) {
 
 func TestCLI_UpdateGroup_Create(t *testing.T) {
 	for _, bin := range binaries(t) {
-		if bin.Name == "signal-cli" {
+		if bin.Kind == KindSignalCLI {
 			continue
 		}
 		t.Run(bin.Name, func(t *testing.T) {

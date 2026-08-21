@@ -39,7 +39,7 @@ func TestCLI_ListAccounts(t *testing.T) {
 
 func TestCLI_WhoAmI(t *testing.T) {
 	for _, bin := range binaries(t) {
-		if bin.Name == "signal-cli" {
+		if bin.Kind == KindSignalCLI {
 			continue // signal-cli doesn't have whoami
 		}
 		t.Run(bin.Name, func(t *testing.T) {
@@ -79,7 +79,7 @@ func TestCLI_Unregister(t *testing.T) {
 
 func TestCLI_DeleteLocalAccountData(t *testing.T) {
 	for _, bin := range binaries(t) {
-		if bin.Name == "signal-cli" {
+		if bin.Kind == KindSignalCLI {
 			continue
 		}
 		t.Run(bin.Name, func(t *testing.T) {

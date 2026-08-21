@@ -58,7 +58,7 @@ func TestCLI_RemoveDevice(t *testing.T) {
 
 func TestCLI_UpdateConfiguration(t *testing.T) {
 	for _, bin := range binaries(t) {
-		if bin.Name == "signal-cli" {
+		if bin.Kind == KindSignalCLI {
 			result := execCLIAccount(t, bin, func() string {
 				n := uniqueNumber()
 				registerAndVerify(t, bin, n)

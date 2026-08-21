@@ -16,7 +16,7 @@ import (
 
 func TestCLI_FIDO2_Capabilities(t *testing.T) {
 	for _, bin := range binaries(t) {
-		if bin.Name == "signal-cli" {
+		if bin.Kind == KindSignalCLI {
 			continue
 		}
 		t.Run(bin.Name, func(t *testing.T) {
@@ -33,7 +33,7 @@ func TestCLI_FIDO2_Capabilities(t *testing.T) {
 
 func TestCLI_FIDO2_ListCredentials_Empty(t *testing.T) {
 	for _, bin := range binaries(t) {
-		if bin.Name == "signal-cli" {
+		if bin.Kind == KindSignalCLI {
 			continue
 		}
 		t.Run(bin.Name, func(t *testing.T) {
@@ -48,7 +48,7 @@ func TestCLI_FIDO2_ListCredentials_Empty(t *testing.T) {
 
 func TestCLI_FIDO2_DeleteCredential_NotFound(t *testing.T) {
 	for _, bin := range binaries(t) {
-		if bin.Name == "signal-cli" {
+		if bin.Kind == KindSignalCLI {
 			continue
 		}
 		t.Run(bin.Name, func(t *testing.T) {
@@ -66,7 +66,7 @@ func TestCLI_FIDO2_DeleteCredential_NotFound(t *testing.T) {
 
 func TestCLI_FIDO2_RenameCredential_NotFound(t *testing.T) {
 	for _, bin := range binaries(t) {
-		if bin.Name == "signal-cli" {
+		if bin.Kind == KindSignalCLI {
 			continue
 		}
 		t.Run(bin.Name, func(t *testing.T) {

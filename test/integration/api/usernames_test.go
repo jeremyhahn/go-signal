@@ -5,6 +5,7 @@ package api
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"testing"
@@ -14,12 +15,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// usernameEntropyBytes is the fresh randomness per generated nickname. A
+// confirmed username hash belongs to one account for the lifetime of the
+// server, so uniqueness here has to hold against every account the server
+// has ever confirmed — not merely within this process. 10 bytes hex-encode
+// to 20 characters, which with the prefix stays inside the 32-character
+// nickname limit while leaving collisions out of reach.
+const usernameEntropyBytes = 10
+
+// uniqueNickname returns a nickname no run has used before. The per-run
+// phoneRunBase deliberately is not reused: it is reduced modulo 10,000, so
+// two runs would share a base every ~118 runs by the birthday bound and
+// recreate an already-confirmed username.
+func uniqueNickname(t *testing.T) string {
+	t.Helper()
+	var b [usernameEntropyBytes]byte
+	_, err := rand.Read(b[:])
+	require.NoError(t, err, "rand.Read for nickname")
+	return "integtest" + hex.EncodeToString(b[:])
+}
+
 // realUsernameHashAndProofForIntegration generates a ZK-verifiable username hash
 // and proof through go-libsignal, suitable for driving the confirm endpoint.
-// Returns the 32-byte hash (as []byte) and the base64-encoded proof.
+// Each call produces a distinct username, so callers never collide with a
+// hash confirmed by an earlier test or an earlier run. Returns the 32-byte
+// hash (as []byte) and the base64-encoded proof.
 func realUsernameHashAndProofForIntegration(t *testing.T) (hash []byte, proofB64 string) {
 	t.Helper()
-	u, err := libsignalusernames.FromParts("integtest", "01", libsignalusernames.DefaultNicknameLimits())
+	u, err := libsignalusernames.FromParts(uniqueNickname(t), "01", libsignalusernames.DefaultNicknameLimits())
 	require.NoError(t, err, "FromParts")
 	h := u.Hash()
 	var randomness [32]byte

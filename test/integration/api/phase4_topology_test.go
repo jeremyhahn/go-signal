@@ -40,6 +40,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -119,12 +120,25 @@ func (c *captureTransport) Name() string { return "topology-capture" }
 // appendableMemorySource is dirsvc.AccountSource with a mutable
 // backing slice — the in-process equivalent of signald writing a new
 // account row that the snapshot stream then picks up.
+//
+// The load gate (TestPhase5_FullTopologyUnderLoad) appends from 50
+// goroutines at once, so the slice is guarded: an unsynchronized append
+// both races and silently loses entries.
 type appendableMemorySource struct {
+	mu      sync.RWMutex
 	entries []dirsvc.DirectoryEntry
 }
 
+// ListAll iterates a snapshot rather than the live slice, so a concurrent
+// Append is neither blocked by nor visible to an in-flight walk, and fn
+// never runs while the lock is held.
 func (m *appendableMemorySource) ListAll(ctx context.Context, fn func(dirsvc.DirectoryEntry) error) error {
-	for _, e := range m.entries {
+	m.mu.RLock()
+	snapshot := make([]dirsvc.DirectoryEntry, len(m.entries))
+	copy(snapshot, m.entries)
+	m.mu.RUnlock()
+
+	for _, e := range snapshot {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -135,7 +149,11 @@ func (m *appendableMemorySource) ListAll(ctx context.Context, fn func(dirsvc.Dir
 	return nil
 }
 
-func (m *appendableMemorySource) Append(e dirsvc.DirectoryEntry) { m.entries = append(m.entries, e) }
+func (m *appendableMemorySource) Append(e dirsvc.DirectoryEntry) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.entries = append(m.entries, e)
+}
 
 func buildTopology(t *testing.T) *topology {
 	t.Helper()
