@@ -132,20 +132,31 @@ type PreKeyResponseItemEntity struct {
 // specific device. RegistrationId is the sender's last-known registration ID
 // for that device and is used to detect stale key material (Signal protocol
 // §4.2, Java MessageController stale-device check).
+// IncomingMessageEntity is one per-device message within a send request.
+//
+// It deliberately carries NO timestamp. Java's IncomingMessage record has none
+// either — the timestamp belongs to the batch (IncomingMessageListEntity) and
+// is the value the delivered envelope carries. A per-message field existed
+// here once and the send handler sourced the envelope timestamp from it;
+// clients never populate it, so every delivered envelope carried 0 and
+// libsignal rejected it. Do not reintroduce it.
 type IncomingMessageEntity struct {
 	Type                int32  `json:"type"`
 	DestinationDeviceId uint64 `json:"destinationDeviceId"`
 	Content             string `json:"content"`
-	Timestamp           uint64 `json:"timestamp"`
 	RegistrationId      uint32 `json:"registrationId,omitempty"`
 }
 
 // IncomingMessageListEntity is a batch of messages submitted by a sender.
 type IncomingMessageListEntity struct {
-	Messages  []IncomingMessageEntity `json:"messages"`
-	Timestamp uint64                  `json:"timestamp"`
-	Online    bool                    `json:"online"`
-	Urgent    bool                    `json:"urgent"`
+	Messages []IncomingMessageEntity `json:"messages"`
+	// Timestamp is the client-assigned send time for the whole batch and
+	// becomes the delivered envelope's client_timestamp. libsignal compares
+	// it against the timestamp sealed inside the message content, so it must
+	// reach the envelope unchanged.
+	Timestamp uint64 `json:"timestamp"`
+	Online    bool   `json:"online"`
+	Urgent    bool   `json:"urgent"`
 }
 
 // SendMessageResponseEntity is returned after a message send.

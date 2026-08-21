@@ -15,10 +15,10 @@ import (
 // --------------------------------------------------------------------------
 
 func TestValidateIncomingMessages_EmptySlice(t *testing.T) {
-	if msg := validateIncomingMessages(nil); msg != "" {
+	if msg := validateIncomingMessages(IncomingMessageListEntity{}); msg != "" {
 		t.Errorf("expected empty error for nil slice, got %q", msg)
 	}
-	if msg := validateIncomingMessages([]IncomingMessageEntity{}); msg != "" {
+	if msg := validateIncomingMessages(IncomingMessageListEntity{Messages: []IncomingMessageEntity{}}); msg != "" {
 		t.Errorf("expected empty error for empty slice, got %q", msg)
 	}
 }
@@ -30,10 +30,9 @@ func TestValidateIncomingMessages_TooMany(t *testing.T) {
 			Type:                1,
 			DestinationDeviceId: uint64(i + 1),
 			Content:             "dGVzdA==",
-			Timestamp:           1000,
 		}
 	}
-	if msg := validateIncomingMessages(msgs); msg == "" {
+	if msg := validateIncomingMessages(IncomingMessageListEntity{Messages: msgs, Timestamp: 1000}); msg == "" {
 		t.Error("expected error for too many messages, got none")
 	}
 }
@@ -45,19 +44,18 @@ func TestValidateIncomingMessages_ExactlyAtLimit(t *testing.T) {
 			Type:                1,
 			DestinationDeviceId: uint64(i + 1),
 			Content:             "dGVzdA==",
-			Timestamp:           1000,
 		}
 	}
-	if msg := validateIncomingMessages(msgs); msg != "" {
+	if msg := validateIncomingMessages(IncomingMessageListEntity{Messages: msgs, Timestamp: 1000}); msg != "" {
 		t.Errorf("expected no error at exact limit, got %q", msg)
 	}
 }
 
 func TestValidateIncomingMessages_EmptyContent(t *testing.T) {
 	msgs := []IncomingMessageEntity{
-		{Type: 1, DestinationDeviceId: 1, Content: "", Timestamp: 1000},
+		{Type: 1, DestinationDeviceId: 1, Content: ""},
 	}
-	if msg := validateIncomingMessages(msgs); msg == "" {
+	if msg := validateIncomingMessages(IncomingMessageListEntity{Messages: msgs, Timestamp: 1000}); msg == "" {
 		t.Error("expected error for empty content, got none")
 	}
 }
@@ -65,36 +63,36 @@ func TestValidateIncomingMessages_EmptyContent(t *testing.T) {
 func TestValidateIncomingMessages_TimestampZero(t *testing.T) {
 	// Zero timestamp is allowed (lower bound is inclusive 0).
 	msgs := []IncomingMessageEntity{
-		{Type: 1, DestinationDeviceId: 1, Content: "dGVzdA==", Timestamp: 0},
+		{Type: 1, DestinationDeviceId: 1, Content: "dGVzdA=="},
 	}
-	if msg := validateIncomingMessages(msgs); msg != "" {
+	if msg := validateIncomingMessages(IncomingMessageListEntity{Messages: msgs, Timestamp: 0}); msg != "" {
 		t.Errorf("expected no error for timestamp=0, got %q", msg)
 	}
 }
 
 func TestValidateIncomingMessages_TimestampAtMaximum(t *testing.T) {
 	msgs := []IncomingMessageEntity{
-		{Type: 1, DestinationDeviceId: 1, Content: "dGVzdA==", Timestamp: uint64(maxMessageTimestamp)},
+		{Type: 1, DestinationDeviceId: 1, Content: "dGVzdA=="},
 	}
-	if msg := validateIncomingMessages(msgs); msg != "" {
+	if msg := validateIncomingMessages(IncomingMessageListEntity{Messages: msgs, Timestamp: uint64(maxMessageTimestamp)}); msg != "" {
 		t.Errorf("expected no error at max timestamp, got %q", msg)
 	}
 }
 
 func TestValidateIncomingMessages_TimestampExceedsMax(t *testing.T) {
 	msgs := []IncomingMessageEntity{
-		{Type: 1, DestinationDeviceId: 1, Content: "dGVzdA==", Timestamp: uint64(maxMessageTimestamp) + 1},
+		{Type: 1, DestinationDeviceId: 1, Content: "dGVzdA=="},
 	}
-	if msg := validateIncomingMessages(msgs); msg == "" {
+	if msg := validateIncomingMessages(IncomingMessageListEntity{Messages: msgs, Timestamp: uint64(maxMessageTimestamp) + 1}); msg == "" {
 		t.Error("expected error for timestamp exceeding max, got none")
 	}
 }
 
 func TestValidateIncomingMessages_InvalidEnvelopeTypeZero(t *testing.T) {
 	msgs := []IncomingMessageEntity{
-		{Type: 0, DestinationDeviceId: 1, Content: "dGVzdA==", Timestamp: 1000},
+		{Type: 0, DestinationDeviceId: 1, Content: "dGVzdA=="},
 	}
-	if msg := validateIncomingMessages(msgs); msg == "" {
+	if msg := validateIncomingMessages(IncomingMessageListEntity{Messages: msgs, Timestamp: 1000}); msg == "" {
 		t.Error("expected error for type 0 (unknown), got none")
 	}
 }
@@ -102,9 +100,9 @@ func TestValidateIncomingMessages_InvalidEnvelopeTypeZero(t *testing.T) {
 func TestValidateIncomingMessages_InvalidEnvelopeType7(t *testing.T) {
 	// Type 7 is SERVER_DELIVERY_RECEIPT — server-only, clients may not send.
 	msgs := []IncomingMessageEntity{
-		{Type: 7, DestinationDeviceId: 1, Content: "dGVzdA==", Timestamp: 1000},
+		{Type: 7, DestinationDeviceId: 1, Content: "dGVzdA=="},
 	}
-	if msg := validateIncomingMessages(msgs); msg == "" {
+	if msg := validateIncomingMessages(IncomingMessageListEntity{Messages: msgs, Timestamp: 1000}); msg == "" {
 		t.Error("expected error for type 7 (server-only), got none")
 	}
 }
@@ -114,9 +112,9 @@ func TestValidateIncomingMessages_ValidEnvelopeTypes(t *testing.T) {
 	for _, typ := range validTypes {
 		t.Run(fmt.Sprintf("type_%d", typ), func(t *testing.T) {
 			msgs := []IncomingMessageEntity{
-				{Type: typ, DestinationDeviceId: 1, Content: "dGVzdA==", Timestamp: 1000},
+				{Type: typ, DestinationDeviceId: 1, Content: "dGVzdA=="},
 			}
-			if msg := validateIncomingMessages(msgs); msg != "" {
+			if msg := validateIncomingMessages(IncomingMessageListEntity{Messages: msgs, Timestamp: 1000}); msg != "" {
 				t.Errorf("expected no error for valid type %d, got %q", typ, msg)
 			}
 		})
@@ -125,10 +123,10 @@ func TestValidateIncomingMessages_ValidEnvelopeTypes(t *testing.T) {
 
 func TestValidateIncomingMessages_DuplicateDeviceIDs(t *testing.T) {
 	msgs := []IncomingMessageEntity{
-		{Type: 1, DestinationDeviceId: 1, Content: "dGVzdA==", Timestamp: 1000},
-		{Type: 1, DestinationDeviceId: 1, Content: "dGVzdA==", Timestamp: 1000},
+		{Type: 1, DestinationDeviceId: 1, Content: "dGVzdA=="},
+		{Type: 1, DestinationDeviceId: 1, Content: "dGVzdA=="},
 	}
-	if msg := validateIncomingMessages(msgs); msg == "" {
+	if msg := validateIncomingMessages(IncomingMessageListEntity{Messages: msgs, Timestamp: 1000}); msg == "" {
 		t.Error("expected error for duplicate device IDs, got none")
 	}
 }
@@ -137,20 +135,20 @@ func TestValidateIncomingMessages_DeviceZeroNormalisedToPrimary(t *testing.T) {
 	// DeviceID 0 normalises to primary (1); two messages to device 0 should
 	// trigger the duplicate check.
 	msgs := []IncomingMessageEntity{
-		{Type: 1, DestinationDeviceId: 0, Content: "dGVzdA==", Timestamp: 1000},
-		{Type: 1, DestinationDeviceId: 0, Content: "dGVzdA==", Timestamp: 1000},
+		{Type: 1, DestinationDeviceId: 0, Content: "dGVzdA=="},
+		{Type: 1, DestinationDeviceId: 0, Content: "dGVzdA=="},
 	}
-	if msg := validateIncomingMessages(msgs); msg == "" {
+	if msg := validateIncomingMessages(IncomingMessageListEntity{Messages: msgs, Timestamp: 1000}); msg == "" {
 		t.Error("expected duplicate-device error for two DeviceID=0 entries, got none")
 	}
 }
 
 func TestValidateIncomingMessages_DifferentDevicesNoDuplicate(t *testing.T) {
 	msgs := []IncomingMessageEntity{
-		{Type: 1, DestinationDeviceId: 1, Content: "dGVzdA==", Timestamp: 1000},
-		{Type: 1, DestinationDeviceId: 2, Content: "dGVzdA==", Timestamp: 1000},
+		{Type: 1, DestinationDeviceId: 1, Content: "dGVzdA=="},
+		{Type: 1, DestinationDeviceId: 2, Content: "dGVzdA=="},
 	}
-	if msg := validateIncomingMessages(msgs); msg != "" {
+	if msg := validateIncomingMessages(IncomingMessageListEntity{Messages: msgs, Timestamp: 1000}); msg != "" {
 		t.Errorf("expected no error for distinct device IDs, got %q", msg)
 	}
 }

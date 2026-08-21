@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -511,5 +512,88 @@ func TestHandleSendMessage_DefaultNoOpChecker_Succeeds(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200 with default no-op checker, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestHandleSendMessage_EnvelopeCarriesTheListTimestamp is the regression test
+// for #34.
+//
+// The wire carries the send time once, on the message LIST. The envelope's
+// client_timestamp must be that value, because libsignal cross-checks it
+// against the timestamp sealed inside the content and rejects a mismatch with
+// InvalidMessageStructureException. Sourcing it from a per-message field —
+// which no client populates, and which Java's IncomingMessage record does not
+// even define — delivered every envelope with timestamp 0, so no real client
+// could accept a message.
+//
+// The request below deliberately still sends a per-message "timestamp" that
+// differs from the list one: a client may send anything there, and the
+// envelope must take the list value regardless.
+func TestHandleSendMessage_EnvelopeCarriesTheListTimestamp(t *testing.T) {
+	s, _ := newTestServerWithAccount(t)
+
+	const listTimestamp = 1787337868488
+	contentB64 := base64.StdEncoding.EncodeToString([]byte("hello world"))
+	body := `{
+		"messages": [{"type": 1, "destinationDeviceId": 1, "content": "` + contentB64 + `", "timestamp": 999}],
+		"timestamp": ` + strconv.Itoa(listTimestamp) + `,
+		"online": false,
+		"urgent": true
+	}`
+
+	req := httptest.NewRequest(http.MethodPut, "/v1/messages/"+testAccountUUID, strings.NewReader(body))
+	req.SetBasicAuth(testAccountUUID, testAuthToken)
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	stored, err := s.messages.GetMessagesForDevice(context.Background(), testAccountUUID, accounts.PrimaryDeviceID)
+	if err != nil {
+		t.Fatalf("GetMessagesForDevice: %v", err)
+	}
+	if len(stored) != 1 {
+		t.Fatalf("expected 1 stored envelope, got %d", len(stored))
+	}
+
+	if stored[0].Timestamp != listTimestamp {
+		t.Errorf("envelope timestamp = %d, want the list timestamp %d "+
+			"(0 or 999 means it was taken from the wrong field)",
+			stored[0].Timestamp, listTimestamp)
+	}
+}
+
+// A zero list timestamp is a client that sent none; it must reach the envelope
+// as zero rather than being silently replaced with a server clock reading,
+// which would defeat libsignal's cross-check in the opposite direction.
+func TestHandleSendMessage_ZeroListTimestampIsPreserved(t *testing.T) {
+	s, _ := newTestServerWithAccount(t)
+
+	contentB64 := base64.StdEncoding.EncodeToString([]byte("hello world"))
+	body := `{
+		"messages": [{"type": 1, "destinationDeviceId": 1, "content": "` + contentB64 + `"}],
+		"timestamp": 0
+	}`
+
+	req := httptest.NewRequest(http.MethodPut, "/v1/messages/"+testAccountUUID, strings.NewReader(body))
+	req.SetBasicAuth(testAccountUUID, testAuthToken)
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	stored, err := s.messages.GetMessagesForDevice(context.Background(), testAccountUUID, accounts.PrimaryDeviceID)
+	if err != nil {
+		t.Fatalf("GetMessagesForDevice: %v", err)
+	}
+	if len(stored) != 1 {
+		t.Fatalf("expected 1 stored envelope, got %d", len(stored))
+	}
+	if stored[0].Timestamp != 0 {
+		t.Errorf("envelope timestamp = %d, want 0", stored[0].Timestamp)
 	}
 }

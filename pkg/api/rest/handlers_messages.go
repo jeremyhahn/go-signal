@@ -39,27 +39,33 @@ var validEnvelopeTypes = map[messages.EnvelopeType]struct{}{
 	messages.EnvelopeTypePlaintextContent:   {},
 }
 
-// validateIncomingMessages checks structural constraints on the per-device
-// message list submitted by a sender. It returns a non-empty error string on
-// the first violation; the caller should write a 400 response with that string.
+// validateIncomingMessages checks structural constraints on the message list
+// submitted by a sender. It returns a non-empty error string on the first
+// violation; the caller should write a 400 response with that string.
+//
+// The timestamp is validated at the list level because that is the one the
+// envelope carries — see the note on IncomingMessageList.Timestamp. Checking a
+// per-message value would leave the value that actually reaches the client
+// unbounded.
 //
 // Constraints enforced:
-//  1. Request size: len(msgs) <= maxMessagesPerRequest.
+//  1. Request size: len(req.Messages) <= maxMessagesPerRequest.
 //  2. Content non-empty: each message entity must carry a non-empty content string.
-//  3. Timestamp range: 0 <= timestamp <= maxMessageTimestamp.
+//  3. Timestamp range: 0 <= req.Timestamp <= maxMessageTimestamp.
 //  4. Envelope type valid: must be a client-submittable EnvelopeType.
 //  5. No duplicate destination device IDs within the batch.
-func validateIncomingMessages(msgs []IncomingMessageEntity) string {
+func validateIncomingMessages(req IncomingMessageListEntity) string {
+	msgs := req.Messages
 	if len(msgs) > maxMessagesPerRequest {
 		return "too many messages in request"
+	}
+	if req.Timestamp > uint64(maxMessageTimestamp) {
+		return "message timestamp out of range"
 	}
 	seen := make(map[uint64]struct{}, len(msgs))
 	for _, msg := range msgs {
 		if msg.Content == "" {
 			return "message content must not be empty"
-		}
-		if msg.Timestamp > uint64(maxMessageTimestamp) {
-			return "message timestamp out of range"
 		}
 		if _, ok := validEnvelopeTypes[messages.EnvelopeType(msg.Type)]; !ok {
 			return "invalid envelope type"
@@ -118,7 +124,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if errMsg := validateIncomingMessages(req.Messages); errMsg != "" {
+	if errMsg := validateIncomingMessages(req); errMsg != "" {
 		writeError(w, http.StatusBadRequest, errMsg)
 		return
 	}
@@ -258,10 +264,16 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 			SourceDevice:      sourceDevice,
 			DestinationUUID:   destAcct.UUID,
 			DestinationDevice: deviceID,
-			Timestamp:         msg.Timestamp,
-			Content:           content,
-			Urgent:            req.Urgent,
-			ServerGUID:        serverGUID,
+			// The LIST timestamp, not a per-message one. libsignal
+			// cross-checks this against the timestamp sealed inside the
+			// content and rejects a mismatch with
+			// InvalidMessageStructureException, so sourcing it from a field
+			// clients do not populate delivers an envelope no client will
+			// accept. handlers_messages_multi.go does the same.
+			Timestamp:  req.Timestamp,
+			Content:    content,
+			Urgent:     req.Urgent,
+			ServerGUID: serverGUID,
 		}
 
 		// Delivery loop detection: trips when the recipient already sent the
