@@ -715,14 +715,22 @@ lint: ## Run golangci-lint, twice: repo tags, then again with the integration ta
 GOSEC_FMT ?= text
 GOSEC_OUT ?=
 
-# gosec has no integration pass yet — see #53. It is a small increment now that
-# the tag plumbing has landed: gosec skips _test.go files, so the tag adds only
-# the handful of non-test helpers in that tree. The G402 in one of them is
-# fixed on this branch, so the pass will be clean when it arrives.
-gosec: ## Run gosec security scanner, under the repo's build tags
+# Two passes, like `vet` and `lint`. The second is smaller than it looks:
+# gosec skips _test.go files, so the integration tag adds only the handful of
+# non-test helpers in that tree. One of them, test/integration/api/testutil.go,
+# held a HIGH-severity G402 that an untagged gosec never saw — it opens ZERO
+# files under ./test/... — which is precisely why the pass has to exist rather
+# than be assumed unnecessary.
+#
+# The SARIF options go to the FIRST pass only. gosec writes its report by
+# truncating the file, so a second pass would overwrite the first one's
+# findings and the upload would carry half the scan while reporting success.
+gosec: ## Run gosec security scanner, twice: repo tags, then with the integration tag
 	@echo "==> Running security scanner (tags: $(or $(GOSEC_TAGS),none), format: $(GOSEC_FMT))..."
 	$(GOSEC) -exclude=$(GOSEC_EXCLUDE) -exclude-generated -tags "$(GOSEC_TAGS)" \
 		-fmt=$(GOSEC_FMT) $(if $(GOSEC_OUT),-out=$(GOSEC_OUT) -stdout -verbose=text) ./...
+	@echo "==> Running security scanner (tags: integration,$(GOSEC_TAGS))..."
+	$(GOSEC) -exclude=$(GOSEC_EXCLUDE) -exclude-generated -tags "integration,$(GOSEC_TAGS)" ./...
 
 vuln: ## Run govulncheck vulnerability scan
 	@echo "==> Running vulnerability check..."

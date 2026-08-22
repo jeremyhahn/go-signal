@@ -79,15 +79,6 @@ func runTarget(t *testing.T, target, toolVar string, extra ...string) [][]string
 	return runs
 }
 
-// only returns the single invocation of a target that runs its tool once.
-func only(t *testing.T, runs [][]string) []string {
-	t.Helper()
-	if len(runs) != 1 {
-		t.Fatalf("expected one invocation, got %d: %v", len(runs), runs)
-	}
-	return runs[0]
-}
-
 // flagValue returns the value following flag in argv, or "" when absent.
 // gosec and golangci-lint both take "-flag value" rather than "-flag=value"
 // for the tag list, so the value is the next element.
@@ -157,27 +148,42 @@ func TestLintTarget_AnalysesTheTaggedPackages(t *testing.T) {
 // nothing, which looks identical to a clean run. Measured: the space form
 // scanned the same 414 files as an untagged run, the comma form 445.
 func TestGosecTarget_AnalysesTheTaggedPackages(t *testing.T) {
-	argv := only(t, runTarget(t, "gosec", "GOSEC"))
-
-	tags := flagValue(argv, "-tags")
-	if tags == "" {
-		t.Fatalf("gosec ran without -tags: %v", argv)
-	}
-	if strings.Contains(tags, " ") {
-		t.Fatalf("gosec's tag list %q is space-separated; gosec accepts it and matches nothing", tags)
-	}
-	if !strings.Contains(tags, ",") {
-		t.Fatalf("gosec's tag list %q is not comma-separated: %v", tags, argv)
+	runs := runTarget(t, "gosec", "GOSEC")
+	if len(runs) != 2 {
+		t.Fatalf("gosec made %d invocations, want 2 (repo tags, then integration): %v", len(runs), runs)
 	}
 
-	pkgs := packagesUnderTags(t, strings.ReplaceAll(tags, ",", " "))
-	for _, want := range []string{
-		"github.com/jeremyhahn/go-signal/pkg/fido2",
-		"github.com/jeremyhahn/go-signal/pkg/desktop/ws",
-	} {
-		if !strings.Contains(pkgs, want+"\n") {
-			t.Errorf("gosec's tag set %q does not select %s — the scan is back to skipping it", tags, want)
+	sawIntegration := false
+	for i, argv := range runs {
+		tags := flagValue(argv, "-tags")
+		if tags == "" {
+			t.Fatalf("gosec pass %d ran without -tags: %v", i+1, argv)
 		}
+		// gosec wants COMMAS where the go tool wants spaces, and it does not
+		// reject the space form — it reads it as one undeclared tag and matches
+		// nothing, which looks identical to a clean run.
+		if strings.Contains(tags, " ") {
+			t.Fatalf("gosec pass %d tag list %q is space-separated; gosec accepts it and matches nothing", i+1, tags)
+		}
+		if !strings.Contains(tags, ",") {
+			t.Fatalf("gosec pass %d tag list %q is not comma-separated: %v", i+1, tags, argv)
+		}
+		if contains(strings.Split(tags, ","), "integration") {
+			sawIntegration = true
+		}
+
+		pkgs := packagesUnderTags(t, strings.ReplaceAll(tags, ",", " "))
+		for _, want := range []string{
+			"github.com/jeremyhahn/go-signal/pkg/fido2",
+			"github.com/jeremyhahn/go-signal/pkg/desktop/ws",
+		} {
+			if !strings.Contains(pkgs, want+"\n") {
+				t.Errorf("gosec pass %d tag set %q does not select %s — the scan is back to skipping it", i+1, tags, want)
+			}
+		}
+	}
+	if !sawIntegration {
+		t.Error("no gosec pass carries the integration tag: test/integration is unscanned again")
 	}
 }
 
@@ -185,28 +191,40 @@ func TestGosecTarget_AnalysesTheTaggedPackages(t *testing.T) {
 // CI used to restate them in YAML; they belong to the target now, so they are
 // asserted here rather than trusted.
 func TestGosecTarget_KeepsItsExclusionsAndSarifOptions(t *testing.T) {
-	argv := only(t, runTarget(t, "gosec", "GOSEC"))
-	joined := strings.Join(argv, " ")
+	runs := runTarget(t, "gosec", "GOSEC")
 
-	for _, want := range []string{"-exclude=G103,G104,G115,G304,G118", "-exclude-generated"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("gosec lost %s: %v", want, argv)
+	// Every pass carries the exclusions, or one of them gates on a different
+	// rule set than the other and the difference is invisible.
+	for i, argv := range runs {
+		joined := strings.Join(argv, " ")
+		for _, want := range []string{"-exclude=G103,G104,G115,G304,G118", "-exclude-generated"} {
+			if !strings.Contains(joined, want) {
+				t.Errorf("gosec pass %d lost %s: %v", i+1, want, argv)
+			}
 		}
-	}
-	// Default form writes no file, so it must not ask for one.
-	if strings.Contains(joined, "-out=") {
-		t.Errorf("the default gosec invocation should not write a report: %v", argv)
+		if strings.Contains(joined, "-out=") {
+			t.Errorf("the default gosec invocation should not write a report: %v", argv)
+		}
 	}
 
 	// The SARIF form is what CI runs. -stdout and -verbose=text ride along with
 	// it deliberately: the SARIF upload only happens on github.com, so without
 	// them a Gitea failure exits 1 with its findings buried in a file nobody
 	// reads.
-	sarif := only(t, runTarget(t, "gosec", "GOSEC", "GOSEC_FMT=sarif", "GOSEC_OUT=gosec.sarif"))
-	joined = strings.Join(sarif, " ")
+	sarif := runTarget(t, "gosec", "GOSEC", "GOSEC_FMT=sarif", "GOSEC_OUT=gosec.sarif")
+	joined := strings.Join(sarif[0], " ")
 	for _, want := range []string{"-fmt=sarif", "-out=gosec.sarif", "-stdout", "-verbose=text"} {
 		if !strings.Contains(joined, want) {
-			t.Errorf("the SARIF invocation lost %s: %v", want, sarif)
+			t.Errorf("the SARIF invocation lost %s: %v", want, sarif[0])
+		}
+	}
+
+	// And ONLY the first pass writes it. gosec truncates its output file, so a
+	// second pass writing the same path would overwrite the first pass's
+	// findings — the upload would carry half the scan and still report success.
+	for i, argv := range sarif[1:] {
+		if strings.Contains(strings.Join(argv, " "), "-out=") {
+			t.Errorf("gosec pass %d also writes the report; it would overwrite the first pass's findings: %v", i+2, argv)
 		}
 	}
 }
@@ -233,9 +251,11 @@ func TestGateTags_FollowTheFeatureFlags(t *testing.T) {
 				}
 			}
 
-			gosec := flagValue(only(t, runTarget(t, "gosec", "GOSEC", tc.flag)), "-tags")
-			if contains(strings.Split(gosec, ","), tc.absent) {
-				t.Errorf("gosec tags %q still carry %q with %s", gosec, tc.absent, tc.flag)
+			for i, argv := range runTarget(t, "gosec", "GOSEC", tc.flag) {
+				gosec := flagValue(argv, "-tags")
+				if contains(strings.Split(gosec, ","), tc.absent) {
+					t.Errorf("gosec pass %d tags %q still carry %q with %s", i+1, gosec, tc.absent, tc.flag)
+				}
 			}
 		})
 	}
