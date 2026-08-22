@@ -20,6 +20,12 @@ import (
 // comma conversion, or to either tool's flag spelling fails here instead of
 // silently re-opening the hole.
 
+// runBoundary separates one invocation's arguments from the next in the shim's
+// log. It cannot be "--": golangci-lint's own flags are --timeout and
+// --build-tags, so splitting on that would tear an argument list in half and
+// then report the pieces as extra invocations. Measured — it did.
+const runBoundary = "===end-of-invocation==="
+
 // shimTool writes a fake tool onto PATH-independent disk that records the
 // arguments it was called with and exits 0. Passing it through the Makefile's
 // own GOLINT/GOSEC variables means the recipe under test is the real one — only
@@ -31,7 +37,11 @@ func shimTool(t *testing.T) (bin, argsFile string) {
 	argsFile = filepath.Join(dir, "args")
 	bin = filepath.Join(dir, "shim")
 
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsFile + "\nexit 0\n"
+	// Appends, with a separator, because a target may invoke its tool more
+	// than once: `lint` runs a second pass for the integration tag. Overwriting
+	// would silently report only the last invocation and let the first go
+	// unchecked — the same masked measurement these tests exist to prevent.
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> " + argsFile + "\necho '" + runBoundary + "' >> " + argsFile + "\nexit 0\n"
 	if err := os.WriteFile(bin, []byte(script), 0o700); err != nil { //nolint:gosec // an executable test fixture must be executable.
 		t.Fatalf("write shim: %v", err)
 	}
@@ -39,8 +49,8 @@ func shimTool(t *testing.T) (bin, argsFile string) {
 }
 
 // runTarget runs a Make target with the given overrides and returns the
-// arguments the shimmed tool received.
-func runTarget(t *testing.T, target, toolVar string, extra ...string) []string {
+// arguments of EVERY invocation the shimmed tool received, in order.
+func runTarget(t *testing.T, target, toolVar string, extra ...string) [][]string {
 	t.Helper()
 
 	bin, argsFile := shimTool(t)
@@ -56,7 +66,26 @@ func runTarget(t *testing.T, target, toolVar string, extra ...string) []string {
 	if err != nil {
 		t.Fatalf("the target never invoked the tool: %v", err)
 	}
-	return strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+
+	var runs [][]string
+	for _, block := range strings.Split(strings.TrimRight(string(raw), "\n"), runBoundary) {
+		if argv := strings.Split(strings.Trim(block, "\n"), "\n"); len(argv) > 0 && argv[0] != "" {
+			runs = append(runs, argv)
+		}
+	}
+	if len(runs) == 0 {
+		t.Fatalf("the target never invoked the tool")
+	}
+	return runs
+}
+
+// only returns the single invocation of a target that runs its tool once.
+func only(t *testing.T, runs [][]string) []string {
+	t.Helper()
+	if len(runs) != 1 {
+		t.Fatalf("expected one invocation, got %d: %v", len(runs), runs)
+	}
+	return runs[0]
 }
 
 // flagValue returns the value following flag in argv, or "" when absent.
@@ -90,21 +119,35 @@ func packagesUnderTags(t *testing.T, tags string) string {
 // half. The assertion is not that a flag is present but that the flag's value
 // selects the packages that were being skipped.
 func TestLintTarget_AnalysesTheTaggedPackages(t *testing.T) {
-	argv := runTarget(t, "lint", "GOLINT")
-
-	tags := flagValue(argv, "--build-tags")
-	if tags == "" {
-		t.Fatalf("lint ran without --build-tags: %v", argv)
+	runs := runTarget(t, "lint", "GOLINT")
+	if len(runs) != 2 {
+		t.Fatalf("lint made %d invocations, want 2 (repo tags, then integration): %v", len(runs), runs)
 	}
 
-	pkgs := packagesUnderTags(t, tags)
-	for _, want := range []string{
-		"github.com/jeremyhahn/go-signal/pkg/fido2",
-		"github.com/jeremyhahn/go-signal/pkg/desktop/ws",
-	} {
-		if !strings.Contains(pkgs, want+"\n") {
-			t.Errorf("lint's tag set %q does not select %s — the gate is back to skipping it", tags, want)
+	// EVERY pass has to carry tags. Checking only the last would let the first
+	// silently go back to analysing nothing.
+	sawIntegration := false
+	for i, argv := range runs {
+		tags := flagValue(argv, "--build-tags")
+		if tags == "" {
+			t.Fatalf("lint pass %d ran without --build-tags: %v", i+1, argv)
 		}
+		if contains(strings.Fields(tags), "integration") {
+			sawIntegration = true
+		}
+
+		pkgs := packagesUnderTags(t, tags)
+		for _, want := range []string{
+			"github.com/jeremyhahn/go-signal/pkg/fido2",
+			"github.com/jeremyhahn/go-signal/pkg/desktop/ws",
+		} {
+			if !strings.Contains(pkgs, want+"\n") {
+				t.Errorf("lint pass %d tag set %q does not select %s — the gate is back to skipping it", i+1, tags, want)
+			}
+		}
+	}
+	if !sawIntegration {
+		t.Error("no lint pass carries the integration tag: test/integration is unlinted again")
 	}
 }
 
@@ -114,7 +157,7 @@ func TestLintTarget_AnalysesTheTaggedPackages(t *testing.T) {
 // nothing, which looks identical to a clean run. Measured: the space form
 // scanned the same 414 files as an untagged run, the comma form 445.
 func TestGosecTarget_AnalysesTheTaggedPackages(t *testing.T) {
-	argv := runTarget(t, "gosec", "GOSEC")
+	argv := only(t, runTarget(t, "gosec", "GOSEC"))
 
 	tags := flagValue(argv, "-tags")
 	if tags == "" {
@@ -142,7 +185,7 @@ func TestGosecTarget_AnalysesTheTaggedPackages(t *testing.T) {
 // CI used to restate them in YAML; they belong to the target now, so they are
 // asserted here rather than trusted.
 func TestGosecTarget_KeepsItsExclusionsAndSarifOptions(t *testing.T) {
-	argv := runTarget(t, "gosec", "GOSEC")
+	argv := only(t, runTarget(t, "gosec", "GOSEC"))
 	joined := strings.Join(argv, " ")
 
 	for _, want := range []string{"-exclude=G103,G104,G115,G304,G118", "-exclude-generated"} {
@@ -159,7 +202,7 @@ func TestGosecTarget_KeepsItsExclusionsAndSarifOptions(t *testing.T) {
 	// it deliberately: the SARIF upload only happens on github.com, so without
 	// them a Gitea failure exits 1 with its findings buried in a file nobody
 	// reads.
-	sarif := runTarget(t, "gosec", "GOSEC", "GOSEC_FMT=sarif", "GOSEC_OUT=gosec.sarif")
+	sarif := only(t, runTarget(t, "gosec", "GOSEC", "GOSEC_FMT=sarif", "GOSEC_OUT=gosec.sarif"))
 	joined = strings.Join(sarif, " ")
 	for _, want := range []string{"-fmt=sarif", "-out=gosec.sarif", "-stdout", "-verbose=text"} {
 		if !strings.Contains(joined, want) {
@@ -183,12 +226,14 @@ func TestGateTags_FollowTheFeatureFlags(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			lint := flagValue(runTarget(t, "lint", "GOLINT", tc.flag), "--build-tags")
-			if slices := strings.Fields(lint); contains(slices, tc.absent) {
-				t.Errorf("lint tags %q still carry %q with %s", lint, tc.absent, tc.flag)
+			for i, argv := range runTarget(t, "lint", "GOLINT", tc.flag) {
+				lint := flagValue(argv, "--build-tags")
+				if contains(strings.Fields(lint), tc.absent) {
+					t.Errorf("lint pass %d tags %q still carry %q with %s", i+1, lint, tc.absent, tc.flag)
+				}
 			}
 
-			gosec := flagValue(runTarget(t, "gosec", "GOSEC", tc.flag), "-tags")
+			gosec := flagValue(only(t, runTarget(t, "gosec", "GOSEC", tc.flag)), "-tags")
 			if contains(strings.Split(gosec, ","), tc.absent) {
 				t.Errorf("gosec tags %q still carry %q with %s", gosec, tc.absent, tc.flag)
 			}

@@ -7,9 +7,11 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -92,6 +94,44 @@ type testEnv struct {
 	client  *http.Client
 }
 
+// caCertPath returns the CA that issued the devcontainer server's certificate.
+// SIGNAL_CA_CERT lets the environment point elsewhere, matching what the CLI
+// harness already reads.
+func caCertPath() string {
+	if path := os.Getenv("SIGNAL_CA_CERT"); path != "" {
+		return path
+	}
+	return "../../tls/ca-cert.pem"
+}
+
+// remoteTLSConfig verifies the server against the test CA instead of trusting
+// whatever certificate it presents.
+//
+// This used to be InsecureSkipVerify with a comment asserting the target was a
+// local devcontainer. SIGNAL_SERVER_URL is read verbatim and constrained to
+// nothing, so that assertion was not the code's to make: pointed at any other
+// host, the suite would accept any certificate while sending registration
+// passwords, authorization headers and generated key material to it. The test
+// CA is in the repo and its certificate covers signal-server, localhost and
+// 127.0.0.1, so there is nothing to give up by verifying properly.
+//
+// Failing to load the CA fails the test. A fallback to skipping verification
+// would restore the same hole for anyone whose environment is slightly wrong.
+func remoteTLSConfig(t *testing.T) *tls.Config {
+	t.Helper()
+
+	path := caCertPath()
+	pem, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read test CA %s: %v", path, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		t.Fatalf("test CA %s contains no usable certificate", path)
+	}
+	return &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+}
+
 // setupTestEnv creates a test environment. If the SIGNAL_SERVER_URL
 // environment variable is set, the tests connect to that external server
 // (the devcontainer docker-compose signal-server service). Otherwise, an
@@ -105,7 +145,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 			client: &http.Client{
 				Timeout: 10 * time.Second,
 				Transport: &http.Transport{
-					TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+					TLSClientConfig: remoteTLSConfig(t),
 				},
 			},
 		}
@@ -227,7 +267,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 	require.NotEqual(t, "127.0.0.1:0", addr, "server did not bind")
 
 	go func() {
-		if err := srv.Serve(); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			t.Logf("server serve error: %v", err)
 		}
 	}()
@@ -235,7 +275,9 @@ func setupTestEnv(t *testing.T) *testEnv {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		srv.Shutdown(ctx)
+		if err := srv.Shutdown(ctx); err != nil {
+			t.Logf("server shutdown: %v", err)
+		}
 	})
 
 	return &testEnv{
@@ -285,15 +327,6 @@ func decodeJSON(t *testing.T, resp *http.Response, v any) {
 	defer resp.Body.Close()
 	err := json.NewDecoder(resp.Body).Decode(v)
 	require.NoError(t, err)
-}
-
-// readBody reads and returns the response body as bytes and closes the body.
-func readBody(t *testing.T, resp *http.Response) []byte {
-	t.Helper()
-	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	return data
 }
 
 // testKeyMaterial holds a generated identity key pair and signed pre-key
@@ -453,13 +486,13 @@ func registerTestAccountFull(t *testing.T, env *testEnv, number, password string
 	// Step 2: Request a verification code (stub transport accepts all requests).
 	codeResp := env.doRequest(t, "POST", "/v1/verification/session/"+sessionID+"/code", nil, nil)
 	require.Equal(t, http.StatusOK, codeResp.StatusCode, "verification code request failed")
-	codeResp.Body.Close()
+	_ = codeResp.Body.Close()
 
 	// Step 3: Submit the verification code. The stub transport auto-verifies "123456".
 	verifyResp := env.doRequest(t, "PUT", "/v1/verification/session/"+sessionID+"/code",
 		map[string]any{"code": "123456"}, nil)
 	require.Equal(t, http.StatusOK, verifyResp.StatusCode, "verification code submission failed")
-	verifyResp.Body.Close()
+	_ = verifyResp.Body.Close()
 
 	// Step 4: Generate valid cryptographic key material for the registration request.
 	aciKeys := generateTestKeyMaterial(t)

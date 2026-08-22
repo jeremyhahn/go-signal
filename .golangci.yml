@@ -338,6 +338,28 @@ linters:
       - path: pkg/fips/
         linters:
           - forbidigo
+      # The integration suite routes every response through a decode helper
+      # that closes it, and bodyclose cannot follow a call. It also flags the
+      # WebSocket handshake response, which coder/websocket owns outright:
+      # "You never need to close resp.Body yourself" (dial.go:110). Measured
+      # when this tree was first linted: 27 findings, 12 of them handshake
+      # responses. Annotating each would put 27 nolint comments in the suite
+      # that say nothing about the code, which is how people learn to add them
+      # without reading. Making the helpers own the body is the real fix and
+      # is a harness change, not a lint change.
+      - path: test/integration/
+        linters:
+          - bodyclose
+
+# golangci-lint reports at most 3 findings of the same kind and 50 per linter
+# by default, and says nothing about the ones it dropped. That does not change
+# pass/fail — any finding fails the run — but it does mislead anyone counting.
+# Measured while sizing this tree: it reported "3 bodyclose", the real number
+# was 27. A gate that truncates its own output invites exactly the wrong
+# conclusion about how much work is behind it.
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
 
 severity:
   default: warning

@@ -691,9 +691,17 @@ vet: ## Run go vet, under the repo's build tags and again with the integration t
 # implementation — were analysed by neither. Nothing said so: a run over ./...
 # skips them and reports success, and only a run aimed AT one of them says
 # "no go files to analyze".
-lint: ## Run golangci-lint, under the repo's build tags
+#
+# lint runs TWO passes, for the same reason `vet` does. The integration tree —
+# every file under test/integration — sits behind the `integration` tag and so
+# was invisible to the first pass as well. When it was first linted it produced
+# 33 findings, including a HIGH-severity gosec G402 in a file the security gate
+# had never opened either.
+lint: ## Run golangci-lint, twice: repo tags, then again with the integration tag
 	@echo "==> Running linter (tags: $(or $(strip $(BUILD_TAGS)),none))..."
 	$(GOLINT) run --timeout 5m --build-tags "$(strip $(BUILD_TAGS))" ./...
+	@echo "==> Running linter (tags: integration $(strip $(BUILD_TAGS)))..."
+	$(GOLINT) run --timeout 5m --build-tags "integration $(strip $(BUILD_TAGS))" ./...
 
 # GOSEC_FMT and GOSEC_OUT exist so CI can reuse this exact invocation while
 # still producing SARIF. CI used to restate the flags in YAML, and that is how
@@ -707,6 +715,10 @@ lint: ## Run golangci-lint, under the repo's build tags
 GOSEC_FMT ?= text
 GOSEC_OUT ?=
 
+# gosec has no integration pass yet — see #53. It is a small increment now that
+# the tag plumbing has landed: gosec skips _test.go files, so the tag adds only
+# the handful of non-test helpers in that tree. The G402 in one of them is
+# fixed on this branch, so the pass will be clean when it arrives.
 gosec: ## Run gosec security scanner, under the repo's build tags
 	@echo "==> Running security scanner (tags: $(or $(GOSEC_TAGS),none), format: $(GOSEC_FMT))..."
 	$(GOSEC) -exclude=$(GOSEC_EXCLUDE) -exclude-generated -tags "$(GOSEC_TAGS)" \
