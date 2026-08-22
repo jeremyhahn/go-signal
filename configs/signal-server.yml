@@ -165,3 +165,40 @@ captcha:
   # scoreThreshold is only applicable to reCAPTCHA v3. Tokens with a score
   # below this value are rejected. Defaults to 0.5 when zero.
   scoreThreshold: 0.5
+
+# Dynamic feature flags served by GET /v2/config. signald upserts these on
+# every boot, so a flag added here appears in the live catalog without an
+# admin write.
+#
+# percentage: 100 puts every account in the bucket, so all of them resolve to
+# `value` rather than `defaultValue` — buckets are 0–99 and the manager
+# enrolls an account when its bucket is strictly below the percentage.
+#
+# These are the development defaults. A production deployment sets its own
+# rollout percentages; nothing here is a statement about what Signal ships.
+remoteConfig:
+  defaults:
+    - name: "global.calling"
+      percentage: 100
+      value: "TRUE"
+      defaultValue: "FALSE"
+    - name: "global.groupsv2"
+      percentage: 100
+      value: "TRUE"
+      defaultValue: "FALSE"
+    - name: "global.storage"
+      percentage: 100
+      value: "TRUE"
+      defaultValue: "FALSE"
+    - name: "global.senderKey"
+      percentage: 100
+      value: "TRUE"
+      defaultValue: "FALSE"
+    - name: "global.stories"
+      percentage: 100
+      value: "TRUE"
+      defaultValue: "FALSE"
+    - name: "global.giftBadges"
+      percentage: 100
+      value: "TRUE"
+      defaultValue: "FALSE"
