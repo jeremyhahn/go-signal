@@ -25,6 +25,20 @@ const (
 	cloneHeapLimitDenominator = 2
 )
 
+// revealHeapLimitNumerator/Denominator bound the Go-heap bytes WithBytes may
+// charge per reveal, as a multiple of the plaintext size. Measured endpoints
+// on a 1 MiB secret: 1.001x when fn receives the protected buffer directly,
+// 2.001x when a plaintext-sized heap copy is staged for it. 1.5x sits between
+// them with room for allocator noise on either side.
+//
+// The 1x floor is Open itself — the enclave decrypts into a fresh buffer,
+// which is what fn then borrows. What this bounds is a SECOND copy on top of
+// that, which is the shape the defect would take.
+const (
+	revealHeapLimitNumerator   = 3
+	revealHeapLimitDenominator = 2
+)
+
 func TestWithBytes_RevealsTheStoredValue(t *testing.T) {
 	s := MustNewSecureString("hunter2")
 	defer s.Destroy()
@@ -40,14 +54,45 @@ func TestWithBytes_RevealsTheStoredValue(t *testing.T) {
 	}
 }
 
+// TestWithBytes_RevealedBufferIsNotAHeapCopy measures the property that
+// actually changes if fn is handed a heap copy instead of the protected
+// buffer's own pages. The accessor checks below are necessary but not
+// sufficient — they stay green whether or not a copy was staged, which the
+// previous version of this test conceded in its own comment. See
+// revealHeapLimitNumerator for the measured endpoints.
 func TestWithBytes_RevealedBufferIsNotAHeapCopy(t *testing.T) {
-	// The slice handed to fn must be the protected buffer's own mlocked
-	// pages, not an ordinary heap allocation: that is what lets WithBytes
-	// guarantee the plaintext is gone once it returns. Those pages are
-	// released on Destroy, so a retained slice header no longer aliases
-	// readable memory — reading it would fault, which is precisely the point.
-	// Assert on the observable proxy instead: the secret is unreachable
-	// through every public accessor once destroyed.
+	const size = 1 << 20 // Large enough that one plaintext copy dwarfs constant overhead.
+	big, err := NewSecureStringFromBytes(bytes.Repeat([]byte("k"), size))
+	if err != nil {
+		t.Fatalf("NewSecureStringFromBytes: %v", err)
+	}
+	defer big.Destroy()
+
+	const reveals = 8
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	for range reveals {
+		if ok := big.WithBytes(func(b []byte) {
+			if len(b) != size {
+				t.Errorf("revealed %d bytes, want %d", len(b), size)
+			}
+		}); !ok {
+			t.Fatal("WithBytes reported the secret unavailable")
+		}
+	}
+	runtime.ReadMemStats(&after)
+
+	perReveal := (after.TotalAlloc - before.TotalAlloc) / reveals
+	if limit := uint64(size) * revealHeapLimitNumerator / revealHeapLimitDenominator; perReveal > limit {
+		t.Errorf("WithBytes charged %d Go-heap bytes per reveal (%.3fx the secret), limit %d (%.1fx): "+
+			"fn is being handed a heap copy rather than the protected buffer",
+			perReveal, float64(perReveal)/float64(size), limit,
+			float64(revealHeapLimitNumerator)/float64(revealHeapLimitDenominator))
+	}
+
+	// The plaintext is also unreachable through every public accessor once
+	// destroyed — necessary, but on its own it would not have caught a copy.
 	s := MustNewSecureString("hunter2")
 	var revealedLen int
 	s.WithBytes(func(b []byte) { revealedLen = len(b) })

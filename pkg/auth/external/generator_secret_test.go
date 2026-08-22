@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -174,4 +175,55 @@ func TestGenerator_DestroyIsIdempotentAndNilSafe(t *testing.T) {
 	}
 	g.Destroy()
 	g.Destroy()
+}
+
+// TestNewGenerator_ConfiguredButUnreadableKeyIsUnusableNotMissing pins the
+// distinction the typed errors exist to make.
+//
+// Clone erases the configured flag: a clone of a configured-but-unreadable
+// key is empty and reports IsAbsent() == true, exactly like a clone of an
+// unset one. Asking the CLONE therefore answers "no key configured" for a key
+// that is installed and merely unreadable — and a caller allowed to fall back
+// to an unauthenticated mode on MissingKeyError would downgrade a deployment
+// that does have a key.
+//
+// Reverting the check to ask the clone makes this fail with MissingKeyError.
+func TestNewGenerator_ConfiguredButUnreadableKeyIsUnusableNotMissing(t *testing.T) {
+	key := secrets.MustNewSecureString("shared-secret")
+	key.Destroy() // configured, then unreadable
+
+	_, err := NewGenerator(GeneratorConfig{Key: key})
+
+	var unusable *UnusableKeyError
+	if !errors.As(err, &unusable) {
+		t.Fatalf("expected *UnusableKeyError, got %#v", err)
+	}
+	var missing *MissingKeyError
+	if errors.As(err, &missing) {
+		t.Error("an installed but unreadable key must not be reported as missing")
+	}
+}
+
+// The genuinely-absent case must still report MissingKeyError, or the fix
+// would collapse both facts into the other one.
+func TestNewGenerator_AbsentKeyIsMissing(t *testing.T) {
+	_, err := NewGenerator(GeneratorConfig{Key: secrets.MustNewSecureString("")})
+
+	var missing *MissingKeyError
+	if !errors.As(err, &missing) {
+		t.Fatalf("expected *MissingKeyError, got %#v", err)
+	}
+	var unusable *UnusableKeyError
+	if errors.As(err, &unusable) {
+		t.Error("an unset key must not be reported as unusable")
+	}
+}
+
+func TestNewGenerator_NilKeyIsMissing(t *testing.T) {
+	_, err := NewGenerator(GeneratorConfig{})
+
+	var missing *MissingKeyError
+	if !errors.As(err, &missing) {
+		t.Fatalf("expected *MissingKeyError, got %#v", err)
+	}
 }

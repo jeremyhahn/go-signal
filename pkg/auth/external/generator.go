@@ -82,19 +82,36 @@ type Generator struct {
 // Validating the key this Generator actually kept makes the constructor's
 // verdict true of that key.
 func NewGenerator(cfg GeneratorConfig) (*Generator, error) {
-	// A clone that failed to allocate is NOT "no key configured": reporting it
-	// as the latter would let memory pressure turn a configured generator into
-	// a missing one. The two outcomes get different errors.
-	key, err := cfg.Key.Clone()
+	// Presence and the copy come from ONE snapshot, as in the directory and
+	// securestorage managers. Reading IsAbsent() and then cloning are two
+	// separate reveals: a key installed between them reports absent beside a
+	// clone that holds it. Nor can presence be read off the clone — a clone
+	// of a configured-but-unreadable key is empty, identical to a clone of an
+	// unset one, which is the distinction these errors exist to make.
+	//
+	// A clone that failed to allocate is NOT "no key configured": reporting
+	// it as the latter would let memory pressure turn a configured generator
+	// into a missing one. The two outcomes get different errors.
+	key, configured, err := cfg.Key.CloneWithPresence()
 	if err != nil {
 		return nil, err
 	}
-	if key.IsDestroyed() {
+	if !configured {
 		// An unset clone holds nothing to wipe today. Destroying it anyway
 		// keeps the ownership contract total: whatever this constructor took
 		// ownership of, it releases on the error path.
 		key.Destroy()
-		return nil, errors.New("external: Key is required")
+		return nil, &MissingKeyError{}
+	}
+	// Configured, so prove the clone opens before handing back a Generator
+	// whose every signature would fail. "Configured but unreadable" and "not
+	// configured" are different facts and get different errors, so a caller
+	// deciding whether to fall back to an unauthenticated mode can tell them
+	// apart. An empty clone lands here too, which is correct: the source was
+	// configured, so this is unusable rather than missing.
+	if err := key.TryWithBytes(func([]byte) {}); err != nil {
+		key.Destroy()
+		return nil, &UnusableKeyError{Cause: err}
 	}
 	if cfg.Clock == nil {
 		cfg.Clock = time.Now

@@ -128,3 +128,52 @@ func TestConfig_Destroy_NilReceiver(t *testing.T) {
 	var cfg *Config
 	cfg.Destroy() // must not panic
 }
+
+// TestLoad_SharedSecretsAreNotReportedAbsent guards the application-level
+// consequence of the YAML decoding defect found on go-signal #33.
+//
+// SecureString.UnmarshalYAML installed the decoded enclave but left the
+// configured flag false, so every secret loaded from a config file reported
+// IsAbsent() == true. The directory and secure-storage managers select their
+// legacy random-UUID stub on absence, so a deployment with real HMAC secrets
+// in its config would have come up issuing credentials the peer rejects —
+// silently, and only through the loading path.
+func TestLoad_SharedSecretsAreNotReportedAbsent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yml")
+	body := `
+server:
+  httpPort: 8081
+storage:
+  backend: "memory"
+cdsi:
+  sharedSecret: "cdsi-secret-value"
+svr2:
+  sharedSecret: "svr2-secret-value"
+storageService:
+  sharedSecret: "storage-secret-value"
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	t.Cleanup(cfg.Destroy)
+
+	for name, s := range map[string]*secrets.SecureString{
+		"cdsi.sharedSecret":           cfg.CDSI.SharedSecret,
+		"svr2.sharedSecret":           cfg.SVR2.SharedSecret,
+		"storageService.sharedSecret": cfg.StorageService.SharedSecret,
+	} {
+		if s.IsAbsent() {
+			t.Errorf("%s: IsAbsent() = true for a secret the config supplies — "+
+				"credential managers would fall back to the legacy stub", name)
+		}
+		if s.Plaintext() == "" {
+			t.Errorf("%s: value did not survive loading", name)
+		}
+	}
+}

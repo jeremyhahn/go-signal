@@ -47,7 +47,7 @@ type SecureStorageManager struct {
 // that used to silently downgrade this manager to legacy credentials.
 // Production code never reassigns it; same seam as sealSecret in
 // pkg/config/secrets.
-var cloneSecret = (*secrets.SecureString).Clone
+var cloneSecret = (*secrets.SecureString).CloneWithPresence
 
 // Credential sealing, indirected for the same reason as cloneSecret: a
 // protected-memory allocation failure cannot be provoked from outside, and the
@@ -91,30 +91,56 @@ func NewSecureStorageManager(logger *slog.Logger) *SecureStorageManager {
 // stub, issuing random credentials the peer rejects. An absent secret is not
 // an error; it selects the stub deliberately.
 func (m *SecureStorageManager) SetSharedSecret(secret *secrets.SecureString) error {
-	// Clone first and branch on the clone. Testing the caller's secret and
-	// cloning it afterwards are two separate reveals of a value the caller
-	// still owns: a destroy landing between them yields an unset clone, and
-	// this would go on to publish HMAC mode over a key that can never mint.
-	// The clone is what the manager keeps, so the clone is what decides.
-	// Clone before anything is published, and treat an allocation failure as a
-	// failure rather than as an absent secret. Those are different facts: an
-	// absent secret selects the legacy stub, while a secret that could not be
-	// protected must leave the manager exactly as it was. Conflating them
-	// means memory pressure silently downgrades a configured deployment to
-	// random-UUID credentials the peer rejects — fail-open, and invisible.
-	clone, err := cloneSecret(secret)
+	// Three outcomes have to stay distinct here, and only one of them may
+	// select the legacy stub:
+	//
+	//   never configured   -> stub mode, deliberately
+	//   configured, usable -> HMAC mode
+	//   configured, not usable, or unclonable -> error, manager untouched
+	//
+	// Presence and the copy come from ONE snapshot. Asking IsAbsent() and
+	// then cloning are two separate reveals: a secret installed between them
+	// yields absent=true beside a clone holding a real value, and the stub
+	// would be published over a key that exists. Nor can presence be read
+	// off the clone — a clone of a configured-but-unrevealable secret is
+	// empty, exactly like a clone of an unset one, so that turns "the key
+	// will not open" into "there is no key". Both mistakes are fail-open and
+	// invisible: every credential minted afterwards is a random UUID the
+	// peer rejects.
+	//
+	// Usability is then asked of the clone, because the clone is what the
+	// manager keeps and mints with. Publishing HMAC mode over a key that
+	// cannot open is the same fail-open wearing different clothes.
+	//
+	// Nothing is published until both questions are answered, so an error
+	// leaves the previously installed configuration — key included — intact.
+	clone, configured, err := cloneSecret(secret)
 	if err != nil {
 		// Nothing has been published and nothing displaced, so the currently
 		// installed configuration — including a live key — survives intact.
 		return err
 	}
 	next := &secretState{}
-	if clone.IsDestroyed() {
+	if !configured {
 		// An unset secret is an explicit request for the legacy stub, not a
 		// failure — GetAuth goes back to random UUIDs. Nothing to wipe in an
 		// unset clone; destroying it keeps the ownership contract total.
+		//
+		// IsAbsent, not IsDestroyed: the latter also reports true for a
+		// configured secret whose enclave will not open, and taking this
+		// branch on that would replace a real installed key with random-UUID
+		// credentials the peer rejects. A configured-but-unopenable secret is
+		// a failure, handled below.
 		clone.Destroy()
 	} else {
+		// Prove the clone can actually be opened before publishing HMAC mode
+		// over it. Publishing a key that cannot mint is the same fail-open in
+		// a different disguise: the mode says "authenticated" and every token
+		// it issues is unusable.
+		if err := clone.TryWithBytes(func([]byte) {}); err != nil {
+			clone.Destroy()
+			return err
+		}
 		next.hmac = true
 		next.secret = clone
 	}

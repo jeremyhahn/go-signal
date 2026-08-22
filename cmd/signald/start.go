@@ -1180,9 +1180,15 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// the external TUS server can validate that Signal authorized the
 	// upload. When tusUri / tusSharedSecret are unset the v4 attachment
 	// endpoint falls back to the embedded /cdn3 route (dev mode).
+	//
+	// The check is IsAbsent, not IsDestroyed: the latter also reports true
+	// for a configured secret whose enclave will not open, which would
+	// silently select the embedded dev CDN on a deployment that does have a
+	// TUS secret installed. An unset secret is a deployment choice; an
+	// unopenable one is a failure, and NewGenerator below reports it.
 	var tusGenerator *external.Generator
 	defer func() { tusGenerator.Destroy() }()
-	if cfg.Attachments.TusURI != "" && !cfg.Attachments.TusSharedSecret.IsDestroyed() {
+	if cfg.Attachments.TusURI != "" && !cfg.Attachments.TusSharedSecret.IsAbsent() {
 		gen, err := external.NewGenerator(external.GeneratorConfig{
 			Key: cfg.Attachments.TusSharedSecret,
 		})

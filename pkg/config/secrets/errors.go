@@ -105,3 +105,14 @@ func (e *SealError) Error() string {
 func (e *SealError) Unwrap() error {
 	return e.Cause
 }
+
+// AbsentSecretError indicates a secret was never configured, as distinct from
+// one that was configured and is no longer readable. Only this error means
+// "not configured": a call site that selects a legacy or stub mode must do so
+// on this and nothing else, or an unopenable enclave silently downgrades a
+// deployment that does have a key installed.
+type AbsentSecretError struct{}
+
+func (e *AbsentSecretError) Error() string {
+	return "secrets: secret was never configured"
+}

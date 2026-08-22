@@ -15,7 +15,7 @@ import (
 func failClone(t *testing.T, injected error) {
 	t.Helper()
 	original := cloneSecret
-	cloneSecret = func(*secrets.SecureString) (*secrets.SecureString, error) { return nil, injected }
+	cloneSecret = func(*secrets.SecureString) (*secrets.SecureString, bool, error) { return nil, false, injected }
 	t.Cleanup(func() { cloneSecret = original })
 }
 
@@ -109,5 +109,66 @@ func TestSetSharedSecret_CloneFailurePreservesTheInstalledKey(t *testing.T) {
 	}
 	if len(got) != 64 {
 		t.Errorf("password is %d chars, want the 64-char HMAC digest — the manager fell back to the stub", len(got))
+	}
+}
+
+// TestSetSharedSecret_UnopenableSecretDoesNotDowngradeToStub is the
+// regression test for the second half of the same fail-open (#15 §1), the
+// mirror of the directory manager's case.
+//
+// The clone-failure path was fixed, but the branch that CHOSE stub mode still
+// asked IsDestroyed, which reports true for three states: never configured,
+// destroyed, and configured-but-unopenable. Only the first means "this
+// deployment does not run a storage-service". The other two mean a key is
+// installed and unreadable, and answering those with the legacy stub mints
+// random UUIDs the storage-service rejects.
+//
+// A configured secret that has been destroyed is exactly that state: not
+// absent, and unrevealable.
+//
+// Reverting the branch to IsDestroyed makes this fail: SetSharedSecret
+// returns nil and quietly installs stub mode.
+func TestSetSharedSecret_UnopenableSecretDoesNotDowngradeToStub(t *testing.T) {
+	m := NewSecureStorageManager(slog.Default())
+	defer m.Destroy()
+
+	secret := secrets.MustNewSecureString("shared-secret")
+	secret.Destroy()
+
+	if err := m.SetSharedSecret(secret); err == nil {
+		t.Fatal("SetSharedSecret accepted a configured secret it could not open")
+	}
+
+	// Nothing may have been published. The error return is what makes
+	// cmd/signald abort startup instead of serving random UUIDs.
+	if st := m.state.Load(); st != nil {
+		t.Fatalf("an unopenable configured secret published state: hmac=%v key=%v",
+			st.hmac, st.secret != nil)
+	}
+}
+
+// The absent case must keep working: an unset secret is a deployment choice,
+// not a failure, and still selects the stub.
+func TestSetSharedSecret_AbsentSecretStillSelectsTheStub(t *testing.T) {
+	m := NewSecureStorageManager(slog.Default())
+	defer m.Destroy()
+
+	if err := m.SetSharedSecret(secrets.MustNewSecureString("")); err != nil {
+		t.Fatalf("an absent secret is not a failure, got: %v", err)
+	}
+
+	st := m.state.Load()
+	if st == nil {
+		t.Fatal("no state published")
+	}
+	if st.hmac {
+		t.Error("an absent secret must select stub mode, not HMAC mode")
+	}
+	if st.secret != nil {
+		t.Error("stub mode must hold no key")
+	}
+
+	if _, err := m.GetAuth(context.Background(), "user-1"); err != nil {
+		t.Errorf("stub mode should still issue credentials, got: %v", err)
 	}
 }

@@ -67,7 +67,7 @@ func NewSecureStringFromBytes(value []byte) (*SecureString, error) {
 		secure.Wipe(value)
 		return nil, &SealError{Cause: err}
 	}
-	return &SecureString{sec: sec}, nil
+	return &SecureString{sec: sec, configured: true}, nil
 }
 
 // Clone returns an independent SecureString holding the same value in its own
@@ -99,33 +99,101 @@ func NewSecureStringFromBytes(value []byte) (*SecureString, error) {
 //
 // Callers must therefore branch on the error before branching on emptiness.
 func (s *SecureString) Clone() (*SecureString, error) {
-	var (
-		out    *SecureString
-		sealed error
-	)
-	revealed := s.WithBytes(func(b []byte) {
-		dst, err := newProtectedBuffer(len(b))
-		if err != nil {
-			sealed = &SealError{Cause: err}
-			return
-		}
-		// dst.Bytes() is the mlocked destination: protected page to
-		// protected page, with no Go-heap staging in between.
-		copy(dst.Bytes(), b)
-		sec, err := sealProtectedBuffer(dst)
-		if err != nil {
-			dst.Destroy()
-			sealed = &SealError{Cause: err}
-			return
-		}
-		out = &SecureString{sec: sec}
-	})
-	if sealed != nil {
-		return nil, sealed
+	clone, _, err := s.CloneWithPresence()
+	return clone, err
+}
+
+// CloneWithPresence is Clone plus whether the receiver was ever configured,
+// both determined under ONE read lock.
+//
+// Asking the two questions separately — IsAbsent() and then Clone() — is a
+// race: a secret installed between the calls yields absent=true alongside a
+// clone that holds a real value, and a caller choosing a stub on absence
+// would publish stub mode over a key that exists. The manager's whole
+// decision has to come from a single snapshot, which is what this provides.
+//
+// The presence bit describes the SOURCE, not the returned clone: a configured
+// secret that could not be revealed yields (unset clone, true, nil), and the
+// caller must treat that as a failure rather than as an absent secret. The
+// error cases match Clone's.
+func (s *SecureString) CloneWithPresence() (*SecureString, bool, error) {
+	if s == nil {
+		return &SecureString{}, false, nil
 	}
-	if !revealed || out == nil {
-		// Nothing to copy: the receiver holds no secret.
+	// Held across both the presence read and the copy: that is the point.
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	configured := s.configured
+	out, err := s.cloneLocked()
+	return out, configured, err
+}
+
+// cloneLocked performs the protected-page copy. The receiver's read lock must
+// already be held; it is the shared body of Clone and CloneWithPresence, so
+// the two cannot drift apart.
+func (s *SecureString) cloneLocked() (*SecureString, error) {
+	if s.sec == nil {
 		return &SecureString{}, nil
 	}
-	return out, nil
+	buf, err := s.sec.Open()
+	if err != nil {
+		// Configured but unopenable. Clone's contract reports this as an
+		// empty clone rather than an error; CloneWithPresence's caller
+		// distinguishes it via the presence bit.
+		return &SecureString{}, nil
+	}
+	defer buf.Destroy()
+
+	b := buf.Bytes()
+	dst, err := newProtectedBuffer(len(b))
+	if err != nil {
+		return nil, &SealError{Cause: err}
+	}
+	// dst.Bytes() is the mlocked destination: protected page to protected
+	// page, with no Go-heap staging in between.
+	copy(dst.Bytes(), b)
+	sec, err := sealProtectedBuffer(dst)
+	if err != nil {
+		dst.Destroy()
+		return nil, &SealError{Cause: err}
+	}
+	return &SecureString{sec: sec, configured: true}, nil
+}
+
+// TryWithBytes is WithBytes with a fallible result: it distinguishes a secret
+// that was never configured from one that is configured but cannot be opened.
+//
+// WithBytes reports both as a bare false, which is adequate for "authenticate
+// or fail" but not for "is this deployment configured". A call site deciding
+// between a real key and a stub needs the difference: treating an unopenable
+// enclave as absent installs the stub over a key that is actually present.
+//
+// Returns *AbsentSecretError when nothing was ever sealed here, and
+// *UnavailableSecretError when a configured secret could not be opened or has
+// been destroyed. fn carries the same contract as in WithBytes: it must not
+// retain or mutate the slice, and must not Destroy the same SecureString.
+func (s *SecureString) TryWithBytes(fn func([]byte)) error {
+	if s == nil {
+		return &AbsentSecretError{}
+	}
+	if fn == nil {
+		return &UnavailableSecretError{}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.configured {
+		return &AbsentSecretError{}
+	}
+	if s.sec == nil {
+		// Configured, then destroyed: unavailable, never absent.
+		return &UnavailableSecretError{}
+	}
+	buf, err := s.sec.Open()
+	if err != nil {
+		return &UnavailableSecretError{Cause: err}
+	}
+	defer buf.Destroy()
+	fn(buf.Bytes())
+	return nil
 }

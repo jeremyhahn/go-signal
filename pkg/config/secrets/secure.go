@@ -55,6 +55,18 @@ var sealSecret = secure.NewSecret
 type SecureString struct {
 	mu  sync.RWMutex
 	sec *secure.Secret
+
+	// configured records that a value was sealed here at construction. It
+	// is what separates "never set" from "set but no longer available":
+	// Destroy clears sec, and an enclave that will not Open leaves sec
+	// non-nil but unusable, so sec alone cannot tell the two apart.
+	//
+	// The distinction is load-bearing. Call sites that select a legacy or
+	// stub mode when a secret is absent must not select it when a
+	// configured secret merely failed to open — that installs a stub in
+	// place of a real key, which is a fail-open. Once true it never
+	// returns to false.
+	configured bool
 }
 
 // NewSecureString seals value in protected memory. It is the constructor for
@@ -81,7 +93,7 @@ func NewSecureString(value string) (*SecureString, error) {
 		secure.Wipe(src)
 		return nil, &SealError{Cause: err}
 	}
-	return &SecureString{sec: sec}, nil
+	return &SecureString{sec: sec, configured: true}, nil
 }
 
 // NewOptionalSecureString is NewSecureString for values whose absence is
@@ -179,6 +191,27 @@ func (s *SecureString) Bytes() []byte {
 	return out
 }
 
+// IsAbsent reports whether this SecureString never held a value — a nil
+// receiver, or one built by NewOptionalSecureString from an empty string.
+//
+// It is deliberately narrower than IsDestroyed, which conflates three states:
+// never set, destroyed, and configured-but-unopenable. Only the first of
+// those means "not configured", and only the first may select a legacy or
+// stub mode. Branching on IsDestroyed for that decision installs a stub when
+// a real, configured key merely failed to open, which is a fail-open.
+//
+// Presence checks that simply want "is there a usable value here" should keep
+// using IsDestroyed; this exists for the call sites where the wrong answer
+// silently weakens the deployment.
+func (s *SecureString) IsAbsent() bool {
+	if s == nil {
+		return true
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return !s.configured
+}
+
 // IsDestroyed reports whether the underlying secret has been destroyed
 // or was never set (i.e. was created from an empty string).
 func (s *SecureString) IsDestroyed() bool {
@@ -253,5 +286,14 @@ func (s *SecureString) UnmarshalYAML(unmarshal func(any) error) error {
 		s.sec.Destroy()
 	}
 	s.sec = created.sec
+	// configured travels with the value, not just the allocation. Without
+	// this every secret loaded from YAML reports IsAbsent() == true even
+	// when the file supplies one, and a call site that selects a legacy or
+	// stub mode on absence would do so for a fully configured deployment.
+	//
+	// It is assigned rather than OR-ed: decoding an empty node over a
+	// previously configured value genuinely leaves this SecureString unset,
+	// and claiming otherwise would report a key that is not there.
+	s.configured = created.configured
 	return nil
 }
