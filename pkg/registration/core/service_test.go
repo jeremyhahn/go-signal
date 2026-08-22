@@ -280,3 +280,92 @@ func TestNextCooldown_ClampsAtScheduleEnd(t *testing.T) {
 		}
 	}
 }
+
+// --------------------------------------------------------------------------
+// Verified sessions (re-registration)
+// --------------------------------------------------------------------------
+
+// A verified session is what a re-registering client presents: it stored the
+// session id, verified once, and now asks for a new code. Java answers 409
+// with the session; reporting a cooldown instead tells the client to wait for
+// something waiting cannot fix.
+func TestSendCode_VerifiedSessionReportsConflictNotRateLimit(t *testing.T) {
+	svc, _ := newTestService(t, Config{
+		FixedCode:            "123456",
+		RequestCodeCooldowns: []time.Duration{0, time.Hour},
+	})
+	ctx := context.Background()
+
+	sess, err := svc.CreateSession(ctx, "+15551234567")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if _, err := svc.SendCode(ctx, sess.ID); err != nil {
+		t.Fatalf("SendCode: %v", err)
+	}
+	verified, err := svc.SubmitCode(ctx, sess.ID, "123456")
+	if err != nil || !verified.Verified {
+		t.Fatalf("SubmitCode: verified=%v err=%v", verified, err)
+	}
+
+	// The 1h cooldown from the first send is still armed, so this would
+	// otherwise be reported as a rate limit.
+	_, err = svc.SendCode(ctx, sess.ID)
+
+	var alreadyVerified *verification.SessionAlreadyVerifiedError
+	if !errors.As(err, &alreadyVerified) {
+		t.Fatalf("expected *SessionAlreadyVerifiedError, got %#v", err)
+	}
+	if alreadyVerified.SessionID != sess.ID {
+		t.Errorf("SessionID = %q, want %q", alreadyVerified.SessionID, sess.ID)
+	}
+
+	var rateLimited *verification.RequestCodeRateLimitedError
+	if errors.As(err, &rateLimited) {
+		t.Error("a verified session must not be reported as rate-limited")
+	}
+}
+
+// The verified check must not swallow expiry: an expired session is expired
+// whether or not it was verified.
+func TestSendCode_ExpiredVerifiedSessionStillReportsExpiry(t *testing.T) {
+	svc, _ := newTestService(t, Config{FixedCode: "123456", SessionTTL: time.Nanosecond})
+	ctx := context.Background()
+
+	sess, err := svc.CreateSession(ctx, "+15551234567")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	_, err = svc.SendCode(ctx, sess.ID)
+
+	var expired *verification.SessionExpiredError
+	if !errors.As(err, &expired) {
+		t.Fatalf("expected *SessionExpiredError, got %#v", err)
+	}
+}
+
+// An unverified session inside its cooldown is still rate-limited — the new
+// short-circuit must not disable the cooldown for everyone.
+func TestSendCode_UnverifiedSessionStillRateLimited(t *testing.T) {
+	svc, _ := newTestService(t, Config{
+		FixedCode:            "123456",
+		RequestCodeCooldowns: []time.Duration{0, time.Hour},
+	})
+	ctx := context.Background()
+
+	sess, err := svc.CreateSession(ctx, "+15551234567")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if _, err := svc.SendCode(ctx, sess.ID); err != nil {
+		t.Fatalf("SendCode: %v", err)
+	}
+
+	_, err = svc.SendCode(ctx, sess.ID)
+
+	var rateLimited *verification.RequestCodeRateLimitedError
+	if !errors.As(err, &rateLimited) {
+		t.Fatalf("expected *RequestCodeRateLimitedError, got %#v", err)
+	}
+}

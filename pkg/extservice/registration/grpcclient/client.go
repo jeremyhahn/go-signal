@@ -235,7 +235,11 @@ func decodeSendError(e *regpb.SendVerificationCodeError, sessionID string) error
 			Cause:       errors.New("sender rejected"),
 		}
 	case regpb.SendVerificationCodeErrorType_SEND_VERIFICATION_CODE_ERROR_TYPE_SESSION_ALREADY_VERIFIED:
-		return errors.New("registration-service: session already verified")
+		// Typed, not errors.New: the REST layer matches on this with
+		// errors.As to return 409. An untyped error reaches the default
+		// branch there and becomes a 500, so a split deployment would
+		// answer re-registration differently from an in-process one.
+		return &verification.SessionAlreadyVerifiedError{SessionID: sessionID}
 	case regpb.SendVerificationCodeErrorType_SEND_VERIFICATION_CODE_ERROR_TYPE_TRANSPORT_NOT_ALLOWED:
 		return errors.New("registration-service: transport not allowed")
 	case regpb.SendVerificationCodeErrorType_SEND_VERIFICATION_CODE_ERROR_TYPE_SUSPECTED_FRAUD:

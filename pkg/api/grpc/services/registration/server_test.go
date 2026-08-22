@@ -512,6 +512,11 @@ func TestSendVerificationCodeErrorResponse_DirectCoverage(t *testing.T) {
 			regpb.SendVerificationCodeErrorType_SEND_VERIFICATION_CODE_ERROR_TYPE_RATE_LIMITED,
 		},
 		{
+			"session_already_verified",
+			&verification.SessionAlreadyVerifiedError{SessionID: sid},
+			regpb.SendVerificationCodeErrorType_SEND_VERIFICATION_CODE_ERROR_TYPE_SESSION_ALREADY_VERIFIED,
+		},
+		{
 			"transport_error",
 			&verification.TransportError{Transport: "sms", Destination: sid, Cause: errors.New("fail")},
 			regpb.SendVerificationCodeErrorType_SEND_VERIFICATION_CODE_ERROR_TYPE_SENDER_REJECTED,
@@ -532,5 +537,52 @@ func TestSendVerificationCodeErrorResponse_DirectCoverage(t *testing.T) {
 				t.Errorf("got %v, want %v", resp.GetError().GetErrorType(), tc.want)
 			}
 		})
+	}
+}
+
+// TestGRPCSendVerificationCode_AlreadyVerified drives the whole gRPC path: a
+// verified session must reach the client as SESSION_ALREADY_VERIFIED, not as
+// UNSPECIFIED. A split deployment routes REST through this boundary, so an
+// unmapped error here becomes a 500 where the in-process path returns 409.
+//
+// The cooldown is left armed deliberately: without the verified check
+// ordering, this session would be reported as RATE_LIMITED instead.
+func TestGRPCSendVerificationCode_AlreadyVerified(t *testing.T) {
+	store := verification.NewMemoryVerificationSessionStore()
+	svc := core.NewService(store, &stubTransport{}, core.Config{
+		FixedCode:            "123456",
+		RequestCodeCooldowns: []time.Duration{0, time.Hour},
+	})
+	t.Cleanup(svc.Shutdown)
+	client := newGRPCStub(t, svc)
+	ctx := context.Background()
+
+	created, err := client.CreateSession(ctx, &regpb.CreateRegistrationSessionRequest{E164: 15552})
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	sid := created.GetSessionMetadata().GetSessionId()
+
+	if _, err := client.SendVerificationCode(ctx, &regpb.SendVerificationCodeRequest{SessionId: sid}); err != nil {
+		t.Fatalf("SendVerificationCode: %v", err)
+	}
+	checked, err := client.CheckVerificationCode(ctx, &regpb.CheckVerificationCodeRequest{
+		SessionId:        sid,
+		VerificationCode: "123456",
+	})
+	if err != nil {
+		t.Fatalf("CheckVerificationCode: %v", err)
+	}
+	if !checked.GetSessionMetadata().GetVerified() {
+		t.Fatalf("session should be verified: %v", checked)
+	}
+
+	resp, err := client.SendVerificationCode(ctx, &regpb.SendVerificationCodeRequest{SessionId: sid})
+	if err != nil {
+		t.Fatalf("SendVerificationCode after verify: %v", err)
+	}
+	got := resp.GetError().GetErrorType()
+	if got != regpb.SendVerificationCodeErrorType_SEND_VERIFICATION_CODE_ERROR_TYPE_SESSION_ALREADY_VERIFIED {
+		t.Errorf("error type = %v, want SESSION_ALREADY_VERIFIED", got)
 	}
 }

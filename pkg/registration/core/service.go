@@ -59,10 +59,14 @@ type Config struct {
 	SessionTTL      time.Duration
 	CleanupInterval time.Duration
 	// RequestCodeCooldowns is the schedule of per-session cooldowns
-	// applied after each successful SendCode. CodeRequests=1 picks the
-	// first entry, 2 picks the second, etc.; the schedule clamps to
-	// the final value so a misbehaving client cannot drive the cooldown
-	// back to zero. An empty schedule disables per-session rate limiting.
+	// applied after each successful SendCode, indexed by the running
+	// CodeRequests count: the first send (CodeRequests=1) selects
+	// sched[1], the second selects sched[2], and so on. sched[0] is
+	// therefore the cooldown before any code has been sent — zero in the
+	// default schedule, since the first request is never delayed. The
+	// index clamps to the final value so a misbehaving client cannot
+	// drive the cooldown back to zero. An empty schedule disables
+	// per-session rate limiting.
 	RequestCodeCooldowns []time.Duration
 	// FixedCode replaces the random code with a static value. Intended
 	// exclusively for integration testing against the stub transport;
@@ -180,6 +184,13 @@ func (s *Service) SendCode(ctx context.Context, sessionID string) (*verification
 	now := time.Now()
 	if now.After(session.ExpiresAt) {
 		return nil, &verification.SessionExpiredError{SessionID: sessionID}
+	}
+	// Java parity (VerificationController): the verified check precedes the
+	// cooldown. Re-registration reuses the stored session, so without this a
+	// client that verified less than a cooldown ago is told to back off from
+	// an operation waiting will never make succeed.
+	if session.Verified {
+		return nil, &verification.SessionAlreadyVerifiedError{SessionID: sessionID}
 	}
 	if !session.NextCodeRequestAt.IsZero() && now.Before(session.NextCodeRequestAt) {
 		return nil, &verification.RequestCodeRateLimitedError{

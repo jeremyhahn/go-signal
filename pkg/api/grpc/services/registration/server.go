@@ -282,16 +282,22 @@ func notFoundMetadataResponse() *regpb.GetRegistrationSessionMetadataResponse {
 func sendVerificationCodeErrorResponse(ctx context.Context, svc *core.Service, sessionID string, err error) *regpb.SendVerificationCodeResponse {
 	resp := &regpb.SendVerificationCodeResponse{Error: &regpb.SendVerificationCodeError{}}
 	var (
-		notFound       *verification.SessionNotFoundError
-		expired        *verification.SessionExpiredError
-		rateLimited    *verification.RequestCodeRateLimitedError
-		transportError *verification.TransportError
+		notFound        *verification.SessionNotFoundError
+		expired         *verification.SessionExpiredError
+		alreadyVerified *verification.SessionAlreadyVerifiedError
+		rateLimited     *verification.RequestCodeRateLimitedError
+		transportError  *verification.TransportError
 	)
 	switch {
 	case errors.As(err, &notFound):
 		resp.Error.ErrorType = regpb.SendVerificationCodeErrorType_SEND_VERIFICATION_CODE_ERROR_TYPE_SESSION_NOT_FOUND
 	case errors.As(err, &expired):
 		resp.Error.ErrorType = regpb.SendVerificationCodeErrorType_SEND_VERIFICATION_CODE_ERROR_TYPE_SESSION_NOT_FOUND
+	// Must precede the rate-limit case for the same reason the service
+	// checks Verified before the cooldown: a verified session that is also
+	// inside its cooldown is a conflict, not a rate limit.
+	case errors.As(err, &alreadyVerified):
+		resp.Error.ErrorType = regpb.SendVerificationCodeErrorType_SEND_VERIFICATION_CODE_ERROR_TYPE_SESSION_ALREADY_VERIFIED
 	case errors.As(err, &rateLimited):
 		resp.Error.ErrorType = regpb.SendVerificationCodeErrorType_SEND_VERIFICATION_CODE_ERROR_TYPE_RATE_LIMITED
 		resp.Error.MayRetry = true

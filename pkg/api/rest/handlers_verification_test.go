@@ -1,9 +1,12 @@
 package rest
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -879,5 +882,182 @@ func TestHandleUpdateVerificationSession_InvalidBody(t *testing.T) {
 
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 for invalid body, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestHandleRequestVerificationCode_AlreadyVerified covers the re-registration
+// flow: the client reuses its stored session after verifying, and Java answers
+// 409 with the session so it can proceed straight to registration. Before this
+// mapping existed the still-armed cooldown produced a 429, which libsignal
+// surfaces as RegistrationRetryException and no amount of waiting resolves.
+func TestHandleRequestVerificationCode_AlreadyVerified(t *testing.T) {
+	transport := newNoopVerificationTransport()
+	store := verification.NewMemoryVerificationSessionStore()
+	verificationMgr := newTestShim(t, store, transport, core.Config{
+		CodeLength: 6,
+		CodeTTL:    5 * time.Minute,
+		FixedCode:  "123456",
+		// The cooldown stays armed, so a missing verified check would
+		// surface this as 429 rather than 409.
+		RequestCodeCooldowns: []time.Duration{0, 1 * time.Hour},
+	}, nil, 0, 0)
+
+	s := newTestServerWithCustomVerification(t, verificationMgr)
+	sess := createSession(t, s, "+15555550101")
+
+	if code := requestCode(t, s, sess.ID); code != http.StatusOK {
+		t.Fatalf("requestCode: expected 200, got %d", code)
+	}
+	if rr := submitCode(t, s, sess.ID, "123456"); rr.Code != http.StatusOK {
+		t.Fatalf("submitCode: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/verification/session/"+sess.ID+"/code", nil)
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// The body carries the session so the client can read verified=true.
+	var resp VerificationSessionResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal 409 body: %v", err)
+	}
+	if !resp.Verified {
+		t.Error("409 body should report the session as verified")
+	}
+	if resp.ID != sess.ID {
+		t.Errorf("409 body session id = %q, want %q", resp.ID, sess.ID)
+	}
+}
+
+// failOnNthGetStore passes Get through until armed, then fails the next Get.
+// The arming is what makes the test target the RELOAD specifically: SendCode
+// reads the session first and must succeed so it can report
+// SessionAlreadyVerifiedError, and only the handler's follow-up reload fails.
+// A store that failed every Get would make SendCode itself fail and never
+// reach the branch under test.
+type failOnNthGetStore struct {
+	verification.VerificationSessionStore
+	mu        sync.Mutex
+	remaining int  // Gets to let through before failing
+	armed     bool //nolint:unused // guarded by mu
+	err       error
+}
+
+func (f *failOnNthGetStore) armAfter(n int, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.remaining, f.err, f.armed = n, err, true
+}
+
+func (f *failOnNthGetStore) Get(ctx context.Context, id string) (*verification.VerificationSession, error) {
+	f.mu.Lock()
+	if f.armed {
+		if f.remaining <= 0 {
+			err := f.err
+			f.mu.Unlock()
+			return nil, err
+		}
+		f.remaining--
+	}
+	f.mu.Unlock()
+	return f.VerificationSessionStore.Get(ctx, id)
+}
+
+// TestHandleRequestVerificationCode_ReloadFailureIsNotAConflict is the
+// regression test for the second finding on #28.
+//
+// The already-verified branch answered 409 whether or not the session reload
+// succeeded, so a storage or transport failure was reported to the client as
+// a well-formed protocol outcome about a session nobody could read. The
+// client then acts on that. A failure to obtain the session is not an answer
+// about the session, so it is now a 500.
+func TestHandleRequestVerificationCode_ReloadFailureIsNotAConflict(t *testing.T) {
+	transport := newNoopVerificationTransport()
+	backing := verification.NewMemoryVerificationSessionStore()
+	store := &failOnNthGetStore{VerificationSessionStore: backing}
+
+	verificationMgr := newTestShim(t, store, transport, core.Config{
+		CodeLength:           6,
+		CodeTTL:              5 * time.Minute,
+		FixedCode:            "123456",
+		RequestCodeCooldowns: []time.Duration{0, 1 * time.Hour},
+	}, nil, 0, 0)
+
+	s := newTestServerWithCustomVerification(t, verificationMgr)
+	sess := createSession(t, s, "+15555550199")
+
+	if code := requestCode(t, s, sess.ID); code != http.StatusOK {
+		t.Fatalf("requestCode: expected 200, got %d", code)
+	}
+	if rr := submitCode(t, s, sess.ID, "123456"); rr.Code != http.StatusOK {
+		t.Fatalf("submitCode: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Let SendCode's own read through, then fail the handler's reload.
+	store.armAfter(1, errors.New("session store is unavailable"))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/verification/session/"+sess.ID+"/code", nil)
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 when the session cannot be reloaded, got %d: %s",
+			rr.Code, rr.Body.String())
+	}
+}
+
+// TestHandleRequestVerificationCode_ReloadFailureDoesNotLogTheSessionID pins
+// the security fix from #28 round 3.
+//
+// A verified session id is the bearer credential POST /v1/registration accepts
+// as proof of verification (enforceVerifiedSession), so writing it to logs
+// turns log access into account takeover for any number with a live session.
+// The reload-failure path logged it as a correlation attribute.
+func TestHandleRequestVerificationCode_ReloadFailureDoesNotLogTheSessionID(t *testing.T) {
+	transport := newNoopVerificationTransport()
+	backing := verification.NewMemoryVerificationSessionStore()
+	store := &failOnNthGetStore{VerificationSessionStore: backing}
+
+	verificationMgr := newTestShim(t, store, transport, core.Config{
+		CodeLength:           6,
+		CodeTTL:              5 * time.Minute,
+		FixedCode:            "123456",
+		RequestCodeCooldowns: []time.Duration{0, 1 * time.Hour},
+	}, nil, 0, 0)
+
+	s := newTestServerWithCustomVerification(t, verificationMgr)
+
+	var logs bytes.Buffer
+	s.logger = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	sess := createSession(t, s, "+15555550200")
+	if code := requestCode(t, s, sess.ID); code != http.StatusOK {
+		t.Fatalf("requestCode: expected 200, got %d", code)
+	}
+	if rr := submitCode(t, s, sess.ID, "123456"); rr.Code != http.StatusOK {
+		t.Fatalf("submitCode: expected 200, got %d", rr.Code)
+	}
+
+	logs.Reset()
+	store.armAfter(1, errors.New("session store is unavailable"))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/verification/session/"+sess.ID+"/code", nil)
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rr.Code)
+	}
+	if strings.Contains(logs.String(), sess.ID) {
+		t.Errorf("the session id was written to the log — it is a registration credential:\n%s",
+			logs.String())
+	}
+	// The failure must still be reported, just without the credential.
+	if !strings.Contains(logs.String(), "failed to reload verification session") {
+		t.Errorf("the reload failure was not logged at all:\n%s", logs.String())
 	}
 }

@@ -92,6 +92,21 @@ func (e *SessionLimitExceededError) Error() string {
 	return "verification session limit exceeded: max " + strconv.Itoa(e.Limit)
 }
 
+// SessionAlreadyVerifiedError is returned by Manager.SendCode when the
+// session has already been verified. Requesting another code for a verified
+// session is the normal re-registration flow — the client reuses its stored
+// session — so it is a conflict, not abuse. Handlers return 409 with the
+// session, matching Java VerificationController, which makes the same check
+// ahead of the cooldown; reporting it as a rate limit instead tells the
+// client to back off from an operation that will never succeed by waiting.
+type SessionAlreadyVerifiedError struct {
+	SessionID string
+}
+
+func (e *SessionAlreadyVerifiedError) Error() string {
+	return "verification session already verified: " + e.SessionID
+}
+
 // RequestCodeRateLimitedError is returned by Manager.SendCode when the
 // caller has already requested a code for this session and the per-session
 // cooldown has not yet elapsed. Handlers surface RetryAfter to the client

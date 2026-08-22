@@ -3,6 +3,7 @@ package rest
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -103,6 +104,7 @@ func (s *Server) handleRequestVerificationCode(w http.ResponseWriter, r *http.Re
 	if err != nil {
 		var notFound *verification.SessionNotFoundError
 		var expired *verification.SessionExpiredError
+		var alreadyVerified *verification.SessionAlreadyVerifiedError
 		var rateLimited *verification.RequestCodeRateLimitedError
 		var captchaRequired *verification.CaptchaRequiredError
 		if errors.As(err, &notFound) {
@@ -113,14 +115,17 @@ func (s *Server) handleRequestVerificationCode(w http.ResponseWriter, r *http.Re
 			writeError(w, http.StatusGone, "session expired")
 			return
 		}
+		if errors.As(err, &alreadyVerified) {
+			// Java parity: 409 plus the session JSON, so the client sees
+			// verified=true and proceeds straight to registration instead
+			// of waiting out a cooldown.
+			s.writeSessionConflict(w, r, id)
+			return
+		}
 		if errors.As(err, &captchaRequired) {
-			// Java parity: return 409 + the session JSON so the client
-			// reads requestedInformation=["captcha"] and prompts the user.
-			if updated, getErr := s.verification.GetSession(r.Context(), id); getErr == nil {
-				writeJSON(w, http.StatusConflict, verificationSessionResponse(updated))
-				return
-			}
-			writeError(w, http.StatusConflict, "captcha required")
+			// Java parity: 409 + the session JSON so the client reads
+			// requestedInformation=["captcha"] and prompts the user.
+			s.writeSessionConflict(w, r, id)
 			return
 		}
 		if errors.As(err, &rateLimited) {
@@ -140,6 +145,41 @@ func (s *Server) handleRequestVerificationCode(w http.ResponseWriter, r *http.Re
 	}
 
 	writeJSON(w, http.StatusOK, verificationSessionResponse(session))
+}
+
+// writeSessionConflict answers a 409 carrying the session, which is the shape
+// Java uses for both the already-verified and captcha-required outcomes: the
+// client reads the session state and decides what to do next.
+//
+// A failed reload is NOT a conflict. Reporting a storage or transport failure
+// as a well-formed 409 tells the client something definite about a session
+// nobody could read, and the client then acts on it — so anything other than
+// a recognised session state becomes a 500. Not-found and expired are mapped
+// deliberately, because those are real answers about the session rather than
+// failures to obtain one.
+func (s *Server) writeSessionConflict(w http.ResponseWriter, r *http.Request, id string) {
+	updated, err := s.verification.GetSession(r.Context(), id)
+	if err != nil {
+		var notFound *verification.SessionNotFoundError
+		var expired *verification.SessionExpiredError
+		switch {
+		case errors.As(err, &notFound):
+			writeError(w, http.StatusNotFound, "session not found")
+		case errors.As(err, &expired):
+			writeError(w, http.StatusGone, "session expired")
+		default:
+			// The session id is deliberately NOT logged. A verified session
+			// id is the bearer credential POST /v1/registration accepts as
+			// proof of verification (enforceVerifiedSession), so writing it
+			// to logs turns log access into account takeover for any number
+			// with a live session.
+			s.logger.Error("failed to reload verification session for conflict response",
+				slog.String("error", err.Error()))
+			writeError(w, http.StatusInternalServerError, "internal error")
+		}
+		return
+	}
+	writeJSON(w, http.StatusConflict, verificationSessionResponse(updated))
 }
 
 // handleUpdateVerificationSession processes PATCH /v1/verification/session/{id}.
