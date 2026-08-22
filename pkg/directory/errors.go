@@ -15,3 +15,17 @@ type SharedSecretUnavailableError struct {
 func (e *SharedSecretUnavailableError) Error() string {
 	return "directory: CDS shared secret is unavailable; cannot mint credentials for account " + e.AccountUUID
 }
+
+// ManagerDestroyedError indicates SetSharedSecret was called on a manager that
+// has already been destroyed, or lost a race with a concurrent Destroy.
+//
+// The secret is not installed and the clone the call had made is wiped, so the
+// manager stays terminal. Startup treats this as fatal; a shutdown path
+// racing configuration means the process is going away regardless, and
+// installing a key into a manager nothing will wipe is the outcome this
+// prevents.
+type ManagerDestroyedError struct{}
+
+func (e *ManagerDestroyedError) Error() string {
+	return "directory: manager has been destroyed; the shared secret was not installed"
+}

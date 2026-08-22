@@ -55,6 +55,15 @@ type secretState struct {
 	hmac bool
 	// secret is the manager's own clone, nil in stub mode and after Destroy.
 	secret *secrets.SecureString
+	// destroyed marks the terminal state Destroy publishes. It is one-way:
+	// no state carrying it is ever replaced, so a setter still in flight
+	// when shutdown ran cannot install a live secret behind it.
+	//
+	// A wiped state is otherwise indistinguishable from an ordinary one, and
+	// "the manager was shut down" is not something the fields it wipes can
+	// record — that is why the marker exists rather than being inferred from
+	// a nil secret.
+	destroyed bool
 }
 
 // NewDirectoryManager creates a new DirectoryManager. When secret is
@@ -132,23 +141,49 @@ func (m *DirectoryManager) SetSharedSecret(secret *secrets.SecureString) error {
 		next.hmac = true
 		next.secret = clone
 	}
-	// One swap publishes mode and key together, so no reader can catch the
+	// One publish carries mode and key together, so no reader can catch the
 	// transition half-applied and no two concurrent rotations can interleave
 	// into a mixture of both. Whatever this call displaced is wiped exactly
 	// once, by the call that displaced it.
-	if old := m.state.Swap(next); old != nil {
-		old.secret.Destroy()
+	//
+	// A compare-and-swap rather than an unconditional Swap, because this call
+	// may have been racing shutdown: the clone above was made before Destroy
+	// ran, and a plain Swap would install it afterwards, leaving a live
+	// protected allocation nothing will ever wipe. Losing that race means
+	// wiping our own clone — we own it — and failing.
+	for {
+		old := m.state.Load()
+		if old != nil && old.destroyed {
+			next.secret.Destroy()
+			return &ManagerDestroyedError{}
+		}
+		if m.state.CompareAndSwap(old, next) {
+			if old != nil {
+				old.secret.Destroy()
+			}
+			return nil
+		}
 	}
-	return nil
 }
 
-// Destroy wipes the manager's copy of the shared secret. Called from the
-// daemon's shutdown path. Safe to call more than once.
+// Destroy wipes the manager's copy of the shared secret and makes the manager
+// terminal: no later SetSharedSecret can install another one. Called from the
+// daemon's shutdown path. Safe to call more than once, and on a manager that
+// was never configured.
+//
+// Terminal is the point. Wiping what is installed at the instant Destroy runs
+// says nothing about a SetSharedSecret already in flight, which cloned its
+// secret before Destroy started and would publish it after Destroy returned —
+// a live protected allocation, installed after shutdown, that nothing would
+// ever wipe. The marker is what that setter checks.
 //
 // A manager that was minting HMAC credentials does not revert to the legacy
 // stub afterwards: GetAuthToken fails closed with a
 // SharedSecretUnavailableError, so a wipe can never be mistaken for a
-// successful credential grant.
+// successful credential grant. A manager that was never configured keeps
+// serving the random-UUID stub after Destroy, deliberately: there is no key to
+// protect, and failing closed there would turn shutdown into an outage for
+// non-CDSI deployments in exchange for nothing.
 func (m *DirectoryManager) Destroy() {
 	if m == nil {
 		return
@@ -157,13 +192,24 @@ func (m *DirectoryManager) Destroy() {
 	// the CURRENT hmac flag forward, so it must be built from the state being
 	// replaced. Retrying on a lost race is correct — a rotation that landed
 	// in between is the newer configuration, and this wipes that one instead.
+	//
+	// The nil case still publishes. Returning early from a never-configured
+	// manager would leave no marker, and a SetSharedSecret arriving afterwards
+	// would install a live secret into a manager that had already shut down —
+	// the same defect as the race, reachable with no race at all.
 	for {
 		old := m.state.Load()
-		if old == nil || old.secret == nil {
+		if old != nil && old.destroyed {
 			return
 		}
-		if m.state.CompareAndSwap(old, &secretState{hmac: old.hmac}) {
-			old.secret.Destroy()
+		next := &secretState{destroyed: true}
+		if old != nil {
+			next.hmac = old.hmac
+		}
+		if m.state.CompareAndSwap(old, next) {
+			if old != nil {
+				old.secret.Destroy()
+			}
 			return
 		}
 	}
