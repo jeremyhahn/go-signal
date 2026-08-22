@@ -1,5 +1,7 @@
-# Build artifacts
-build/
+# Build artifacts. Anchored to the repo root: an unanchored "build/" matches
+# ANY directory named build at any depth, which silently swallowed the
+# test/build package (the Makefile-target tests) when it was added.
+/build/
 bin/
 coverage/
 

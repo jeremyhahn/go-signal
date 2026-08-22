@@ -280,7 +280,7 @@ test: ## Run unit tests with coverage
 # failures, so nothing was actually being hidden — the hole was latent.)
 	bash -o pipefail -c '$(GOTEST) $(BUILD_TAGS_FLAG) -coverprofile=$(COVER_DIR)/coverage.out \
 		-covermode=atomic \
-		./pkg/... ./cmd/... ./sdk/... 2>&1 | tee $(BUILD_DIR)/test.log'
+		./pkg/... ./cmd/... ./sdk/... ./test/build/... 2>&1 | tee $(BUILD_DIR)/test.log'
 	@echo "==> Tests complete."
 
 # integration-test runs E2E integration tests inside the devcontainer.
@@ -471,14 +471,59 @@ coverage: ## Generate unit test coverage report with minimum gate
 	@echo "HTML report: $(COVER_DIR)/coverage.html"
 	@go tool cover -html=$(COVER_DIR)/coverage.out -o $(COVER_DIR)/coverage.html
 	@echo ""
-	@TOTAL=$$(go tool cover -func=$(COVER_DIR)/coverage.out | grep '^total:' | awk '{print $$NF}'); \
+	@$(MAKE) --no-print-directory coverage-gate
+
+.PHONY: coverage-gate
+
+# coverage-gate enforces COVER_MIN against an existing profile. It is a
+# separate target so the gate can be exercised against a crafted profile
+# without re-running the whole suite — the reason this is worth doing is that
+# the gate used to fail OPEN: `bc` given an empty percentage emitted a syntax
+# error, `|| echo 0` substituted 0, and `[ 0 -eq 1 ]` passed. A run that could
+# not measure coverage at all reported success.
+#
+# awk replaces bc: it needs no external dependency and cannot be handed an
+# empty left operand, because both operands are validated before any
+# comparison happens.
+#
+# Both, not just the measured one. COVER_MIN is command-line overridable, and
+# awk's numeric coercion turns anything unparseable into 0 — which passes
+# everything, the same fail-open from the other side. "90junk" would silently
+# mean 90.
+#
+# Validation is an anchored grammar, not a character set. A character-class
+# check accepts a lone "." — every character is legal — which coerces to 0 and
+# waves every run through. Requiring at least one digit either side of the
+# optional point is what closes that.
+#
+# COVERAGE_PROFILE is overridable so a test can point the gate at a fixture.
+COVERAGE_PROFILE ?= $(COVER_DIR)/coverage.out
+
+coverage-gate: ## Enforce COVER_MIN against COVERAGE_PROFILE (fails closed)
+	@if ! awk -v m="$(COVER_MIN)" 'BEGIN { exit (m ~ /^[0-9]+(\.[0-9]+)?$$/) ? 0 : 1 }'; then \
+		echo "FAIL: COVER_MIN is not a number ('$(COVER_MIN)') -- failing closed"; \
+		exit 1; \
+	fi; \
+	if ! awk -v m="$(COVER_MIN)" 'BEGIN { exit (m+0 >= 0 && m+0 <= 100) ? 0 : 1 }'; then \
+		echo "FAIL: COVER_MIN must be within 0-100 (got '$(COVER_MIN)') -- failing closed"; \
+		exit 1; \
+	fi; \
+	if [ ! -s "$(COVERAGE_PROFILE)" ]; then \
+		echo "FAIL: coverage profile $(COVERAGE_PROFILE) is missing or empty -- failing closed"; \
+		exit 1; \
+	fi; \
+	TOTAL=$$(go tool cover -func="$(COVERAGE_PROFILE)" 2>/dev/null | grep '^total:' | awk '{print $$NF}'); \
 	echo "=== TOTAL CODE COVERAGE: $$TOTAL ==="; \
 	PCT=$$(echo "$$TOTAL" | tr -d '%'); \
-	if [ $$(echo "$$PCT < $(COVER_MIN)" | bc -l 2>/dev/null || echo 0) -eq 1 ]; then \
+	if ! awk -v p="$$PCT" 'BEGIN { exit (p ~ /^[0-9]+(\.[0-9]+)?$$/) ? 0 : 1 }'; then \
+		echo "FAIL: coverage could not be measured (extracted '$$PCT') -- failing closed"; \
+		exit 1; \
+	fi; \
+	if awk -v p="$$PCT" -v m="$(COVER_MIN)" 'BEGIN { exit (p+0 < m+0) ? 1 : 0 }'; then \
+		echo "PASS: Coverage $$TOTAL meets minimum $(COVER_MIN)%"; \
+	else \
 		echo "FAIL: Coverage $$TOTAL is below minimum $(COVER_MIN)%"; \
 		exit 1; \
-	else \
-		echo "PASS: Coverage $$TOTAL meets minimum $(COVER_MIN)%"; \
 	fi
 
 .PHONY: coverage-report
