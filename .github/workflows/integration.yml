@@ -17,9 +17,20 @@
 # put an uncapped multi-container build on a shared host every time.
 #
 # The paths filter covers the harness — the parts whose breakage is invisible
-# until this suite runs. The server code it exercises is essentially the whole
-# repository, so filtering on that would fire on every push and defeat the
-# purpose; the nightly schedule is what covers it.
+# until this suite runs — AND the server code the suite exercises (pkg, cmd,
+# sdk). It fires only on push to master/main/develop: there is no
+# pull_request trigger, so per-PR cost is zero and this runs on merge, not on
+# every branch push.
+#
+# The server paths were added on 2026-08-21 after a merge to main shipped a
+# fix for "no real client can read a delivered message" without the
+# integration suite running at all — it touched only pkg/**, so nothing in the
+# harness-only filter matched. A suite that does not run on the code it covers
+# is a suite that certifies nothing. The nightly schedule stays as the
+# backstop for everything else, and workflow_dispatch triggers it by hand.
+#
+# The cost is real and deliberate: every merge to a release branch now runs an
+# ~86-minute multi-container suite outside the runner's cpu/memory caps.
 
 name: Integration
 
@@ -41,6 +52,11 @@ on:
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/integration.yml'
+      # The server code the suite exercises. Without these a merge can change
+      # message delivery and never run the suite that proves delivery works.
+      - 'pkg/**'
+      - 'cmd/**'
+      - 'sdk/**'
 
 permissions:
   contents: read
