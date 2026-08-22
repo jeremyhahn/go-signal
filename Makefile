@@ -129,7 +129,7 @@ print-build-tags: ## Print the default build tag set (for CI and tooling)
 	@echo '$(strip $(BUILD_TAGS))'
 
 .PHONY: print-build-tags
-.PHONY: build build-server build-cli build-frontend dev-web proto
+.PHONY: build build-server build-cli build-frontend dev-web proto proto-tools
 .PHONY: build-cdsi build-svr2 build-key-transparency build-registration-service build-storage-service build-services
 
 build: build-server build-cli ## Build server and CLI binaries
@@ -231,7 +231,53 @@ coverage-desktop: ## Coverage report for desktop packages
 	$(GO) test -tags $(BUILD_TAGS_DESKTOP) -coverprofile=$(COVER_DIR)/desktop.out ./pkg/desktop/...
 	$(GO) tool cover -func=$(COVER_DIR)/desktop.out
 
-proto:
+# protoc and its plugins are pinned because an unpinned generator does not
+# fail — it rewrites EVERY generated file. protoc stamps its own version into
+# each header, so a mismatched local protoc turns `make proto` into a 34-file
+# diff with the one real change buried in it. Measured on PR #29, where staging
+# the package after a regeneration swept 39 unrelated files into a commit about
+# something else, and the workaround was to invoke protoc for a single .proto
+# by hand — which the Makefile should not require anyone to know.
+#
+# The two spellings of the protoc version are not a typo. `protoc --version`
+# prints "libprotoc 25.1" while the code it generates stamps "v4.25.1":
+# protobuf renumbered its releases after 3.20 and the generator kept the 4.x
+# form. PROTOC_VERSION is the string the binary reports, because that is what
+# the check below can compare.
+PROTOC_VERSION             := 25.1
+PROTOC_GEN_GO_VERSION      := v1.36.11
+PROTOC_GEN_GO_GRPC_VERSION := 1.6.1
+
+# proto-tools fails closed on a version mismatch rather than letting the
+# generation proceed and rewrite the tree. Each check reports what it found, so
+# the message is actionable without re-running anything by hand.
+proto-tools: ## Verify the pinned protoc and plugin versions are installed
+	@fail=0; \
+	have=$$(protoc --version 2>/dev/null | awk '{print $$2}'); \
+	if [ "$$have" != "$(PROTOC_VERSION)" ]; then \
+		echo "FAIL: protoc $(PROTOC_VERSION) required, found $${have:-none}."; \
+		echo "      https://github.com/protocolbuffers/protobuf/releases/tag/v$(PROTOC_VERSION)"; \
+		fail=1; \
+	fi; \
+	have=$$(PATH=$(GOPATH_BIN):$$PATH protoc-gen-go --version 2>/dev/null | awk '{print $$2}'); \
+	if [ "$$have" != "$(PROTOC_GEN_GO_VERSION)" ]; then \
+		echo "FAIL: protoc-gen-go $(PROTOC_GEN_GO_VERSION) required, found $${have:-none}."; \
+		echo "      go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)"; \
+		fail=1; \
+	fi; \
+	have=$$(PATH=$(GOPATH_BIN):$$PATH protoc-gen-go-grpc --version 2>/dev/null | awk '{print $$2}'); \
+	if [ "$$have" != "$(PROTOC_GEN_GO_GRPC_VERSION)" ]; then \
+		echo "FAIL: protoc-gen-go-grpc $(PROTOC_GEN_GO_GRPC_VERSION) required, found $${have:-none}."; \
+		echo "      go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v$(PROTOC_GEN_GO_GRPC_VERSION)"; \
+		fail=1; \
+	fi; \
+	if [ $$fail -ne 0 ]; then \
+		echo "Generating with an unpinned toolchain rewrites every file in pkg/api/grpc/genproto."; \
+		exit 1; \
+	fi; \
+	echo "==> protoc $(PROTOC_VERSION), protoc-gen-go $(PROTOC_GEN_GO_VERSION), protoc-gen-go-grpc $(PROTOC_GEN_GO_GRPC_VERSION)"
+
+proto: proto-tools
 	@echo "==> Generating protobuf code..."
 	@mkdir -p pkg/api/grpc/genproto
 	@PATH=$(GOPATH_BIN):$$PATH protoc \
