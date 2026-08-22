@@ -568,47 +568,100 @@ func TestHandleSubmitVerificationCode_ServiceUnavailable(t *testing.T) {
 // Cleanup goroutine
 // --------------------------------------------------------------------------
 
+// evictionSignalStore reports the moment the cleanup goroutine actually
+// evicts something, so a test can wait for the sweep instead of guessing how
+// long one takes. It signals AFTER the delete completes, so a test woken by it
+// can read the resulting count without racing the sweep it just observed.
+//
+// Signalling only on an eviction, rather than on every DeleteExpired call,
+// is what lets the waiter be a single receive instead of a poll: the sweeper
+// ticks whether or not anything is expired, and a signal from an empty sweep
+// would say nothing.
+type evictionSignalStore struct {
+	verification.VerificationSessionStore
+	once    sync.Once
+	evicted chan struct{}
+}
+
+func newEvictionSignalStore(inner verification.VerificationSessionStore) *evictionSignalStore {
+	return &evictionSignalStore{
+		VerificationSessionStore: inner,
+		evicted:                  make(chan struct{}),
+	}
+}
+
+func (s *evictionSignalStore) DeleteExpired(ctx context.Context) error {
+	before, _ := s.VerificationSessionStore.Count(ctx)
+	err := s.VerificationSessionStore.DeleteExpired(ctx)
+	if after, _ := s.VerificationSessionStore.Count(ctx); after != before {
+		s.once.Do(func() { close(s.evicted) })
+	}
+	return err
+}
+
 // TestVerificationManager_CleanupRemovesExpiredSessions verifies that the
 // background cleanup goroutine evicts expired sessions from the store.
+//
+// The session is given a long TTL and then expired BY HAND. Configuring a
+// one-nanosecond TTL instead — which is what this test used to do — makes the
+// session expired before Create returns, so "the session exists after
+// creation" is only true until the next sweep, and the test has to beat the
+// goroutine it is testing. Measured: the session was written already expired
+// and the first sweep evicted it 9 ms later, which the assertion normally won
+// by that margin and lost whenever a loaded runner descheduled it. A live
+// session cannot be swept, so the same assertion is now true by construction.
+//
+// The wait is a receive, not a deadline: the store signals when a sweep
+// actually evicted something. The timeout is a failure guard, not a claim
+// about how fast cleanup runs.
 func TestVerificationManager_CleanupRemovesExpiredSessions(t *testing.T) {
 	transport := newNoopVerificationTransport()
-	store := verification.NewMemoryVerificationSessionStore()
+	store := newEvictionSignalStore(verification.NewMemoryVerificationSessionStore())
 	verificationMgr := newTestShim(t, store, transport, core.Config{
-		CodeLength:      6,
-		CodeTTL:         time.Nanosecond,
-		MaxAttempts:     3,
-		SessionTTL:      time.Nanosecond,
-		CleanupInterval: 10 * time.Millisecond, // fast cleanup for tests
+		CodeLength:  6,
+		CodeTTL:     time.Minute,
+		MaxAttempts: 3,
+		// Long enough that nothing expires on the clock. This test decides
+		// when the session expires; the sweeper's schedule is not an input to
+		// any assertion below.
+		SessionTTL:      time.Hour,
+		CleanupInterval: 10 * time.Millisecond,
 	}, nil, 0, 0)
 
 	s := newTestServerWithCustomVerification(t, verificationMgr)
 
 	// Create a session so there is something to clean up.
-	createSession(t, s, "+15551234567")
+	session := createSession(t, s, "+15551234567")
 
-	// Confirm the session exists in the store immediately.
 	count, err := store.Count(t.Context())
 	if err != nil {
 		t.Fatalf("store.Count: %v", err)
 	}
-	if count == 0 {
-		t.Fatal("expected session to exist in store after creation")
+	if count != 1 {
+		t.Fatalf("sessions after creation = %d, want 1", count)
 	}
 
-	// Wait for the session to expire and the cleanup goroutine to run.
-	deadline := time.Now().Add(500 * time.Millisecond)
-	var finalCount int
-	for time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
-		finalCount, err = store.Count(t.Context())
-		if err != nil {
-			t.Fatalf("store.Count: %v", err)
-		}
-		if finalCount == 0 {
-			break
-		}
+	// Expire it explicitly. This is the step that used to be a TTL the
+	// sweeper raced.
+	stored, err := store.Get(t.Context(), session.ID)
+	if err != nil {
+		t.Fatalf("store.Get: %v", err)
+	}
+	stored.ExpiresAt = time.Now().Add(-time.Minute)
+	if err := store.Update(t.Context(), stored); err != nil {
+		t.Fatalf("store.Update: %v", err)
 	}
 
+	select {
+	case <-store.evicted:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the cleanup goroutine never evicted the expired session")
+	}
+
+	finalCount, err := store.Count(t.Context())
+	if err != nil {
+		t.Fatalf("store.Count: %v", err)
+	}
 	if finalCount != 0 {
 		t.Errorf("expected 0 sessions after cleanup, got %d", finalCount)
 	}
