@@ -5,6 +5,10 @@
 bin/
 coverage/
 
+# Scan reports. GOSEC_OUT makes writing one a local command, not just a CI
+# step, so the report is now something a working tree can end up holding.
+gosec.sarif
+
 # Go
 *.exe
 *.exe~

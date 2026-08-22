@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	kvPrefixCredentials    = "signal/fido2/creds/"            //nolint:gosec // G101 false positive: a KV key prefix, not a credential.
-	kvPrefixCredsByAccount = "signal/fido2/creds/by-account/" //nolint:gosec // G101 false positive: a KV key prefix, not a credential.
+	kvPrefixCredentials    = "signal/fido2/creds/"            //#nosec G101 -- a KV key prefix, not a credential.
+	kvPrefixCredsByAccount = "signal/fido2/creds/by-account/" //#nosec G101 -- a KV key prefix, not a credential.
 	kvPrefixSessions       = "signal/fido2/sessions/"
 )
 

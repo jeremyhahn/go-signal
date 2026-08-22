@@ -146,6 +146,15 @@ ifeq ($(WITH_FTS),1)
 endif
 BUILD_TAGS_FLAG := $(if $(strip $(BUILD_TAGS)),-tags "$(strip $(BUILD_TAGS))")
 
+# gosec wants a COMMA-separated tag list, unlike the go tool and
+# golangci-lint. A space-separated one is not rejected — it is read as a single
+# tag nobody declared, so it matches nothing and the run looks normal.
+# Measured: the space form scanned the same 414 files as an untagged run while
+# the comma form scanned 445.
+comma      := ,
+space      := $(subst ,, )
+GOSEC_TAGS := $(subst $(space),$(comma),$(strip $(BUILD_TAGS)))
+
 # The one place the default tag set is defined. CI jobs that cannot call a make
 # target directly (the FIPS job builds and tests ./... under GOFIPS140, which no
 # build target covers) read the set from here instead of restating it, so the
@@ -676,13 +685,32 @@ vet: ## Run go vet, under the repo's build tags and again with the integration t
 	@echo "==> Running go vet (tags: integration $(strip $(BUILD_TAGS)))..."
 	$(GOVET) -tags "integration $(strip $(BUILD_TAGS))" ./...
 
-lint: ## Run golangci-lint
-	@echo "==> Running linter..."
-	$(GOLINT) run --timeout 5m ./...
+# Both gates below take the build tags for the same reason `vet` does. Without
+# them the loader cannot see a file behind //go:build, so eight packages —
+# every pkg/desktop/... package and the whole of pkg/fido2, the WebAuthn
+# implementation — were analysed by neither. Nothing said so: a run over ./...
+# skips them and reports success, and only a run aimed AT one of them says
+# "no go files to analyze".
+lint: ## Run golangci-lint, under the repo's build tags
+	@echo "==> Running linter (tags: $(or $(strip $(BUILD_TAGS)),none))..."
+	$(GOLINT) run --timeout 5m --build-tags "$(strip $(BUILD_TAGS))" ./...
 
-gosec: ## Run gosec security scanner
-	@echo "==> Running security scanner..."
-	$(GOSEC) -exclude=$(GOSEC_EXCLUDE) -exclude-generated ./...
+# GOSEC_FMT and GOSEC_OUT exist so CI can reuse this exact invocation while
+# still producing SARIF. CI used to restate the flags in YAML, and that is how
+# the scan CI actually runs came to be missing the build tags while `make
+# gosec` had them — the tag set, the exclude list and the target drifted apart
+# with nothing to notice. One command, one definition, is the fix.
+#
+# -stdout keeps findings readable in the job log when writing to a file: the
+# SARIF upload only runs on github.com, so without it a Gitea failure exits 1
+# with the findings buried where nobody can see them (ci-template v1.1).
+GOSEC_FMT ?= text
+GOSEC_OUT ?=
+
+gosec: ## Run gosec security scanner, under the repo's build tags
+	@echo "==> Running security scanner (tags: $(or $(GOSEC_TAGS),none), format: $(GOSEC_FMT))..."
+	$(GOSEC) -exclude=$(GOSEC_EXCLUDE) -exclude-generated -tags "$(GOSEC_TAGS)" \
+		-fmt=$(GOSEC_FMT) $(if $(GOSEC_OUT),-out=$(GOSEC_OUT) -stdout -verbose=text) ./...
 
 vuln: ## Run govulncheck vulnerability scan
 	@echo "==> Running vulnerability check..."

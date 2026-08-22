@@ -89,19 +89,14 @@ jobs:
       - name: Install gosec
         run: go install github.com/securego/gosec/v2/cmd/gosec@$(make -s print-gosec-version)
 
-      # The -exclude list mirrors GOSEC_EXCLUDE in the Makefile, where each
-      # rule carries its written justification (devops.md §8):
-      #   G103 unsafe calls        — test reflect/unsafe access to unexported fields
-      #   G104 unhandled errors    — false positive on hash.Write
-      #   G115 integer overflow    — protocol-spec bounded IDs
-      #   G304 file path variable  — config paths constructed internally
-      #   G118 cancel-func owner   — (ctx, cancel) returned to caller, who defers it
-      #
-      # -stdout keeps findings readable in the job log: the SARIF upload below
-      # only runs on github.com, so without it a Gitea failure exits 1 with the
-      # findings buried in a file nobody can see (ci-template v1.1).
+      # Through the Make target, not a restatement of its flags. This job used
+      # to spell out the exclude list and omit the build tags, so the scan CI
+      # gates on analysed neither pkg/fido2 nor pkg/desktop/... while a local
+      # `make gosec` did — and reported success either way. The build tags, the
+      # exclude list (each rule justified at GOSEC_EXCLUDE, devops.md §8) and
+      # the SARIF flags now have exactly one definition, in the Makefile.
       - name: Run gosec
-        run: gosec -fmt=sarif -out=gosec.sarif -stdout -verbose=text -exclude=G103,G104,G115,G304,G118 -exclude-generated ./...
+        run: make gosec GOSEC_FMT=sarif GOSEC_OUT=gosec.sarif
 
       - name: Upload gosec SARIF
         # Gitea has no code-scanning API; the upload 404s and fails the job.

@@ -18,8 +18,8 @@ import (
 //	fido2:session:{sessionID}           → JSON FIDO2Session
 
 const (
-	fido2CredPfx          = "fido2:cred:"            //nolint:gosec // G101 false positive: a KV key prefix, not a credential.
-	fido2CredByAccountPfx = "fido2:cred-by-account:" //nolint:gosec // G101 false positive: a KV key prefix, not a credential.
+	fido2CredPfx          = "fido2:cred:"            //#nosec G101 -- a KV key prefix, not a credential.
+	fido2CredByAccountPfx = "fido2:cred-by-account:" //#nosec G101 -- a KV key prefix, not a credential.
 	fido2SessionPfx       = "fido2:session:"
 )
 
