@@ -107,11 +107,20 @@ func stringSetToMap(in []string) map[string]struct{} {
 
 // buildCaptchaChecker builds a captcha.Checker from the YAML config. The
 // Checker is the multi-provider dispatcher used by PATCH /v1/verification/
-// session and POST /v1/registration. Returns (nil, nil) when no production
-// provider is configured (Provider="test" or "" with no secret); the REST
-// layer treats a nil Checker as "captcha disabled" and rejects PATCH
-// captcha submissions with 503.
+// session and POST /v1/registration. Returns (nil, nil) when the deployment
+// names no provider at all; the REST layer treats a nil Checker as "captcha
+// disabled" and rejects captcha submissions with 503.
+//
+// Provider "test" registers the TestVerifier, which accepts any token
+// carrying captcha.TestTokenPrefix. It needs no secret key, and it can never
+// reach a production deployment: validateProduction refuses to boot unless
+// the provider is hcaptcha or recaptcha.
 func buildCaptchaChecker(cfg config.CaptchaConfig) (*captcha.Checker, error) {
+	if cfg.Provider == "test" {
+		return &captcha.Checker{Providers: map[string]captcha.CaptchaVerifier{
+			"test": captcha.NewTestVerifier(captcha.TestVerifierConfig{}),
+		}}, nil
+	}
 	if cfg.SecretKey == nil || cfg.SecretKey.Plaintext() == "" {
 		return nil, nil
 	}
@@ -135,9 +144,9 @@ func buildCaptchaChecker(cfg config.CaptchaConfig) (*captcha.Checker, error) {
 			return nil, &StartupError{Stage: "recaptcha", Cause: err}
 		}
 		return &captcha.Checker{Providers: map[string]captcha.CaptchaVerifier{"recaptcha": v}}, nil
-	case "", "test":
-		// No production provider — let the REST layer surface 503 for any
-		// captcha submission instead of silently accepting test traffic.
+	case "":
+		// No provider named — let the REST layer surface 503 for any
+		// captcha submission instead of silently accepting unverified traffic.
 		return nil, nil
 	default:
 		return nil, &UnknownBackendError{Backend: "captcha/" + cfg.Provider}

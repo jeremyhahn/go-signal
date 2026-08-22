@@ -407,3 +407,55 @@ type scoreVerifier struct{ score float64 }
 func (v *scoreVerifier) Verify(_ context.Context, _, _, _ string) (*VerifyResult, error) {
 	return &VerifyResult{Success: true, Score: v.score}, nil
 }
+
+// --------------------------------------------------------------------------
+// No provider configured
+// --------------------------------------------------------------------------
+
+// newUnconfiguredManager mirrors what cmd/signald builds when the deployment
+// names no captcha provider: buildCaptchaChecker yields no Checker, and the
+// config supplies no Verifier either.
+func newUnconfiguredManager() *CaptchaManager {
+	return NewCaptchaManagerWithConfig(CaptchaManagerConfig{Logger: testLogger()})
+}
+
+func TestHandleChallengeResponse_CaptchaNoProviderConfigured(t *testing.T) {
+	m := newUnconfiguredManager()
+	resp := &ChallengeResponse{
+		Type:    ChallengeTypeCaptcha,
+		Token:   "tok-123",
+		Captcha: TestTokenPrefix + "valid",
+	}
+
+	err := m.HandleChallengeResponse(context.Background(), "uuid-1", resp)
+
+	var unavailable *CaptchaUnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("expected *CaptchaUnavailableError, got %#v", err)
+	}
+}
+
+// A push challenge needs no verifier, so an unconfigured manager must still
+// handle it rather than refusing everything.
+func TestHandleChallengeResponse_PushSucceedsWithNoProviderConfigured(t *testing.T) {
+	m := newUnconfiguredManager()
+	resp := &ChallengeResponse{Type: ChallengeTypePush, Token: "tok-123"}
+
+	if err := m.HandleChallengeResponse(context.Background(), "uuid-1", resp); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// The field checks run before the provider check, so a malformed submission
+// is still reported as malformed rather than as an outage.
+func TestHandleChallengeResponse_MissingSolutionOutranksMissingProvider(t *testing.T) {
+	m := newUnconfiguredManager()
+	resp := &ChallengeResponse{Type: ChallengeTypeCaptcha, Token: "tok-123"}
+
+	err := m.HandleChallengeResponse(context.Background(), "uuid-1", resp)
+
+	var failed *ChallengeFailedError
+	if !errors.As(err, &failed) {
+		t.Fatalf("expected *ChallengeFailedError, got %#v", err)
+	}
+}

@@ -16,12 +16,13 @@ func TestSignalCLI_SubmitRateLimitChallenge(t *testing.T) {
 	number := signalCLIUniqueNumber()
 	signalCLIRegisterAndVerify(t, number)
 
+	// testCaptchaSolution carries the dotted provider.sitekey.action.token
+	// layout the server's Checker requires. A bare string is rejected as
+	// malformed, which exercises the error path rather than the real one.
 	result := signalCLIExecAccount(t, number, "submitRateLimitChallenge",
 		"--challenge", "test-challenge-token",
-		"--captcha", "test-captcha-solution")
-	// This may fail if not rate-limited, which is expected
+		"--captcha", testCaptchaSolution)
 	t.Logf("submitRateLimitChallenge: exit=%d stderr=%s", result.ExitCode, result.Stderr)
-	// The key assertion: the server doesn't crash
-	assert.True(t, result.ExitCode == 0 || result.ExitCode == 1,
-		"submitRateLimitChallenge should either succeed or fail gracefully")
+	assert.Equal(t, 0, result.ExitCode,
+		"submitRateLimitChallenge with a valid captcha should succeed: %s", result.Stderr)
 }

@@ -2,6 +2,7 @@ package rest
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -28,6 +29,14 @@ func (s *Server) handleChallengeResponse(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := s.captcha.HandleChallengeResponse(r.Context(), acct.UUID, &resp); err != nil {
+		var unavailable *captcha.CaptchaUnavailableError
+		if errors.As(err, &unavailable) {
+			s.logger.Error("challenge submitted but no captcha provider is configured",
+				slog.String("uuid", acct.UUID),
+			)
+			writeError(w, http.StatusServiceUnavailable, "captcha verification is not configured")
+			return
+		}
 		s.logger.Error("challenge verification failed",
 			slog.String("uuid", acct.UUID),
 			slog.String("error", err.Error()),

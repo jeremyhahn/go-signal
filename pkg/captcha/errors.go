@@ -11,6 +11,17 @@ func (e *ChallengeFailedError) Error() string {
 	return "challenge failed: " + e.Message
 }
 
+// CaptchaUnavailableError indicates the server has no CAPTCHA backend
+// configured, so a submission can be neither accepted nor rejected on its
+// merits. Callers map it to HTTP 503: refusing the request is correct, and
+// silently accepting an unverifiable token would defeat the challenge.
+type CaptchaUnavailableError struct{}
+
+// Error returns a human-readable description.
+func (e *CaptchaUnavailableError) Error() string {
+	return "no captcha provider is configured"
+}
+
 // InvalidChallengeTypeError indicates that an unrecognized challenge type
 // was submitted.
 type InvalidChallengeTypeError struct {

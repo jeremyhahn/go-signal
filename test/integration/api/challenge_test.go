@@ -9,6 +9,12 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// testCaptchaSolution is a captcha submission in the dotted format the
+// server's Checker requires — provider.sitekey.action.token — matching the
+// shape a real client sends. The token slot carries the prefix the test
+// provider accepts.
+const testCaptchaSolution = "test.testkey.challenge.test-captcha-solution"
+
 func TestChallenge_SubmitCaptcha(t *testing.T) {
 	env := setupTestEnv(t)
 	number := uniquePhoneNumber()
@@ -17,7 +23,7 @@ func TestChallenge_SubmitCaptcha(t *testing.T) {
 	challengeResp := map[string]any{
 		"type":    "captcha",
 		"token":   "test-token-12345",
-		"captcha": "test-captcha-solution",
+		"captcha": testCaptchaSolution,
 	}
 
 	resp := env.doAuthRequest(t, "PUT", "/v1/challenge", challengeResp, uuid, "pass123")
@@ -45,7 +51,7 @@ func TestChallenge_SubmitWithoutAuth(t *testing.T) {
 	challengeResp := map[string]any{
 		"type":    "captcha",
 		"token":   "test-token",
-		"captcha": "test-captcha",
+		"captcha": testCaptchaSolution,
 	}
 
 	resp := env.doRequest(t, "PUT", "/v1/challenge", challengeResp, nil)

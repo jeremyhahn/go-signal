@@ -119,6 +119,17 @@ func (m *CaptchaManager) handleCaptchaChallenge(ctx context.Context, accountUUID
 		return &ChallengeFailedError{Message: "missing captcha solution"}
 	}
 
+	// Neither backend configured: refuse rather than dereference a nil
+	// verifier. buildCaptchaChecker legitimately yields no Checker when the
+	// deployment names no provider, and a manager built from that config has
+	// no Verifier either.
+	if m.checker == nil && m.verifier == nil {
+		m.logger.ErrorContext(ctx, "captcha submission with no provider configured",
+			slog.String("uuid", accountUUID),
+		)
+		return &CaptchaUnavailableError{}
+	}
+
 	var (
 		result *VerifyResult
 		err    error

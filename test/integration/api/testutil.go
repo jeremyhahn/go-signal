@@ -119,7 +119,17 @@ func setupTestEnv(t *testing.T) *testEnv {
 	usernameStore := memory.NewMemoryUsernameStore()
 
 	accountsMgr := accounts.NewAccountsManager(accountStore, 6)
-	captchaMgr := captcha.NewCaptchaManager(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	// Mirror the daemon's wiring (cmd/signald buildCaptchaChecker): a Checker
+	// holding the test provider, not the bare legacy verifier. Both modes of
+	// this fixture must accept the same submission format, or a test that
+	// passes against the live server fails in local mode for a reason that
+	// has nothing to do with the server.
+	captchaMgr := captcha.NewCaptchaManagerWithConfig(captcha.CaptchaManagerConfig{
+		Checker: &captcha.Checker{Providers: map[string]captcha.CaptchaVerifier{
+			"test": captcha.NewTestVerifier(captcha.TestVerifierConfig{}),
+		}},
+		Logger: slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})),
+	})
 	certificatesMgr := certificates.NewCertificatesManager(secrets.MustNewSecureString("test-signing-key"), slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	keysMgr := keys.NewKeysManager(keyStore)
 	messagesMgr := messages.NewMessagesManager(messageStore)
