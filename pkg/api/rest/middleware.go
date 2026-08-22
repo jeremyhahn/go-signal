@@ -131,10 +131,13 @@ func loggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 		recorder := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(recorder, r)
 
-		// Redact sensitive query parameters from the logged path.
-		logPath := r.URL.Path
+		// Redact credentials from the logged path — both the query string
+		// and the path segments. Query-only redaction was the original and
+		// left the larger hole: the credentials this API carries are mostly
+		// PATH segments.
+		logPath := redactPathSegments(r.URL.Path)
 		if r.URL.RawQuery != "" {
-			logPath = r.URL.Path + "?" + redactQueryParams(r.URL.RawQuery)
+			logPath += "?" + redactQueryParams(r.URL.RawQuery)
 		}
 
 		logger.Info("request",
@@ -144,6 +147,64 @@ func loggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 			slog.Duration("duration", time.Since(start)),
 		)
 	})
+}
+
+// credentialPathPrefixes lists route prefixes whose NEXT path segment is a
+// credential or a resolvable handle rather than an ordinary identifier.
+//
+//   - /v1/verification/session/{id} — the id is what POST /v1/registration
+//     accepts as proof of verification (enforceVerifiedSession). Anyone who
+//     can read it can register that phone number until the session expires,
+//     so logging it turns log access into account takeover.
+//   - /v1/accounts/username_link/{handle} — resolving the handle returns the
+//     account's encrypted username blob.
+//   - /v1/fido2/session/{id} and /v1/fido2/enroll/{id}/complete — the id is
+//     the handle to an in-flight WebAuthn ceremony, and completing that
+//     ceremony is what binds a new authenticator to the account. These routes
+//     only exist under the fido2 build tag; a prefix that matches nothing
+//     costs nothing, and keeping one policy for the whole access log is
+//     safer than a policy that changes shape with the build.
+//
+// Account UUIDs (/v1/profile/{identifier}, /v2/keys/{identifier}/…) and FIDO2
+// credential ids (/v1/fido2/credentials/{id}) are deliberately NOT redacted:
+// they are the keys an operator correlates by, they are not bearer
+// credentials — a WebAuthn credential id is a public handle the server itself
+// hands out in allowCredentials — and blanking them would leave the access log
+// unable to answer "what happened to this account". That is a judgement worth
+// revisiting deliberately, not by reflex.
+var credentialPathPrefixes = []string{
+	"/v1/verification/session/",
+	"/v1/accounts/username_link/",
+	"/v1/fido2/session/",
+	"/v1/fido2/enroll/",
+}
+
+// redactedSegment replaces a credential-bearing path segment in log output.
+const redactedSegment = "[REDACTED]"
+
+// redactPathSegments replaces the segment following a credential-bearing
+// route prefix, preserving the rest of the path so the route is still
+// identifiable:
+//
+//	/v1/verification/session/<id>/code -> /v1/verification/session/[REDACTED]/code
+//
+// The result is for log output only.
+func redactPathSegments(path string) string {
+	for _, prefix := range credentialPathPrefixes {
+		if !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		rest := path[len(prefix):]
+		if rest == "" {
+			// The collection endpoint itself carries no credential.
+			return path
+		}
+		if i := strings.IndexByte(rest, '/'); i >= 0 {
+			return prefix + redactedSegment + rest[i:]
+		}
+		return prefix + redactedSegment
+	}
+	return path
 }
 
 // redactQueryParams replaces the values of sensitive query parameters
