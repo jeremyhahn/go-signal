@@ -26,13 +26,18 @@ const (
 	maxMessagesPerRequest = 1000
 )
 
-// validEnvelopeTypes is the set of client-submittable envelope types.
-// Type 0 (unknown) and type 4 (key exchange legacy) and type 7 (server-only
-// SERVER_DELIVERY_RECEIPT) are excluded. EnvelopeTypePlaintextContent (8) is
-// included because clients may send sender-key distribution messages.
+// validEnvelopeTypes is the set of client-submittable envelope types. It must
+// stay a subset of what textsecure.proto can represent: accepting a type the
+// wire cannot carry only defers the failure to delivery, where the recipient
+// is the one who suffers it.
+//
+// Excluded: 0 (UNKNOWN, not a real message), and 2 and 7, which the proto
+// reserves. Type 2 was accepted here until it was noticed that the envelope
+// encoder had no mapping for it and was silently delivering it as UNKNOWN.
+// EnvelopeTypePlaintextContent (8) is included because clients send
+// sender-key distribution messages with it.
 var validEnvelopeTypes = map[messages.EnvelopeType]struct{}{
 	messages.EnvelopeTypeCiphertext:         {},
-	messages.EnvelopeTypeKeyExchange:        {},
 	messages.EnvelopeTypePrekeyBundle:       {},
 	messages.EnvelopeTypeReceipt:            {},
 	messages.EnvelopeTypeUnidentifiedSender: {},

@@ -523,3 +523,32 @@ func TestSessionKey_AsMapKey(t *testing.T) {
 		t.Errorf("map length = %d, want 2", len(m))
 	}
 }
+
+// TestSessionManager_DeliverMessage_NilEnvelope covers the boundary the
+// encoding-failure branch created. buildDeliveryMessage returns nil for an
+// envelope it cannot encode, and the branch that reports that failure named
+// the envelope's ServerGUID — which panicked for the one input that reaches
+// it most directly. A nil envelope is a caller bug; it must not take the
+// process down.
+//
+// The session must be ACTIVE: with no session registered the method returns
+// early and the panic is unreachable, so a test without one would pass
+// against the defect.
+func TestSessionManager_DeliverMessage_NilEnvelope(t *testing.T) {
+	m := NewSessionManager(managerTestLogger())
+	session := newTestSession("uuid-1", 1)
+	m.Register(session)
+	t.Cleanup(func() { m.Unregister(session) })
+
+	if ok := m.DeliverMessage("uuid-1", 1, nil); ok {
+		t.Error("DeliverMessage reported success for a nil envelope")
+	}
+}
+
+// An envelope the encoder cannot serialise must be dropped, not sent as an
+// empty body: a client parses zero bytes as a valid all-defaults envelope.
+func TestBuildDeliveryMessage_NilEnvelopeYieldsNoMessage(t *testing.T) {
+	if msg := buildDeliveryMessage(nil); msg != nil {
+		t.Errorf("buildDeliveryMessage(nil) = %+v, want nil", msg)
+	}
+}

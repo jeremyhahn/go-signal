@@ -245,7 +245,8 @@ proto:
 		pkg/api/grpc/proto/CallQualitySurveyPubSub.proto \
 		pkg/api/grpc/proto/DisconnectionRequests.proto \
 		pkg/api/grpc/proto/cdsi.proto \
-		pkg/api/grpc/proto/directory.proto
+		pkg/api/grpc/proto/directory.proto \
+		pkg/api/grpc/proto/TextSecure.proto
 	@# protoc places output under the full go_package path; flatten it.
 	@# Using cp + rm is idempotent across reruns (mv fails when target
 	@# subdirectories already exist from a previous generation).

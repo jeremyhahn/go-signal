@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -27,10 +26,6 @@ import (
 	signalws "github.com/jeremyhahn/go-signal/pkg/websocket"
 	pb "github.com/jeremyhahn/go-signal/pkg/websocket/wsproto"
 )
-
-// jsonMarshal is the JSON marshaling function used internally. It defaults to
-// json.Marshal and can be replaced in tests to simulate marshaling failures.
-var jsonMarshal = json.Marshal
 
 // Handler upgrades HTTP connections to WebSocket and manages the session
 // lifecycle for both authenticated messaging and device provisioning.
@@ -286,6 +281,13 @@ func (h *Handler) flushPendingMessages(r *http.Request, session *signalws.Sessio
 
 	for i, env := range envelopes {
 		msg := buildEnvelopeRequest(uint64(i+1), env)
+		if msg == nil {
+			// The message stays queued, so skipping costs a redelivery
+			// attempt rather than the message itself.
+			h.logger.Error("failed to encode pending envelope",
+				slog.String("uuid", acctUUID))
+			continue
+		}
 		if err := session.Send(msg); err != nil {
 			h.logger.Warn("failed to send pending message",
 				slog.String("uuid", acctUUID),
@@ -379,8 +381,6 @@ func (h *Handler) extractCredentials(r *http.Request) (string, string, bool) {
 	return "", "", false
 }
 
-// buildEnvelopeRequest constructs a WebSocket request message for delivering
-// an envelope to the client.
 // routeToHTTP forwards a WebSocket request through the HTTP handler chain,
 // mirroring the Java Signal-Server's WebSocketResourceProvider. This allows
 // WebSocket clients to invoke any REST endpoint (e.g. PUT /v1/messages/{dest}
@@ -513,8 +513,13 @@ func (h *Handler) routeToHTTP(session *signalws.Session, msg *signalws.WebSocket
 	}
 }
 
+// buildEnvelopeRequest wraps an envelope in the PUT /api/v1/message request
+// every Signal client reads messages from. The body is the envelope's
+// protobuf wire form — clients parse it with the generated protobuf reader,
+// so it must not be JSON. Returns nil when the envelope cannot be marshalled;
+// the caller drops the delivery rather than sending a body no client can read.
 func buildEnvelopeRequest(id uint64, env *messages.Envelope) *signalws.WebSocketMessage {
-	body, err := jsonMarshal(env)
+	body, err := messages.MarshalEnvelope(env)
 	if err != nil {
 		return nil
 	}

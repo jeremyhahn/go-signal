@@ -113,3 +113,27 @@ func (e *PersisterError) Error() string {
 
 // Unwrap returns the underlying cause so errors.Is/As can traverse the chain.
 func (e *PersisterError) Unwrap() error { return e.Cause }
+
+// NilEnvelopeError indicates MarshalEnvelope was called with no envelope.
+// Delivery paths must surface this rather than emitting an empty body, which
+// a client would parse as a valid envelope with every field defaulted.
+type NilEnvelopeError struct{}
+
+func (e *NilEnvelopeError) Error() string {
+	return "cannot marshal a nil envelope"
+}
+
+// UnsupportedEnvelopeTypeError indicates an envelope carries a type with no
+// representation in textsecure.proto — values the wire reserves (2, 7), or a
+// value outside the enum entirely.
+//
+// It is deliberately an error rather than a coercion to UNKNOWN: delivering a
+// substituted type reports success while handing the client a semantically
+// different message, and nothing downstream can tell that happened.
+type UnsupportedEnvelopeTypeError struct {
+	Type EnvelopeType
+}
+
+func (e *UnsupportedEnvelopeTypeError) Error() string {
+	return "unsupported envelope type: " + strconv.Itoa(int(e.Type))
+}

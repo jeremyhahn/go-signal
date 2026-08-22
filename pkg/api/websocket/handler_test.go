@@ -3,7 +3,6 @@ package websocket
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -17,6 +16,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/jeremyhahn/go-signal/pkg/accounts"
+	textsecurepb "github.com/jeremyhahn/go-signal/pkg/api/grpc/genproto/textsecure"
 	"github.com/jeremyhahn/go-signal/pkg/auth"
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	"github.com/jeremyhahn/go-signal/pkg/messages"
@@ -410,17 +410,26 @@ func TestBuildEnvelopeRequest_ValidEnvelope(t *testing.T) {
 		t.Error("Request.Body is empty")
 	}
 
-	// Verify body is valid base64 containing JSON of the envelope.
+	// The body is the envelope's protobuf wire form — what a client parses.
+	// It must NOT be JSON: signal-cli reports a JSON body as
+	// "Unexpected field encoding", because ASCII read as a protobuf varint
+	// stream yields wire types that do not exist.
 	decoded, err := base64.StdEncoding.DecodeString(msg.Request.Body)
 	if err != nil {
 		t.Fatalf("body is not valid base64: %v", err)
 	}
-	var env2 messages.Envelope
-	if err := json.Unmarshal(decoded, &env2); err != nil {
-		t.Fatalf("body JSON unmarshal failed: %v", err)
+	var pbEnv textsecurepb.Envelope
+	if err := proto.Unmarshal(decoded, &pbEnv); err != nil {
+		t.Fatalf("body is not a parseable Envelope protobuf: %v", err)
 	}
-	if env2.ID != 42 {
-		t.Errorf("decoded envelope ID = %d, want 42", env2.ID)
+	if pbEnv.GetDestinationServiceId() != env.DestinationUUID {
+		t.Errorf("destination_service_id = %q, want %q",
+			pbEnv.GetDestinationServiceId(), env.DestinationUUID)
+	}
+	// The envelope ID is the WebSocket request identifier, not envelope
+	// content — it belongs on the request, and has no field on the wire.
+	if msg.Request.ID != 1 {
+		t.Errorf("Request.ID = %d, want 1", msg.Request.ID)
 	}
 }
 
@@ -444,16 +453,25 @@ func TestBuildEnvelopeRequest_DifferentIDs(t *testing.T) {
 	}
 }
 
+// A minimal envelope still needs a type the wire can represent. The zero
+// value is an unset field, not a message kind, so it yields no request rather
+// than an envelope the recipient would read as a different kind of message.
 func TestBuildEnvelopeRequest_MinimalEnvelope(t *testing.T) {
-	env := &messages.Envelope{}
-
-	msg := buildEnvelopeRequest(1, env)
+	msg := buildEnvelopeRequest(1, &messages.Envelope{
+		Type:            messages.EnvelopeTypeCiphertext,
+		DestinationUUID: "dest",
+	})
 	if msg == nil {
-		t.Fatal("buildEnvelopeRequest returned nil for empty envelope")
-		return
+		t.Fatal("buildEnvelopeRequest returned nil for a minimal envelope")
 	}
 	if msg.Request.Body == "" {
-		t.Error("expected non-empty body even for empty envelope")
+		t.Error("expected a non-empty body")
+	}
+}
+
+func TestBuildEnvelopeRequest_UnrepresentableTypeYieldsNoRequest(t *testing.T) {
+	if msg := buildEnvelopeRequest(1, &messages.Envelope{}); msg != nil {
+		t.Error("an envelope with no type must not produce a request")
 	}
 }
 
@@ -1149,55 +1167,6 @@ func TestHandleProvisioning_ClientSendsNonResponse(t *testing.T) {
 	})
 	// The deferred conn.Close terminates the server's ReadPump. No explicit
 	// wait is needed since the test has no assertions after the write.
-}
-
-// marshalError is a typed error returned by the test marshal stub.
-type marshalError struct {
-	Message string
-}
-
-func (e *marshalError) Error() string {
-	return "marshal error: " + e.Message
-}
-
-func TestBuildEnvelopeRequest_MarshalError(t *testing.T) {
-	original := jsonMarshal
-	t.Cleanup(func() { jsonMarshal = original })
-
-	jsonMarshal = func(_ any) ([]byte, error) {
-		return nil, &marshalError{Message: "simulated"}
-	}
-
-	env := &messages.Envelope{
-		ID:              1,
-		Type:            messages.EnvelopeTypeCiphertext,
-		DestinationUUID: "dest",
-	}
-	msg := buildEnvelopeRequest(1, env)
-	if msg != nil {
-		t.Errorf("expected nil when marshal fails, got %v", msg)
-	}
-}
-
-func TestBuildEnvelopeRequest_MarshalErrorReturnsNil(t *testing.T) {
-	original := jsonMarshal
-	t.Cleanup(func() { jsonMarshal = original })
-
-	jsonMarshal = func(_ any) ([]byte, error) {
-		return nil, &marshalError{Message: "envelope marshal failure"}
-	}
-
-	// Verify nil return for different envelope configurations.
-	envelopes := []*messages.Envelope{
-		{ID: 0},
-		{ID: 100, Type: messages.EnvelopeTypePrekeyBundle, Content: []byte("data")},
-	}
-	for _, env := range envelopes {
-		result := buildEnvelopeRequest(1, env)
-		if result != nil {
-			t.Errorf("expected nil for envelope ID %d, got non-nil", env.ID)
-		}
-	}
 }
 
 func TestFlushPendingMessages_SendError(t *testing.T) {

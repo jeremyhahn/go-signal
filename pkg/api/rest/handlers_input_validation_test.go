@@ -88,6 +88,18 @@ func TestValidateIncomingMessages_TimestampExceedsMax(t *testing.T) {
 	}
 }
 
+// Type 2 is reserved in textsecure.proto, so the envelope encoder has no
+// representation for it. Accepting it here would only defer the failure to
+// delivery, where the recipient is the one who suffers it.
+func TestValidateIncomingMessages_ReservedEnvelopeType2(t *testing.T) {
+	msgs := []IncomingMessageEntity{
+		{Type: 2, DestinationDeviceId: 1, Content: "dGVzdA=="},
+	}
+	if msg := validateIncomingMessages(IncomingMessageListEntity{Messages: msgs, Timestamp: 1000}); msg == "" {
+		t.Error("expected error for reserved type 2, got none")
+	}
+}
+
 func TestValidateIncomingMessages_InvalidEnvelopeTypeZero(t *testing.T) {
 	msgs := []IncomingMessageEntity{
 		{Type: 0, DestinationDeviceId: 1, Content: "dGVzdA=="},
@@ -108,7 +120,7 @@ func TestValidateIncomingMessages_InvalidEnvelopeType7(t *testing.T) {
 }
 
 func TestValidateIncomingMessages_ValidEnvelopeTypes(t *testing.T) {
-	validTypes := []int32{1, 2, 3, 5, 6, 8}
+	validTypes := []int32{1, 3, 5, 6, 8}
 	for _, typ := range validTypes {
 		t.Run(fmt.Sprintf("type_%d", typ), func(t *testing.T) {
 			msgs := []IncomingMessageEntity{

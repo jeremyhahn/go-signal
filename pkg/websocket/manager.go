@@ -151,6 +151,16 @@ func (m *SessionManager) Unregister(session *Session) {
 // instance mode and for direct test injection; production cross-instance
 // delivery should use NotifyMessageAvailable.
 func (m *SessionManager) DeliverMessage(uuid string, deviceID uint64, envelope *messages.Envelope) bool {
+	// Rejected before anything else so the encoding-failure branch below can
+	// name the envelope it could not encode. A nil envelope is a caller bug,
+	// not a delivery outcome, and must not take down the process.
+	if envelope == nil {
+		m.logger.Error("refusing to deliver a nil envelope",
+			slog.String("uuid", uuid),
+			slog.Uint64("deviceId", deviceID))
+		return false
+	}
+
 	key := sessionKey{uuid: uuid, deviceID: deviceID}
 
 	m.mu.RLock()
@@ -162,6 +172,13 @@ func (m *SessionManager) DeliverMessage(uuid string, deviceID uint64, envelope *
 	}
 
 	msg := buildDeliveryMessage(envelope)
+	if msg == nil {
+		m.logger.Error("failed to encode envelope for websocket delivery",
+			slog.String("uuid", uuid),
+			slog.Uint64("deviceId", deviceID),
+			slog.String("serverGuid", envelope.ServerGUID))
+		return false
+	}
 	if err := session.Send(msg); err != nil {
 		m.logger.Warn("failed to deliver message via websocket",
 			slog.String("uuid", uuid),
@@ -334,6 +351,15 @@ func (m *SessionManager) flushToSession(ctx context.Context, session *Session) e
 			continue
 		}
 		msg := buildDeliveryMessage(env)
+		if msg == nil {
+			// The message stays queued in the durable store, so skipping
+			// it here costs a redelivery attempt rather than the message.
+			m.logger.Error("failed to encode envelope during flush",
+				slog.String("uuid", session.UUID),
+				slog.Uint64("deviceId", session.DeviceID),
+				slog.String("serverGuid", env.ServerGUID))
+			continue
+		}
 		if sendErr := session.Send(msg); sendErr != nil {
 			return sendErr
 		}
@@ -345,6 +371,9 @@ func (m *SessionManager) flushToSession(ctx context.Context, session *Session) e
 // to a connected client using the Signal WebSocket protocol convention.
 func buildDeliveryMessage(envelope *messages.Envelope) *WebSocketMessage {
 	encoded := encodeEnvelopeBody(envelope)
+	if encoded == "" {
+		return nil
+	}
 
 	return &WebSocketMessage{
 		Type: "request",

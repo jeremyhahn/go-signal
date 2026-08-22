@@ -8,6 +8,7 @@ package textsecure;
 
 option java_package = "org.whispersystems.textsecuregcm.entities";
 option java_outer_classname = "MessageProtos";
+option go_package = "github.com/jeremyhahn/go-signal/pkg/api/grpc/genproto/textsecure;textsecurepb";
 
 message Envelope {
   enum Type {
