@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"reflect"
 	"time"
 
@@ -24,6 +25,12 @@ var errSDKInvalidStickerPack = errors.New("sdk: sticker pack PackID is required"
 // replacing the legacy FileStore with a proper database-backed implementation.
 type DAOStore struct {
 	factory *daostore.Factory
+	// owned is the embedded store this DAOStore opened itself, and therefore
+	// the only one it may close. A DAOStore built from a caller-supplied
+	// factory leaves this nil: that store's lifetime belongs to whoever
+	// opened it, and closing it here would pull the database out from under
+	// them.
+	owned io.Closer
 }
 
 // NewDAOStore creates a Store backed by the given DAO factory.
@@ -58,6 +65,13 @@ func assertStickerPackIndex() error {
 	return nil
 }
 
+// newFactory is daostore.NewFactory, indirected so NewDefaultDAOStore's
+// cleanup path can be exercised. A factory failure cannot be provoked from
+// outside — it depends on entity and index registration — and that path is the
+// one that used to strand an open database behind a failed constructor.
+// Production code never reassigns it.
+var newFactory = daostore.NewFactory
+
 // NewDefaultDAOStore creates a Store with an embedded QRDB KVStore
 // backed by PebbleDB in the given data directory. This is the default
 // store used by both CLI and desktop modes.
@@ -67,12 +81,28 @@ func NewDefaultDAOStore(dataDir string) (*DAOStore, error) {
 		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "create embedded kvstore", err)
 	}
 
-	factory, err := daostore.NewFactory(kvStore)
+	// From here on the store is open and the caller has no handle to close it,
+	// so every failure path below has to close it. Leaving it open strands
+	// Pebble's exclusive directory lock behind a constructor that reported
+	// failure, and a retry against the same dataDir then fails for a different
+	// reason than the one being retried. The interface kvStore satisfies does
+	// not declare Close; the concrete embedded store does.
+	closer, _ := kvStore.(io.Closer)
+
+	factory, err := newFactory(kvStore)
 	if err != nil {
+		if closer != nil {
+			if cerr := closer.Close(); cerr != nil {
+				err = errors.Join(err, cerr)
+			}
+		}
 		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "create dao factory", err)
 	}
 
-	return NewDAOStore(factory), nil
+	store := NewDAOStore(factory)
+	// This constructor opened the KV store, so this DAOStore owns it from here.
+	store.owned = closer
+	return store, nil
 }
 
 func (s *DAOStore) ctx() (context.Context, context.CancelFunc) {
@@ -326,9 +356,19 @@ func (s *DAOStore) DeleteStickerPack(packID string) error {
 	return s.factory.StickerPacks.Delete(ctx, existing)
 }
 
-// Close releases resources.
+// Close releases the embedded store this DAOStore opened, if it opened one.
+//
+// It used to return nil without doing anything, which meant the PebbleDB
+// behind a NewDefaultDAOStore was never released: its exclusive directory lock
+// outlived every caller that shut down correctly, and the database kept
+// writing to a directory the caller believed it was done with (#55). A
+// DAOStore built by NewDAOStore from a caller-supplied factory still closes
+// nothing — it did not open that store.
 func (s *DAOStore) Close() error {
-	return nil
+	if s.owned == nil {
+		return nil
+	}
+	return s.owned.Close()
 }
 
 // Factory returns the underlying DAO factory for direct DAO access.

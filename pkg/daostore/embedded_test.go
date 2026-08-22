@@ -501,9 +501,33 @@ func TestNewEmbeddedKVStore_Success(t *testing.T) {
 	store, err := NewEmbeddedKVStore(dir)
 	require.NoError(t, err)
 	require.NotNil(t, store)
-	// Type-assert to access the underlying storage so we can close PebbleDB.
-	adapter := store.(*engineKVStoreAdapter)
-	t.Cleanup(func() { _ = adapter.stg.Close() })
+	t.Cleanup(func() { _ = store.(*engineKVStoreAdapter).Close() })
+}
+
+// TestEmbeddedKVStore_CloseReleasesTheDirectory pins the reason Close exists.
+//
+// PebbleDB holds an exclusive lock on its directory for as long as it is open,
+// and nothing in the chain could release it: kvstore.KVStore does not declare
+// Close, and the adapter is the only thing holding the storage handle. So a
+// caller that shut down correctly still left the database open (#55). Reopening
+// the same directory is the observable proof, and it fails with "lock held by
+// current process" if Close stops closing.
+func TestEmbeddedKVStore_CloseReleasesTheDirectory(t *testing.T) {
+	dir := t.TempDir()
+
+	store, err := NewEmbeddedKVStore(dir)
+	require.NoError(t, err)
+	require.NoError(t, store.(*engineKVStoreAdapter).Close())
+
+	reopened, err := NewEmbeddedKVStore(dir)
+	require.NoError(t, err, "the directory lock was not released")
+	require.NoError(t, reopened.(*engineKVStoreAdapter).Close())
+}
+
+// A zero adapter has nothing to close, and saying so is cheaper than making
+// every caller check.
+func TestEmbeddedKVStore_CloseIsSafeWithoutStorage(t *testing.T) {
+	require.NoError(t, (&engineKVStoreAdapter{}).Close())
 }
 
 func TestNewEmbeddedKVStore_InvalidPath(t *testing.T) {

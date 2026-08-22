@@ -1,13 +1,87 @@
 package signal
 
 import (
+	"errors"
+	"io"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-signal/pkg/daostore"
+
+	"github.com/jeremyhahn/go-qrdb/pkg/kvstore"
 )
+
+// TestDAOStore_CloseReleasesTheStoreItOpened is the sdk half of the #55 fix.
+//
+// Close used to return nil without doing anything, so the PebbleDB behind
+// NewDefaultDAOStore was never released: its exclusive directory lock outlived
+// every caller that shut down correctly. Reopening the same directory is the
+// observable proof — it fails with "lock held by current process" if Close goes
+// back to doing nothing.
+func TestDAOStore_CloseReleasesTheStoreItOpened(t *testing.T) {
+	dir := t.TempDir()
+
+	store, err := NewDefaultDAOStore(dir)
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+
+	reopened, err := NewDefaultDAOStore(dir)
+	require.NoError(t, reopened.Close())
+	require.NoError(t, err, "the store was not released")
+}
+
+// The other half of the ownership contract: a DAOStore built from a factory the
+// caller supplied did not open that store and must not close it. Closing it
+// here would pull the database out from under a caller who is still using it —
+// a worse failure than the leak, because it happens while they are working.
+func TestDAOStore_CloseLeavesACallerSuppliedStoreOpen(t *testing.T) {
+	dir := t.TempDir()
+
+	kv, err := daostore.NewEmbeddedKVStore(dir)
+	require.NoError(t, err)
+	closer, ok := kv.(io.Closer)
+	require.True(t, ok, "the embedded store must be closable by its owner")
+	t.Cleanup(func() { _ = closer.Close() })
+
+	factory, err := daostore.NewFactory(kv)
+	require.NoError(t, err)
+
+	store := NewDAOStore(factory)
+	require.NoError(t, store.Close())
+
+	// Still locked, so still open: the caller's store survived.
+	_, err = daostore.NewEmbeddedKVStore(dir)
+	require.Error(t, err, "Close closed a store it did not open")
+}
+
+// A constructor that fails must not strand the database it opened. The caller
+// gets no handle back, so anything left open is unreachable — and Pebble's
+// directory lock outliving a failed constructor means the retry fails for a
+// different reason than the one being retried.
+func TestNewDefaultDAOStore_ClosesTheStoreWhenTheFactoryFails(t *testing.T) {
+	dir := t.TempDir()
+
+	original := newFactory
+	newFactory = func(kvstore.KVStore) (*daostore.Factory, error) {
+		return nil, errors.New("injected factory failure")
+	}
+	t.Cleanup(func() { newFactory = original })
+
+	store, err := NewDefaultDAOStore(dir)
+	require.Error(t, err)
+	require.Nil(t, store)
+
+	// The proof is that the directory is immediately reusable.
+	reopened, err := daostore.NewEmbeddedKVStore(dir)
+	require.NoError(t, err, "the failed constructor left the store open")
+	closer, ok := reopened.(io.Closer)
+	require.True(t, ok)
+	require.NoError(t, closer.Close())
+}
 
 func TestDAOStore_ImplementsStoreInterface(t *testing.T) {
 	// Verify DAOStore satisfies the Store interface at compile time.

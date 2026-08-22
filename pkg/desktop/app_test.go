@@ -44,6 +44,12 @@ func (appStubStore) SaveStickerPack(_ *signal.InstalledStickerPack) error { retu
 func (appStubStore) DeleteStickerPack(_ string) error                     { return nil }
 func (appStubStore) Close() error                                         { return nil }
 
+// closeFailsStore reports a failure to close, which is what a database that
+// will not flush looks like from here: lost writes, not a tidy-up detail.
+type closeFailsStore struct{ appStubStore }
+
+func (closeFailsStore) Close() error { return errors.New("store close failed") }
+
 func (registeredStubStore) GetCredentials() (*signal.Credentials, error) {
 	return &signal.Credentials{UUID: "test-uuid-001", Number: "+15550001111"}, nil
 }
@@ -58,6 +64,7 @@ func (errorCredStore) GetCredentials() (*signal.Credentials, error) {
 var _ signal.Store = appStubStore{}
 var _ signal.Store = registeredStubStore{}
 var _ signal.Store = errorCredStore{}
+var _ signal.Store = closeFailsStore{}
 
 // newTestAppConfig returns a minimal ClientConfig backed by the stub store.
 func newTestAppConfig() signal.ClientConfig {
@@ -472,27 +479,69 @@ func TestRun_ServerURLDefaults(t *testing.T) {
 	assert.Contains(t, err.Error(), "create app")
 }
 
-// TestRun_BlocksAfterSuccessfulInit covers the final block in Run: the
-// fmt.Fprintf, fmt.Fprintln, _ = app, and select{} statements. Run is
-// designed to block forever on select{}; this test runs it in a background
-// goroutine, waits for it to pass all early-exit guards, then returns. The
-// goroutine is intentionally leaked — it blocks on select{} until the test
-// binary exits and Go's runtime terminates it.
-func TestRun_BlocksAfterSuccessfulInit(t *testing.T) {
+// A shutdown that could not close the database must not report success.
+// RunContext's deferred close used to discard its error, so a Pebble that
+// failed to flush — lost writes — returned nil to a caller who had asked for
+// an error-returning lifecycle.
+func TestRunContext_ReportsAFailureToCloseTheStore(t *testing.T) {
+	original := newApp
+	newApp = func(cfg signal.ClientConfig) (*App, error) {
+		cfg.Store = closeFailsStore{}
+		return NewApp(cfg)
+	}
+	t.Cleanup(func() { newApp = original })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := RunContext(ctx, "http://localhost:9999", t.TempDir())
+	require.Error(t, err, "a failed store close was reported as a clean shutdown")
+	require.Contains(t, err.Error(), "close app")
+}
+
+// TestRunContext_ReturnsOnCancelAndReleasesTheStore is the regression test for
+// #55.
+//
+// The previous version of this test started Run in a goroutine, slept 200 ms,
+// checked it had not returned, and ended — leaking a goroutine that held a live
+// PebbleDB on the test's t.TempDir(). Go then deleted that directory while the
+// database was still writing to it, and the package failed AFTER printing PASS,
+// with no test name attached. Run had no shutdown path at all, so the leak was
+// not an oversight in the test: there was nothing else the test could do.
+//
+// Cancelling before the wait is deterministic rather than racy. An
+// already-cancelled context skips only the waiting, never the setup, so
+// initialization always runs and RunContext always reaches its deferred
+// shutdown — no sleep, and nothing to lose a race with.
+func TestRunContext_ReturnsOnCancelAndReleasesTheStore(t *testing.T) {
 	tmpDir := t.TempDir()
+
+	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- Run("http://localhost:9999", tmpDir)
+		errCh <- RunContext(ctx, "http://localhost:9999", tmpDir)
 	}()
-	// Allow the goroutine to create PebbleDB, call NewApp, execute the
-	// informational prints, and reach the blocking select{}.
-	// PebbleDB creation typically completes well under 200ms.
-	time.Sleep(200 * time.Millisecond)
-	// Verify the goroutine has not returned early with an error.
+	cancel()
+
 	select {
 	case err := <-errCh:
-		t.Fatalf("Run returned unexpectedly: %v", err)
-	default:
-		// Expected: Run is blocked on select{} — all preceding statements covered.
+		// nil, not a cancellation error: being told to stop is how this ends,
+		// not a failure. A non-nil error here means initialization broke.
+		require.NoError(t, err)
+	case <-time.After(30 * time.Second):
+		t.Fatal("RunContext did not return after its context was cancelled")
 	}
+
+	// The store must be released, not merely unreferenced. Pebble holds an
+	// exclusive lock on its directory for as long as it is open, so a second
+	// client on the same dataDir can only be created if the first was closed.
+	// Asserting on the lock rather than on a Close() call is what makes this a
+	// test of the behaviour instead of a test of the code shape.
+	reopened, err := signal.NewClient(signal.ClientConfig{
+		ServerURL: "http://localhost:9999",
+		DataDir:   tmpDir,
+		UserAgent: "signal-desktop-go-test/0.1",
+	})
+	require.NoError(t, err, "the store is still open: RunContext returned without closing it")
+	require.NoError(t, reopened.Close())
 }

@@ -48,11 +48,23 @@ func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 }
 
-// Shutdown is called by Wails when the application is closing.
+// Shutdown is called by Wails when the application is closing. It is the void
+// adapter Wails' lifecycle requires and discards the close error because Wails
+// has nowhere to put one; callers that can report a failure should use Close.
 func (a *App) Shutdown(_ context.Context) {
-	if a.client != nil {
-		_ = a.client.Close()
+	_ = a.Close()
+}
+
+// Close releases the client and the store it owns, reporting any failure.
+//
+// A store that will not close is a persistence failure — an unflushed write is
+// lost data, not a tidy-up detail — so the error is returned rather than
+// dropped.
+func (a *App) Close() error {
+	if a.client == nil {
+		return nil
 	}
+	return a.client.Close()
 }
 
 // ---------------------------------------------------------------------------
