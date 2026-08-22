@@ -82,8 +82,12 @@ jobs:
       - name: Verify module integrity
         run: make modverify
 
+      # Pinned, and read from the Makefile so the version has one definition.
+      # At @latest these scanners decided whether the gate was red based on
+      # what upstream shipped that morning — red on a diff that touched
+      # nothing, or quietly narrower when a rule stopped firing.
       - name: Install gosec
-        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+        run: go install github.com/securego/gosec/v2/cmd/gosec@$(make -s print-gosec-version)
 
       # The -exclude list mirrors GOSEC_EXCLUDE in the Makefile, where each
       # rule carries its written justification (devops.md §8):
@@ -107,8 +111,12 @@ jobs:
           sarif_file: gosec.sarif
           category: gosec
 
+      # Pinning the binary does not freeze the findings, and must not: the
+      # vulnerability database is fetched at run time, so a newly published CVE
+      # against a dependency we call still turns this red. That is the gate
+      # working, not drift.
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@$(make -s print-govulncheck-version)
 
       - name: Run govulncheck
         run: make vuln

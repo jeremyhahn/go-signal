@@ -37,6 +37,32 @@ GOLINT        := golangci-lint
 GOSEC         := gosec
 GOVULNCHECK   := govulncheck
 
+# The scanners are pinned for the same reason golangci-lint is: unpinned, they
+# decide whether the security gate is red based on what upstream released that
+# morning. A new rule turns the gate red on a diff that touched nothing, and —
+# worse, because nothing announces it — a rule that stops firing silently
+# narrows the gate.
+#
+# Baseline: both versions verified green over the FULL build-tagged tree
+# (446 files, 0 gosec issues; govulncheck 0 affecting vulnerabilities) as of
+# 2026-08-22. Bumping either is a normal reviewed change with a visible diff,
+# which is the point — it stops being something that happens to everyone at
+# once.
+#
+# Pinning the govulncheck BINARY does not freeze its findings, and must not:
+# the vulnerability database is fetched at run time, so a newly published CVE
+# against a dependency we do call still turns this gate red. That variability
+# is the gate working.
+#
+# There is deliberately no local version check for gosec. A gosec built by
+# `go install ...@v2.28.0` reports `Version: dev` — the real version is
+# injected by ldflags in the release build only — so the binary cannot be asked
+# what it is, and a check would warn on every correctly-pinned machine until
+# people learned to ignore it. CI installs the pin explicitly, which is where
+# determinism actually matters.
+GOSEC_VERSION       := v2.28.0
+GOVULNCHECK_VERSION := v1.7.0
+
 # gosec exclusions (documented):
 #   G103: unsafe calls (test reflect/unsafe access for unexported fields)
 #   G104: unhandled errors (false positive on hash.Write)
@@ -128,7 +154,16 @@ BUILD_TAGS_FLAG := $(if $(strip $(BUILD_TAGS)),-tags "$(strip $(BUILD_TAGS))")
 print-build-tags: ## Print the default build tag set (for CI and tooling)
 	@echo '$(strip $(BUILD_TAGS))'
 
-.PHONY: print-build-tags
+# Same contract as print-build-tags: CI installs the scanners itself and reads
+# the versions from here, so the pin cannot drift out of sync with the Makefile
+# that documents it.
+print-gosec-version: ## Print the pinned gosec version (for CI)
+	@echo '$(GOSEC_VERSION)'
+
+print-govulncheck-version: ## Print the pinned govulncheck version (for CI)
+	@echo '$(GOVULNCHECK_VERSION)'
+
+.PHONY: print-build-tags print-gosec-version print-govulncheck-version
 .PHONY: build build-server build-cli build-frontend dev-web proto proto-tools
 .PHONY: build-cdsi build-svr2 build-key-transparency build-registration-service build-storage-service build-services
 
