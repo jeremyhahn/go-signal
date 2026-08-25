@@ -727,10 +727,10 @@ GOSEC_OUT ?=
 # findings and the upload would carry half the scan while reporting success.
 gosec: ## Run gosec security scanner, twice: repo tags, then with the integration tag
 	@echo "==> Running security scanner (tags: $(or $(GOSEC_TAGS),none), format: $(GOSEC_FMT))..."
-	$(GOSEC) -exclude=$(GOSEC_EXCLUDE) -exclude-generated -tags "$(GOSEC_TAGS)" \
+	$(GOSEC) -concurrency 4 -exclude=$(GOSEC_EXCLUDE) -exclude-generated -tags "$(GOSEC_TAGS)" \
 		-fmt=$(GOSEC_FMT) $(if $(GOSEC_OUT),-out=$(GOSEC_OUT) -stdout -verbose=text) ./...
 	@echo "==> Running security scanner (tags: integration,$(GOSEC_TAGS))..."
-	$(GOSEC) -exclude=$(GOSEC_EXCLUDE) -exclude-generated -tags "integration,$(GOSEC_TAGS)" ./...
+	$(GOSEC) -concurrency 4 -exclude=$(GOSEC_EXCLUDE) -exclude-generated -tags "integration,$(GOSEC_TAGS)" ./...
 
 vuln: ## Run govulncheck vulnerability scan
 	@echo "==> Running vulnerability check..."
