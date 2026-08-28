@@ -43,27 +43,48 @@ jobs:
       - name: Run go vet
         run: make vet
 
-      # Pinned to match software/templates/github-actions/ci.yml. devops.md §9
-      # forbids an UNDOCUMENTED pin, so here is the documentation:
+      # On GITEA this step is skipped: the runner image bakes golangci-lint at
+      # v2.12.2, which is this repo's pin exactly. Verified in the image rather
+      # than taken from its manifest — /usr/local/bin/golangci-lint self-reports
+      # 2.12.2 (#63).
       #
-      # v2.13.0 (released 2026-08-19T22:55Z) ships honnef.co/go/tools
-      # v0.8.0-rc.1 — a release candidate — whose nilness analyzer PANICS on the
-      # getsentry/sentry-go dependency:
+      # On GITHUB it still runs, because `ubuntu-latest` there selects GitHub's
+      # hosted image, which ships neither golangci-lint nor govulncheck. This
+      # workflow is deliberately dual-plane — see the server_url branches in
+      # the trivy job and on every upload-artifact step — so a step removed
+      # unconditionally would hold on one plane only. go-signal has no github
+      # remote today, but resting the removal on that would be a claim the
+      # repository does not enforce, which is the same defect as a suppression
+      # whose stated reason nothing checks.
+      #
+      # Installing it anyway was not free. The install is its own job step, so
+      # the sum.golang.org IPv6 failure fails the JOB whether or not the tool is
+      # already present; and on success actions/setup-go's bin directory
+      # precedes /usr/local/bin on PATH, so a freshly installed binary SHADOWS
+      # the baked one — a repo can believe the image pinned its tool while CI
+      # runs something else.
+      #
+      # The pin's reasoning still applies and now belongs to the image, so it is
+      # kept here rather than deleted with the step: v2.13.0 (2026-08-19) ships
+      # honnef.co/go/tools v0.8.0-rc.1, whose nilness analyzer PANICS on the
+      # getsentry/sentry-go dependency —
       #
       #   nilness: package "sentry": internal error: unhandled builtin recover
       #   Running error: can't run linter goanalysis_metalinter
       #
-      # That is a tool crash, not a finding: the job exits non-zero with zero
+      # — a tool crash, not a finding: the job exits non-zero with zero
       # file:line results, so the gate reads as "your code is bad" while saying
-      # nothing about the code. Measured on this branch AND on dev/main with
-      # none of this PR's changes — identical panic, so it is the toolchain.
-      # v2.12.2 ships honnef.co/go/tools v0.7.0 and is clean on both.
+      # nothing about the code. Measured on dev/main with no local changes, so
+      # it is the toolchain. v2.12.2 ships honnef.co/go/tools v0.7.0 and is
+      # clean.
       #
-      # UNPIN once upstream ships a golangci-lint carrying a non-RC
-      # honnef.co/go/tools that lints this module without panicking.
+      # A version change is now an image rebuild (infra/gitea/ci-runner), which
+      # is a reviewed change and deliberately not drift. Do not add an install
+      # back to move a version.
       #
       # .golangci.yml enables the §8 security linters.
-      - name: Install golangci-lint
+      - name: Install golangci-lint (GitHub-hosted runners only)
+        if: github.server_url == 'https://github.com'
         run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
 
       - name: Run golangci-lint
@@ -82,10 +103,30 @@ jobs:
       - name: Verify module integrity
         run: make modverify
 
-      # Pinned, and read from the Makefile so the version has one definition.
-      # At @latest these scanners decided whether the gate was red based on
-      # what upstream shipped that morning — red on a diff that touched
-      # nothing, or quietly narrower when a rule stopped firing.
+      # gosec IS still installed here, and it is the ONE tool in this workflow
+      # that is: the image bakes v2.29.0 while this repo pins v2.28.0
+      # (GOSEC_VERSION in the Makefile). Dropping this step would silently swap
+      # the scanner — a version change disguised as a CI cleanup, which is the
+      # opposite of what #63 exists to achieve.
+      #
+      # The divergence is temporary and tracked. v2.29.0 adds G703 and reports
+      # two findings on pkg/api/rest/handlers_static.go that v2.28.0 does not;
+      # they are real (#68), so the bump waits until they are fixed rather than
+      # landing with main red. Remove this step and align the Makefile pin to
+      # v2.29.0 in ONE commit once #68 lands, so the version change is visible
+      # in the diff rather than implied by a deletion.
+      #
+      # This step WORKS as a pin because actions/setup-go prepends the Go bin
+      # directory to PATH, so the v2.28.0 installed here shadows the baked
+      # v2.29.0 at /usr/local/bin/gosec. That shadowing is a hazard everywhere
+      # else — it silently un-pins a repo that thinks the image covers it — and
+      # is the one place in this workflow it is load-bearing. Verified in the
+      # image: `command -v gosec` there resolves to /usr/local/bin/gosec.
+      #
+      # Read from the Makefile so the version has one definition. At @latest
+      # these scanners decided whether the gate was red based on what upstream
+      # shipped that morning — red on a diff that touched nothing, or quietly
+      # narrower when a rule stopped firing.
       - name: Install gosec
         run: go install github.com/securego/gosec/v2/cmd/gosec@$(make -s print-gosec-version)
 
@@ -106,11 +147,17 @@ jobs:
           sarif_file: gosec.sarif
           category: gosec
 
+      # Skipped on Gitea: the image bakes govulncheck at v1.7.0, this repo's
+      # pin exactly, verified in the image rather than from its manifest. Still
+      # installed on GitHub, whose hosted image does not carry it — same
+      # dual-plane reasoning as the golangci-lint step above.
+      #
       # Pinning the binary does not freeze the findings, and must not: the
       # vulnerability database is fetched at run time, so a newly published CVE
       # against a dependency we call still turns this red. That is the gate
-      # working, not drift.
-      - name: Install govulncheck
+      # working, not drift — and it is why a baked scanner is not a stale one.
+      - name: Install govulncheck (GitHub-hosted runners only)
+        if: github.server_url == 'https://github.com'
         run: go install golang.org/x/vuln/cmd/govulncheck@$(make -s print-govulncheck-version)
 
       - name: Run govulncheck

@@ -58,9 +58,29 @@ GOVULNCHECK   := govulncheck
 # `go install ...@v2.28.0` reports `Version: dev` — the real version is
 # injected by ldflags in the release build only — so the binary cannot be asked
 # what it is, and a check would warn on every correctly-pinned machine until
-# people learned to ignore it. CI installs the pin explicitly, which is where
-# determinism actually matters.
+# people learned to ignore it. Ask the BINARY instead:
+# `go version -m $$(command -v gosec)` prints the module version, which is what
+# a shared GOBIN makes worth checking — this host's ~/go/bin/gosec is v2.29.0
+# while this pin is v2.28.0, so `make gosec` off a shared PATH is not
+# necessarily running the pin.
+#
+# WHY v2.28.0 AND NOT v2.29.0 (devops.md §9 wants the reason at the pin):
+# the ci-runner image bakes v2.29.0, and every other repo in the fleet matches
+# it. This one does not, TEMPORARILY and on purpose. v2.29.0 adds G703 and
+# reports two findings on pkg/api/rest/handlers_static.go that v2.28.0 does
+# not; measured on main at 64dfd95, same tree, both tag sets — v2.28.0 rc=0
+# with 0 issues, v2.29.0 rc=2. They are real, not a new rule misfiring on old
+# code: a symlink inside the static resources directory is served, and the
+# route is unauthenticated (#68).
+#
+# So the bump waits for #68 rather than landing with main red. When #68 is
+# fixed, move this to v2.29.0 and drop the "Install gosec" step in ci.yml in
+# ONE commit, so the version change is visible in the diff rather than implied
+# by a deletion. Until then ci.yml keeps that step precisely because dropping
+# it would resolve gosec from the image and change the scanner silently.
 GOSEC_VERSION       := v2.28.0
+
+# Matches the ci-runner image exactly, so ci.yml no longer installs it.
 GOVULNCHECK_VERSION := v1.7.0
 
 # gosec exclusions (documented):
