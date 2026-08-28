@@ -55,30 +55,31 @@ GOVULNCHECK   := govulncheck
 # is the gate working.
 #
 # There is deliberately no local version check for gosec. A gosec built by
-# `go install ...@v2.28.0` reports `Version: dev` — the real version is
-# injected by ldflags in the release build only — so the binary cannot be asked
-# what it is, and a check would warn on every correctly-pinned machine until
-# people learned to ignore it. Ask the BINARY instead:
-# `go version -m $$(command -v gosec)` prints the module version, which is what
-# a shared GOBIN makes worth checking — this host's ~/go/bin/gosec is v2.29.0
-# while this pin is v2.28.0, so `make gosec` off a shared PATH is not
-# necessarily running the pin.
+# `go install ...@vX.Y.Z` reports `Version: dev` — the real version is injected
+# by ldflags in the release build only — so the binary cannot be asked what it
+# is, and a check would warn on every correctly-pinned machine until people
+# learned to ignore it. Ask the BINARY instead:
+# `go version -m $$(command -v gosec)` prints the module version. That is worth
+# doing on any machine with a shared GOBIN, because `make gosec` resolves gosec
+# from PATH and will happily run whatever is first.
 #
-# WHY v2.28.0 AND NOT v2.29.0 (devops.md §9 wants the reason at the pin):
-# the ci-runner image bakes v2.29.0, and every other repo in the fleet matches
-# it. This one does not, TEMPORARILY and on purpose. v2.29.0 adds G703 and
-# reports two findings on pkg/api/rest/handlers_static.go that v2.28.0 does
-# not; measured on main at 64dfd95, same tree, both tag sets — v2.28.0 rc=0
-# with 0 issues, v2.29.0 rc=2. They are real, not a new rule misfiring on old
-# code: a symlink inside the static resources directory is served, and the
-# route is unauthenticated (#68).
+# v2.29.0 matches the ci-runner image, which is why ci.yml no longer installs
+# it on Gitea (devops.md §9 wants the reason at the pin, and "it is the version
+# the runner actually has" is the strongest one available).
 #
-# So the bump waits for #68 rather than landing with main red. When #68 is
-# fixed, move this to v2.29.0 and drop the "Install gosec" step in ci.yml in
-# ONE commit, so the version change is visible in the diff rather than implied
-# by a deletion. Until then ci.yml keeps that step precisely because dropping
-# it would resolve gosec from the image and change the scanner silently.
-GOSEC_VERSION       := v2.28.0
+# This pin was v2.28.0 until #68. The divergence was deliberate, not drift:
+# v2.29.0 adds G703 and reported two findings on
+# pkg/api/rest/handlers_static.go that v2.28.0 did not — measured on main at
+# 64dfd95, same tree, both tag sets, v2.28.0 rc=0 / v2.29.0 rc=2 — and they
+# were real, not a new rule misfiring on old code. A symlink inside the static
+# resources directory was served on an unauthenticated route. #68 fixed that;
+# re-measured on main at d041cc45, both versions now report 0 issues on both
+# tag sets, so the bump lands green rather than reddening the trunk.
+#
+# The ordering is the point and is worth keeping: the deliberate bump surfaced
+# a live defect, where drifting to the same version would have surfaced it as a
+# mystery red on whichever innocent PR ran next.
+GOSEC_VERSION       := v2.29.0
 
 # Matches the ci-runner image exactly, so ci.yml no longer installs it.
 GOVULNCHECK_VERSION := v1.7.0

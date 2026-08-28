@@ -103,32 +103,61 @@ jobs:
       - name: Verify module integrity
         run: make modverify
 
-      # gosec IS still installed here, and it is the ONE tool in this workflow
-      # that is: the image bakes v2.29.0 while this repo pins v2.28.0
-      # (GOSEC_VERSION in the Makefile). Dropping this step would silently swap
-      # the scanner — a version change disguised as a CI cleanup, which is the
-      # opposite of what #63 exists to achieve.
+      # Skipped on Gitea: GOSEC_VERSION is now v2.29.0, which is what the
+      # ci-runner image bakes, so this repo no longer diverges from it and the
+      # step has nothing left to do there. Still installed on GitHub, whose
+      # hosted image does not carry gosec — same dual-plane reasoning as the
+      # golangci-lint and govulncheck steps.
       #
-      # The divergence is temporary and tracked. v2.29.0 adds G703 and reports
-      # two findings on pkg/api/rest/handlers_static.go that v2.28.0 does not;
-      # they are real (#68), so the bump waits until they are fixed rather than
-      # landing with main red. Remove this step and align the Makefile pin to
-      # v2.29.0 in ONE commit once #68 lands, so the version change is visible
-      # in the diff rather than implied by a deletion.
+      # This step used to be the ONE install kept on both planes, because the
+      # pin was v2.28.0 against the image's v2.29.0 and dropping it would have
+      # swapped the scanner silently. That gap closed with #68: the two G703
+      # findings v2.29.0 reported are fixed, and both versions now measure 0
+      # issues on both tag sets, so the pin was moved and the step narrowed in
+      # ONE commit — the version change is visible in the diff rather than
+      # implied by a deletion.
       #
-      # This step WORKS as a pin because actions/setup-go prepends the Go bin
-      # directory to PATH, so the v2.28.0 installed here shadows the baked
-      # v2.29.0 at /usr/local/bin/gosec. That shadowing is a hazard everywhere
-      # else — it silently un-pins a repo that thinks the image covers it — and
-      # is the one place in this workflow it is load-bearing. Verified in the
-      # image: `command -v gosec` there resolves to /usr/local/bin/gosec.
+      # Worth keeping in mind if a version ever diverges again: actions/setup-go
+      # prepends the Go bin directory to PATH, so an install here SHADOWS
+      # /usr/local/bin/gosec. That is a hazard when unintended — it silently
+      # un-pins a repo that believes the image covers it — and was load-bearing
+      # while the pin differed.
       #
       # Read from the Makefile so the version has one definition. At @latest
       # these scanners decided whether the gate was red based on what upstream
       # shipped that morning — red on a diff that touched nothing, or quietly
       # narrower when a rule stopped firing.
-      - name: Install gosec
+      - name: Install gosec (GitHub-hosted runners only)
+        if: github.server_url == 'https://github.com'
         run: go install github.com/securego/gosec/v2/cmd/gosec@$(make -s print-gosec-version)
+
+      # A pin is only worth something if the binary that RUNS is the pin, and
+      # on Gitea nothing installs gosec any more — the resolution rests entirely
+      # on PATH. actions/setup-go prepends the Go bin directory, which is exactly
+      # where a stray install would land and silently shadow /usr/local/bin/gosec.
+      # Raised in review of this change; this turns the assumption into a
+      # checked property rather than a comment asserting one.
+      #
+      # `go version -m` reads the MODULE version, which is present however the
+      # binary was produced — `go install` on GitHub, the image's release build
+      # on Gitea. The SELF-reported version cannot be used: a `go install` build
+      # reports "dev", which is the unattributable-scan problem in the first
+      # place.
+      #
+      # Verified to fail: pointed at a v2.28.0 build with the pin at v2.29.0,
+      # this exits 1 and names both versions.
+      - name: Verify the gosec that will run matches the pin
+        run: |
+          want="$(make -s print-gosec-version)"
+          bin="$(command -v gosec)" || { echo "gosec is not on PATH"; exit 1; }
+          got="$(go version -m "$bin" | awk '$1 == "mod" && $2 == "github.com/securego/gosec/v2" { print $3 }')"
+          echo "gosec:  $bin"
+          echo "  want: $want"
+          echo "  got:  ${got:-<unreadable>}"
+          if [ "$got" != "$want" ]; then
+            echo "gosec version mismatch: the binary on PATH is not the pinned one" >&2
+            exit 1
+          fi
 
       # Through the Make target, not a restatement of its flags. This job used
       # to spell out the exclude list and omit the build tags, so the scan CI
