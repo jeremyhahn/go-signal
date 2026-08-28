@@ -100,13 +100,32 @@ linters:
         - name: increment-decrement
           severity: warning
     gosec:
+      # G703 is DELIBERATELY NOT LISTED HERE. It used to be, as
+      # "Path traversal (paths constructed from validated config)" — which was
+      # false: the only site it fired on built its path from
+      # r.PathValue("path"), a request value, and that handler served files
+      # outside its root (#68). A blanket suppression whose stated reason is
+      # false at even one site is worse than none, because it silences the rule
+      # everywhere while reading as though someone checked. Measured after the
+      # fix: with G703 unexcluded, `make lint` reports 0 issues on both tag
+      # sets, so nothing here needed the exclusion. Do not re-add it; annotate
+      # the one line instead, as handlers_static.go does, with a reason the
+      # code enforces.
       excludes:
         - G115  # Integer overflow in byte conversions (intentional low-level bit manipulation)
         - G117  # Exported struct fields matching secret patterns (legitimate auth/credential types)
         - G204
+        # G304 is LOAD-BEARING and its justification is UNVERIFIED. Measured:
+        # removing it surfaces 10 findings across pkg/attachments/store_file.go,
+        # pkg/config/config.go and pkg/stickers/manifest.go, so it cannot simply
+        # be dropped the way G703 was. Of those, only store_file.go was looked
+        # at while fixing #68: its HTTP caller validates segment-wise via
+        # isSafeCDNKey, so it is not #68's class — but FileStore itself enforces
+        # nothing and relies entirely on every caller. The remaining sites are
+        # unaudited. Recorded as unverified rather than given a justification
+        # nobody has established, which is the mistake G703 above encodes.
         - G304
         - G602  # Slice bounds check (false positive on validated indices)
-        - G703  # Path traversal (paths constructed from validated config)
         - G704  # SSRF via taint analysis (intentional HTTP requests)
         - G122  # Filesystem TOCTOU in WalkDir callbacks (internal storage paths, not user-supplied)
     forbidigo:

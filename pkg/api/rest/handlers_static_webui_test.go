@@ -107,14 +107,210 @@ func TestHandleStaticResource_DirectoryTraversal(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /static/{path...}", s.handleStaticResource)
 
-	// A path like "../../etc/passwd" — after filepath.Clean it contains ".."
 	req := httptest.NewRequest(http.MethodGet, "/static/../../etc/passwd", nil)
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 
-	// Either 400 (path contains ..) or 404 (outside root) is acceptable.
-	if rr.Code == http.StatusOK {
-		t.Errorf("directory traversal should not return 200")
+	// This exercises the route COMPOSITION, and the handler is never reached:
+	// ServeMux normalises the path and answers 307 to /etc/passwd before
+	// PathValue exists. Measured, not assumed — an earlier version of this
+	// test asserted only "not 200" and had been passing on that redirect,
+	// which means it would equally have passed against a handler with no guard
+	// at all.
+	//
+	// So the assertion stays deliberately broad — no 2xx, no file content —
+	// because the specific code here is net/http's behaviour, not this
+	// repository's contract, and pinning 307 would fail on a stdlib change
+	// that broke nothing. The measured value is recorded above so a change is
+	// visible to a reader even though the test tolerates it.
+	// TestHandleStaticResource_TraversalInPathValueIsRefused is the one with
+	// teeth: it puts the hostile value where the handler actually reads it.
+	if rr.Code/100 == 2 {
+		t.Errorf("directory traversal returned %d: %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "root:") {
+		t.Errorf("passwd content reached the response: %q", rr.Body.String())
+	}
+}
+
+// A directory inside the root is refused, and refused without listing it.
+// http.ServeFileFS renders a directory listing when handed a directory, so
+// discarding the FileInfo from root.Stat would hand an unauthenticated caller
+// an index of the whole resources tree.
+func TestHandleStaticResource_DirectoryIsNotListed(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "emoji"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "emoji", "secret-name.json"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	s := newTestServer(t)
+	s.staticResourcesDir = root
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /static/{path...}", s.handleStaticResource)
+
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/static/emoji", nil))
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("a directory request: expected 404, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "secret-name.json") {
+		t.Errorf("the directory listing was served: %q", rr.Body.String())
+	}
+}
+
+// TestHandleStaticResource_SymlinkOutsideRootIsRefused is the regression test
+// for #68, and it is the exact probe that reproduced it: before the fix this
+// returned 200 with the contents of a file outside the resources root.
+//
+// A symlink is the case lexical containment cannot see. filepath.Abs does not
+// resolve symlinks, so the old check compared a lexical path that stayed
+// inside the root against reads that followed a physical one that did not.
+func TestHandleStaticResource_SymlinkOutsideRootIsRefused(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(secret, []byte("SECRET-OUTSIDE-ROOT"), 0o600); err != nil {
+		t.Fatalf("write outside file: %v", err)
+	}
+	if err := os.Symlink(secret, filepath.Join(root, "link.txt")); err != nil {
+		t.Skipf("symlinks unsupported on this platform: %v", err)
+	}
+
+	s := newTestServer(t)
+	s.staticResourcesDir = root
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /static/{path...}", s.handleStaticResource)
+
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/static/link.txt", nil))
+
+	// The exact status, not merely "not 200": os.Root refuses the escape at
+	// Stat, so the answer is 404. Accepting any non-200 would also accept a
+	// 301, a 403 from some future guard, or a 500 — three different bugs
+	// wearing the same green.
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("a symlink out of the resources root: expected 404, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "SECRET-OUTSIDE-ROOT") {
+		t.Errorf("content from outside the resources root reached the response: %q", rr.Body.String())
+	}
+}
+
+// The sibling-directory class, reached the only way a request can reach it:
+// a relative symlink. The old containment used strings.HasPrefix without a
+// separator boundary, so "/…/res-evil/x" counted as inside "/…/res".
+func TestHandleStaticResource_SymlinkToSiblingDirectoryIsRefused(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "res")
+	sibling := filepath.Join(base, "res-evil")
+	for _, d := range []string{root, sibling} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", d, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(sibling, "secret.txt"), []byte("SIBLING-SECRET"), 0o600); err != nil {
+		t.Fatalf("write sibling file: %v", err)
+	}
+	if err := os.Symlink("../res-evil/secret.txt", filepath.Join(root, "link.txt")); err != nil {
+		t.Skipf("symlinks unsupported on this platform: %v", err)
+	}
+
+	s := newTestServer(t)
+	s.staticResourcesDir = root
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /static/{path...}", s.handleStaticResource)
+
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/static/link.txt", nil))
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("a symlink into a sibling directory: expected 404, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "SIBLING-SECRET") {
+		t.Errorf("sibling-directory content reached the response: %q", rr.Body.String())
+	}
+}
+
+// The handler's own guard, tested without the mux. ServeMux normalises the
+// request path before it ever reaches PathValue, so a traversal written into
+// the URL may be cleaned away by the router rather than refused by the
+// handler — which makes a mux-driven test agree with a handler that has no
+// guard at all. SetPathValue puts the hostile value where the handler reads
+// it.
+func TestHandleStaticResource_TraversalInPathValueIsRefused(t *testing.T) {
+	s := newTestServer(t)
+	s.staticResourcesDir = t.TempDir()
+
+	for _, p := range []string{"../../etc/passwd", "..", "/etc/passwd", "a/../../b"} {
+		t.Run(p, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/static/x", nil)
+			req.SetPathValue("path", p)
+			rr := httptest.NewRecorder()
+			s.handleStaticResource(rr, req)
+
+			if rr.Code != http.StatusForbidden {
+				t.Errorf("path %q: expected 403, got %d: %s", p, rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+// Containment must fail CLOSED when the root cannot be opened. The old code
+// discarded both filepath.Abs errors, leaving absRoot empty — and
+// HasPrefix(anything, "") is true, so an unresolvable root switched the check
+// off instead of turning the request away.
+func TestHandleStaticResource_UnopenableRootFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	notADir := filepath.Join(dir, "regular-file")
+	if err := os.WriteFile(notADir, []byte("not a directory"), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	s := newTestServer(t)
+	s.staticResourcesDir = notADir
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /static/{path...}", s.handleStaticResource)
+
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/static/anything.txt", nil))
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("an unopenable resources root: expected 500, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "not a directory") {
+		t.Errorf("the root file's own contents were served: %q", rr.Body.String())
+	}
+}
+
+// A file genuinely inside the root is still served — the containment fix is
+// worthless if it also refuses the traffic the route exists for, and a
+// negative-only test suite would not notice.
+func TestHandleStaticResource_NestedFileIsStillServed(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "emoji", "v1"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "emoji", "v1", "data.json"), []byte(`{"ok":true}`), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	s := newTestServer(t)
+	s.staticResourcesDir = root
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /static/{path...}", s.handleStaticResource)
+
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/static/emoji/v1/data.json", nil))
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for a file inside the root, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `{"ok":true}`) {
+		t.Errorf("expected the file contents, got %q", rr.Body.String())
 	}
 }
 
