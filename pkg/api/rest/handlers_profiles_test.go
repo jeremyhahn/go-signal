@@ -6,10 +6,14 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jeremyhahn/go-libsignal/pkg/zkgroup"
@@ -17,6 +21,8 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/accounts"
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	"github.com/jeremyhahn/go-signal/pkg/profiles"
+	"github.com/jeremyhahn/go-signal/pkg/service"
+	"github.com/jeremyhahn/go-signal/pkg/storage/memory"
 )
 
 // validProfileCredentialRequest produces a hex-encoded, wire-valid
@@ -681,7 +687,7 @@ func TestHandleSetProfile_AvatarUploadNoCDN(t *testing.T) {
 // directly on a server without CDN configuration.
 func TestBuildAvatarUploadAttributes_NoCDN(t *testing.T) {
 	s := newTestServer(t)
-	_, err := s.buildAvatarUploadAttributes("some-uuid")
+	_, err := s.buildAvatarUploadAttributes()
 	if err == nil {
 		t.Fatal("expected error when CDN not configured")
 	}
@@ -767,12 +773,17 @@ func TestBuildAvatarUploadAttributes_WithCDN(t *testing.T) {
 		SecretKey: secrets.MustNewSecureString("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
 	}
 
-	attrs, err := s.buildAvatarUploadAttributes("test-uuid-1234")
+	attrs, err := s.buildAvatarUploadAttributes()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if attrs.Key != "profiles/test-uuid-1234" {
-		t.Errorf("expected key profiles/test-uuid-1234, got %q", attrs.Key)
+	// The object name is random (Java parity), so assert the shape rather
+	// than a fixed value — and assert it is not derived from the account.
+	if !strings.HasPrefix(attrs.Key, "profiles/") {
+		t.Errorf("expected a profiles/ prefixed key, got %q", attrs.Key)
+	}
+	if strings.Contains(attrs.Key, testAccountUUID) {
+		t.Errorf("avatar object name must not embed the account UUID: %q", attrs.Key)
 	}
 	if attrs.Algorithm != "AWS4-HMAC-SHA256" {
 		t.Errorf("expected AWS4-HMAC-SHA256 algorithm, got %q", attrs.Algorithm)
@@ -785,5 +796,415 @@ func TestBuildAvatarUploadAttributes_WithCDN(t *testing.T) {
 	}
 	if attrs.Signature == "" {
 		t.Error("expected non-empty signature")
+	}
+}
+
+// --------------------------------------------------------------------------
+// Avatar persistence (Java AvatarChange semantics)
+// --------------------------------------------------------------------------
+
+// setProfileWithAvatarFlags issues PUT /v1/profile for the test account and
+// returns the recorder, so callers can assert both status and body.
+func setProfileWithAvatarFlags(t *testing.T, s *Server, version string, avatar, sameAvatar bool) *httptest.ResponseRecorder {
+	t.Helper()
+	// Profile fields are encrypted blobs with exact byte sizes: name 81,
+	// commitment 97 (the Java @ExactlySize constraints).
+	body := fmt.Sprintf(`{"version":%q,"name":%q,"commitment":%q,"avatar":%t,"sameAvatar":%t}`,
+		version,
+		base64.StdEncoding.EncodeToString(make([]byte, 81)),
+		base64.StdEncoding.EncodeToString(make([]byte, 97)),
+		avatar, sameAvatar)
+	req := httptest.NewRequest(http.MethodPut, "/v1/profile", strings.NewReader(body))
+	req.SetBasicAuth(testAccountUUID, testAuthToken)
+	rr := httptest.NewRecorder()
+	s.httpServer.Handler.ServeHTTP(rr, req)
+	return rr
+}
+
+// A new upload must store the same object name the upload form is signed for,
+// otherwise the client uploads to a key the server cannot serve back.
+func TestSetProfile_AvatarUploadPersistsTheSignedKey(t *testing.T) {
+	s, _ := newTestServerWithAvatarCDN(t)
+
+	rr := setProfileWithAvatarFlags(t, s, "v1", true, false)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var attrs ProfileAvatarUploadAttributes
+	if err := json.Unmarshal(rr.Body.Bytes(), &attrs); err != nil {
+		t.Fatalf("unmarshal upload attributes: %v", err)
+	}
+	if attrs.Key == "" {
+		t.Fatal("upload attributes carry no key")
+	}
+
+	stored, err := s.profiles.Get(context.Background(), testAccountUUID, "v1")
+	if err != nil {
+		t.Fatalf("get stored profile: %v", err)
+	}
+	if stored.Avatar != attrs.Key {
+		t.Errorf("stored avatar = %q, want the signed key %q", stored.Avatar, attrs.Key)
+	}
+}
+
+// The UNCHANGED case: {avatar:true, sameAvatar:true} at the version that
+// already holds the avatar keeps it. Both flags are required — Java's
+// CreateProfileRequest.getAvatarChange reads `avatar` first, so sameAvatar
+// alone is CLEAR, not UNCHANGED (TestSetProfile_SameAvatarWithoutAvatarClears).
+//
+// The version is the one being written, matching
+// ProfileController.setProfile's profilesManager.get(uuid, request.version()).
+// A Signal profile version is a function of the profile key, so a client that
+// only edits its name reuses it and lands here.
+func TestSetProfile_SameAvatarKeepsThisVersionsKey(t *testing.T) {
+	s, _ := newTestServerWithAvatarCDN(t)
+
+	rr := setProfileWithAvatarFlags(t, s, "v1", true, false)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("first set: expected 200, got %d", rr.Code)
+	}
+	var attrs ProfileAvatarUploadAttributes
+	if err := json.Unmarshal(rr.Body.Bytes(), &attrs); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if rr := setProfileWithAvatarFlags(t, s, "v1", true, true); rr.Code != http.StatusOK {
+		t.Fatalf("sameAvatar set: expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	stored, err := s.profiles.Get(context.Background(), testAccountUUID, "v1")
+	if err != nil {
+		t.Fatalf("get stored profile: %v", err)
+	}
+	if stored.Avatar != attrs.Key {
+		t.Errorf("sameAvatar stored %q, want the previous key %q", stored.Avatar, attrs.Key)
+	}
+}
+
+// {avatar:false, sameAvatar:true} is CLEAR, not UNCHANGED. Java decides on
+// `avatar` before it ever looks at sameAvatar, so a client that asks for no
+// avatar gets none whatever else it sends. Resolving sameAvatar first instead
+// keeps the avatar of a request that asked to drop it.
+func TestSetProfile_SameAvatarWithoutAvatarClears(t *testing.T) {
+	s, _ := newTestServerWithAvatarCDN(t)
+
+	if rr := setProfileWithAvatarFlags(t, s, "v1", true, false); rr.Code != http.StatusOK {
+		t.Fatalf("first set: expected 200, got %d", rr.Code)
+	}
+	if rr := setProfileWithAvatarFlags(t, s, "v1", false, true); rr.Code != http.StatusOK {
+		t.Fatalf("clear set: expected 200, got %d", rr.Code)
+	}
+
+	stored, err := s.profiles.Get(context.Background(), testAccountUUID, "v1")
+	if err != nil {
+		t.Fatalf("get stored profile: %v", err)
+	}
+	if stored.Avatar != "" {
+		t.Errorf("avatar = %q, want it cleared", stored.Avatar)
+	}
+}
+
+// UNCHANGED resolves against the version being written, so a version that
+// carries no avatar yet has nothing to keep — even when another version does.
+// A profile version changes only when the profile key rotates, and an avatar
+// encrypted under the old key is not one the new version can serve.
+func TestSetProfile_SameAvatarAtANewVersionKeepsNothing(t *testing.T) {
+	s, _ := newTestServerWithAvatarCDN(t)
+
+	if rr := setProfileWithAvatarFlags(t, s, "v1", true, false); rr.Code != http.StatusOK {
+		t.Fatalf("first set: expected 200, got %d", rr.Code)
+	}
+	if rr := setProfileWithAvatarFlags(t, s, "v2", true, true); rr.Code != http.StatusOK {
+		t.Fatalf("sameAvatar at a new version: expected 200, got %d", rr.Code)
+	}
+
+	stored, err := s.profiles.Get(context.Background(), testAccountUUID, "v2")
+	if err != nil {
+		t.Fatalf("get stored profile: %v", err)
+	}
+	if stored.Avatar != "" {
+		t.Errorf("v2 avatar = %q, want empty: v2 never had one", stored.Avatar)
+	}
+}
+
+// Only a key this server issued is carried forward. Java applies the same
+// startsWith("profiles/") filter, and the prefix has one definition
+// (avatarObjectPrefix) shared with the generator so the two cannot drift.
+func TestSetProfile_SameAvatarIgnoresAKeyOutsideTheProfilesPrefix(t *testing.T) {
+	s, _ := newTestServerWithAvatarCDN(t)
+
+	seeded := &profiles.Profile{
+		UUID:       testAccountUUID,
+		Version:    "v1",
+		Name:       make([]byte, 81),
+		Commitment: make([]byte, 97),
+		Avatar:     "../../etc/passwd",
+	}
+	if err := s.profiles.Set(context.Background(), seeded); err != nil {
+		t.Fatalf("seed profile: %v", err)
+	}
+
+	if rr := setProfileWithAvatarFlags(t, s, "v1", true, true); rr.Code != http.StatusOK {
+		t.Fatalf("sameAvatar set: expected 200, got %d", rr.Code)
+	}
+
+	stored, err := s.profiles.Get(context.Background(), testAccountUUID, "v1")
+	if err != nil {
+		t.Fatalf("get stored profile: %v", err)
+	}
+	if stored.Avatar != "" {
+		t.Errorf("avatar = %q, want empty: it is not under %q", stored.Avatar, avatarObjectPrefix)
+	}
+}
+
+// gatedProfileService holds a request inside ProfileService.Get so a test can
+// stop it between the sameAvatar read and the write that follows — the
+// read-modify-write window. It delegates to the real service, so both requests
+// run production code end to end; only the scheduling is forced.
+//
+// The gate is armed explicitly rather than firing on the first Get: the test's
+// own assertions and the GET handler call Get too, and a gate that triggers on
+// whichever call happens to arrive first would close on the wrong one.
+type gatedProfileService struct {
+	service.ProfileService
+	armed   atomic.Bool
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (g *gatedProfileService) Get(ctx context.Context, uuid, version string) (*profiles.Profile, error) {
+	p, err := g.ProfileService.Get(ctx, uuid, version)
+	g.hold()
+	return p, err
+}
+
+// GetLatest is gated too, and deliberately: it is the read this path used to
+// perform. A gate on Get alone would let a regression to GetLatest slip past
+// the read unheld, and the test would then fail on "never reached its read"
+// instead of on the key it wrote — red either way, but naming the wrong thing.
+func (g *gatedProfileService) GetLatest(ctx context.Context, uuid string) (*profiles.Profile, error) {
+	p, err := g.ProfileService.GetLatest(ctx, uuid)
+	g.hold()
+	return p, err
+}
+
+func (g *gatedProfileService) hold() {
+	if g.armed.CompareAndSwap(true, false) {
+		close(g.entered)
+		<-g.release
+	}
+}
+
+// A sameAvatar request paused between its read and its write must still write
+// its OWN version's key. Reading the latest version instead made it adopt
+// whatever version happened to be latest at the instant it read — so a
+// concurrent upload at another version would be copied onto this one.
+//
+// What this does NOT establish: the two requests remain a read-modify-write
+// with no compare-and-swap, so which of them ends up as the account's latest
+// marker is still decided by write order. Closing that needs an atomic
+// primitive pkg/store.KVClient does not have; it is tracked separately.
+func TestSetProfile_ConcurrentSameAvatarKeepsItsOwnVersionsKey(t *testing.T) {
+	s, _ := newTestServerWithAvatarCDN(t)
+
+	rr := setProfileWithAvatarFlags(t, s, "v1", true, false)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("seed v1: expected 200, got %d", rr.Code)
+	}
+	var v1Attrs ProfileAvatarUploadAttributes
+	if err := json.Unmarshal(rr.Body.Bytes(), &v1Attrs); err != nil {
+		t.Fatalf("unmarshal v1: %v", err)
+	}
+
+	if rr := setProfileWithAvatarFlags(t, s, "v2", true, false); rr.Code != http.StatusOK {
+		t.Fatalf("seed v2: expected 200, got %d", rr.Code)
+	}
+
+	gate := &gatedProfileService{
+		ProfileService: s.profiles,
+		entered:        make(chan struct{}),
+		release:        make(chan struct{}),
+	}
+	s.profiles = gate
+	gate.armed.Store(true)
+
+	// A: keep v1's avatar. It reads, then parks inside the gate.
+	aDone := make(chan int, 1)
+	go func() { aDone <- setProfileWithAvatarFlags(t, s, "v1", true, true).Code }()
+
+	select {
+	case <-gate.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("request A never reached its sameAvatar read")
+	}
+
+	// B: a fresh upload at v2, committed while A is parked. It resolves
+	// avatarUpdate, so it takes no Get and the gate does not hold it.
+	rr = setProfileWithAvatarFlags(t, s, "v2", true, false)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("request B: expected 200, got %d", rr.Code)
+	}
+	var v2Attrs ProfileAvatarUploadAttributes
+	if err := json.Unmarshal(rr.Body.Bytes(), &v2Attrs); err != nil {
+		t.Fatalf("unmarshal v2: %v", err)
+	}
+
+	close(gate.release)
+	select {
+	case code := <-aDone:
+		if code != http.StatusOK {
+			t.Fatalf("request A: expected 200, got %d", code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("request A never completed after release")
+	}
+
+	storedV1, err := s.profiles.Get(context.Background(), testAccountUUID, "v1")
+	if err != nil {
+		t.Fatalf("get v1: %v", err)
+	}
+	if storedV1.Avatar != v1Attrs.Key {
+		t.Errorf("v1 avatar = %q, want its own key %q (adopting another version's key is the defect)",
+			storedV1.Avatar, v1Attrs.Key)
+	}
+	if storedV1.Avatar == v2Attrs.Key {
+		t.Errorf("v1 adopted v2's key %q", v2Attrs.Key)
+	}
+
+	storedV2, err := s.profiles.Get(context.Background(), testAccountUUID, "v2")
+	if err != nil {
+		t.Fatalf("get v2: %v", err)
+	}
+	if storedV2.Avatar != v2Attrs.Key {
+		t.Errorf("v2 avatar = %q, want the key its own upload was signed for %q", storedV2.Avatar, v2Attrs.Key)
+	}
+}
+
+func TestSetProfile_NoAvatarClearsTheKey(t *testing.T) {
+	s, _ := newTestServerWithAvatarCDN(t)
+
+	if rr := setProfileWithAvatarFlags(t, s, "v1", true, false); rr.Code != http.StatusOK {
+		t.Fatalf("first set: expected 200, got %d", rr.Code)
+	}
+	if rr := setProfileWithAvatarFlags(t, s, "v2", false, false); rr.Code != http.StatusOK {
+		t.Fatalf("clear set: expected 200, got %d", rr.Code)
+	}
+
+	stored, err := s.profiles.Get(context.Background(), testAccountUUID, "v2")
+	if err != nil {
+		t.Fatalf("get stored profile: %v", err)
+	}
+	if stored.Avatar != "" {
+		t.Errorf("avatar should be cleared, got %q", stored.Avatar)
+	}
+}
+
+// Two uploads must not reuse an object name — a deterministic name derived
+// from the account would make every user's avatar object guessable.
+func TestBuildAvatarUploadAttributes_KeysAreUnique(t *testing.T) {
+	s := newTestServer(t)
+	s.avatarCDN = AvatarCDNConfig{
+		Bucket:    "my-bucket",
+		Region:    "eu-west-1",
+		AccessKey: "AKIAIOSFODNN7EXAMPLE",
+		SecretKey: secrets.MustNewSecureString("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
+	}
+
+	first, err := s.buildAvatarUploadAttributes()
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	second, err := s.buildAvatarUploadAttributes()
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if first.Key == second.Key {
+		t.Errorf("two uploads produced the same object name %q", first.Key)
+	}
+}
+
+// failingGetStore wraps a real store and makes Get fail with an error that is
+// NOT "not found" — a database outage, a cancelled context, an unreadable row.
+// Set still works, so a handler that ignored the read error would visibly
+// persist the wrong thing.
+type failingGetStore struct {
+	profiles.ProfileStore
+	err error
+}
+
+func (f *failingGetStore) Get(context.Context, string, string) (*profiles.Profile, error) {
+	return nil, f.err
+}
+
+// TestSetProfile_SameAvatarFailsClosedWhenThePreviousReadFails is the
+// regression test for a fail-open in the sameAvatar path: every read error
+// was collapsed into an empty avatar key, which the handler then persisted
+// while returning 200. A request that explicitly asked to KEEP its avatar
+// would delete it during a transient backend failure, and report success for
+// doing so.
+//
+// Reverting previousAvatarKey to swallow the error makes this fail: the
+// response becomes 200 and the stored avatar becomes "".
+func TestSetProfile_SameAvatarFailsClosedWhenThePreviousReadFails(t *testing.T) {
+	s, _ := newTestServerWithAvatarCDN(t)
+
+	// Establish a real avatar first, through the working store.
+	rr := setProfileWithAvatarFlags(t, s, "v1", true, false)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("first set: expected 200, got %d", rr.Code)
+	}
+	var attrs ProfileAvatarUploadAttributes
+	if err := json.Unmarshal(rr.Body.Bytes(), &attrs); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// Now make the previous-avatar read fail.
+	backing := memory.NewMemoryProfileStore()
+	if err := backing.Set(context.Background(), &profiles.Profile{
+		UUID: testAccountUUID, Version: "v1", Avatar: attrs.Key,
+	}); err != nil {
+		t.Fatalf("seed backing store: %v", err)
+	}
+	failing := &failingGetStore{
+		ProfileStore: backing,
+		err:          errors.New("database is unavailable"),
+	}
+	s.profiles = profiles.NewProfilesManager(failing)
+
+	rr = setProfileWithAvatarFlags(t, s, "v1", true, true)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 when the previous avatar cannot be read, got %d: %s",
+			rr.Code, rr.Body.String())
+	}
+
+	// And nothing was overwritten: a failed read must not become a successful
+	// write that clears the avatar.
+	stored, err := backing.Get(context.Background(), testAccountUUID, "v1")
+	if err != nil {
+		t.Fatalf("the seeded profile disappeared: %v", err)
+	}
+	if stored.Avatar != attrs.Key {
+		t.Errorf("stored avatar = %q, want it untouched at %q", stored.Avatar, attrs.Key)
+	}
+}
+
+// A genuinely absent previous profile is not an error — sameAvatar on an
+// account with no profile yet resolves to no avatar and still succeeds.
+func TestSetProfile_SameAvatarWithNoPreviousProfileSucceeds(t *testing.T) {
+	s, _ := newTestServerWithAvatarCDN(t)
+
+	rr := setProfileWithAvatarFlags(t, s, "v1", true, true)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	stored, err := s.profiles.Get(context.Background(), testAccountUUID, "v1")
+	if err != nil {
+		t.Fatalf("get stored profile: %v", err)
+	}
+	if stored.Avatar != "" {
+		t.Errorf("avatar = %q, want empty", stored.Avatar)
 	}
 }

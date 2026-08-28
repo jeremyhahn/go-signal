@@ -640,6 +640,21 @@ func (c *Config) IsProduction() bool {
 // shipped in configs/signal-server.yml. It must never reach production.
 const testCallingZKSecret = "test-calling-zk-secret-32bytes!!"
 
+// devCDNAccessKey and devCDNSecretKey are the placeholder CDN credentials
+// shipped in configs/signal-server.yml so the development stack can sign an
+// avatar upload form. They authenticate against nothing and must never reach
+// production.
+const (
+	devCDNAccessKey = "dev-access-key"
+	// #nosec G101 -- this is the literal placeholder shipped in
+	// configs/signal-server.yml, not a credential: it authenticates against
+	// nothing, and validateProduction below rejects it by value so it cannot
+	// reach a production deployment. Naming it here is what makes that
+	// rejection possible, since the placeholders are non-empty and a presence
+	// check would pass them.
+	devCDNSecretKey = "dev-secret-key"
+)
+
 // validateProduction enforces a fail-closed security baseline. Every
 // development/test affordance that would silently weaken a real
 // deployment is a hard error here; all violations are collected so an
@@ -684,13 +699,27 @@ func (c *Config) validateProduction() error {
 	// Profile-key / group ZK credentials must use a provisioned server
 	// secret. Without it certificates.Manager issues an HMAC placeholder
 	// that is not a valid zkgroup credential.
-	if !c.ZKConfig.Enabled || secretEmpty(c.ZKConfig.ServerSecret) {
+	if !c.ZKConfig.Enabled || c.ZKConfig.ServerSecret.IsEmpty() {
 		v = append(v, "zkConfig must be enabled with a non-empty serverSecret in production (otherwise profile-key credentials are an insecure stub)")
 	}
-	if secretEmpty(c.CallingZKConfig.ServerSecret) {
+	if c.CallingZKConfig.ServerSecret.IsEmpty() {
 		v = append(v, "callingZkConfig.serverSecret must be set in production")
-	} else if c.CallingZKConfig.ServerSecret.Plaintext() == testCallingZKSecret {
+	} else if c.CallingZKConfig.ServerSecret.Equals(testCallingZKSecret) {
 		v = append(v, "callingZkConfig.serverSecret is the well-known development secret and must be replaced in production")
+	}
+
+	// The development config ships placeholder CDN credentials so the
+	// integration stack can sign an avatar upload form. They authenticate
+	// against nothing, so reaching production with them means every avatar
+	// upload fails at the CDN with a signature error.
+	// Region is required alongside the rest: AvatarCDNConfig.Enabled() checks
+	// bucket, region AND access key, so a config missing only the region
+	// fails closed at runtime with a 503 on every avatar upload rather than
+	// at boot where an operator would see it.
+	if c.CDN.AccessKey.IsEmpty() || c.CDN.SecretKey.IsEmpty() || c.CDN.Bucket == "" || c.CDN.Region == "" {
+		v = append(v, "cdn.bucket, cdn.region, cdn.accessKey and cdn.secretKey are required in production (avatar and attachment uploads are signed with them)")
+	} else if c.CDN.AccessKey.Equals(devCDNAccessKey) || c.CDN.SecretKey.Equals(devCDNSecretKey) {
+		v = append(v, "cdn.accessKey/cdn.secretKey are the well-known development placeholders and must be replaced in production")
 	}
 
 	// TLS is mandatory for the chat server.
@@ -736,11 +765,6 @@ func quoteEmpty(s string) string {
 		return `""`
 	}
 	return "'" + s + "'"
-}
-
-// secretEmpty reports whether a secure string carries no usable value.
-func secretEmpty(ss *secrets.SecureString) bool {
-	return ss == nil || ss.IsDestroyed() || ss.Plaintext() == ""
 }
 
 // ConfigLoadError indicates a failure to load the configuration file.

@@ -47,11 +47,20 @@ push:
   fcm:
     credentials: ""
 
+# Avatar/attachment CDN. All four fields must be non-empty for the server to
+# sign a profile-avatar upload form; with any of them blank, PUT /v1/profile
+# with an avatar fails closed with 503 rather than issuing a form signed with
+# nothing.
+#
+# These are development placeholders, not credentials — the dev stack serves
+# /cdn from signald itself, so nothing authenticates against S3. Production
+# mode refuses to boot with them: validateProduction rejects both an empty
+# CDN config and these specific placeholder values.
 cdn:
-  bucket: ""
+  bucket: "signal-dev-cdn"
   region: "us-east-1"
-  accessKey: ""
-  secretKey: ""
+  accessKey: "dev-access-key"
+  secretKey: "dev-secret-key"
 
 limits:
   # Integration-test-friendly limits: all buckets are large enough to

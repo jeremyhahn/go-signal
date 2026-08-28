@@ -1,12 +1,15 @@
 package rest
 
 import (
+	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jeremyhahn/go-signal/pkg/accounts"
@@ -102,28 +105,18 @@ func (s *Server) handleSetProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	profile := &profiles.Profile{
-		UUID:           acct.UUID,
-		Version:        req.Version,
-		Name:           name,
-		About:          about,
-		AboutEmoji:     aboutEmoji,
-		PaymentAddress: paymentAddress,
-		Commitment:     commitment,
-	}
-
-	if err := s.profiles.Set(r.Context(), profile); err != nil {
-		s.logger.Error("failed to set profile",
-			slog.String("uuid", acct.UUID),
-			slog.String("error", err.Error()))
-		writeError(w, http.StatusInternalServerError, "failed to set profile")
-		return
-	}
-
-	// When the client requests a new avatar upload, return S3 POST policy
-	// upload attributes so the client can upload the avatar to the CDN.
-	if req.AvatarUpload && !req.SameAvatar {
-		attrs, err := s.buildAvatarUploadAttributes(acct.UUID)
+	// Resolve the avatar before storing, so the stored profile carries the
+	// key the upload form is signed for. Doing it the other way round writes
+	// the profile without an avatar and leaves GET unable to report one.
+	var (
+		attrs     ProfileAvatarUploadAttributes
+		change    = resolveAvatarChange(req)
+		avatarKey string
+	)
+	switch change {
+	case avatarUpdate:
+		var err error
+		attrs, err = s.buildAvatarUploadAttributes()
 		switch {
 		case errors.Is(err, errAvatarCDNNotConfigured):
 			s.logger.Error("avatar upload requested but CDN is not configured",
@@ -140,11 +133,135 @@ func (s *Server) handleSetProfile(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
+		avatarKey = attrs.Key
+	case avatarUnchanged:
+		var err error
+		avatarKey, err = s.previousAvatarKey(r.Context(), acct.UUID, req.Version)
+		if err != nil {
+			// Nothing is written: a failed read must not be turned into a
+			// successful write that clears the avatar.
+			s.logger.Error("failed to read the previous avatar for sameAvatar",
+				slog.String("uuid", acct.UUID),
+				slog.String("error", err.Error()))
+			writeError(w, http.StatusInternalServerError, "failed to set profile")
+			return
+		}
+	case avatarClear:
+		// avatarKey stays empty: the request asked for no avatar.
+	}
+
+	profile := &profiles.Profile{
+		UUID:           acct.UUID,
+		Version:        req.Version,
+		Name:           name,
+		About:          about,
+		AboutEmoji:     aboutEmoji,
+		PaymentAddress: paymentAddress,
+		Commitment:     commitment,
+		Avatar:         avatarKey,
+	}
+
+	if err := s.profiles.Set(r.Context(), profile); err != nil {
+		s.logger.Error("failed to set profile",
+			slog.String("uuid", acct.UUID),
+			slog.String("error", err.Error()))
+		writeError(w, http.StatusInternalServerError, "failed to set profile")
+		return
+	}
+
+	if change == avatarUpdate {
 		writeJSON(w, http.StatusOK, attrs)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// avatarChange is the effect a profile update has on the account's avatar.
+// It mirrors Java CreateProfileRequest.AvatarChange, which is the contract
+// Signal clients are written against.
+type avatarChange int
+
+const (
+	// avatarClear stores no avatar, dropping whatever the version had.
+	avatarClear avatarChange = iota
+	// avatarUnchanged carries this version's existing avatar forward.
+	avatarUnchanged
+	// avatarUpdate issues a fresh upload form and stores its object name.
+	avatarUpdate
+)
+
+// resolveAvatarChange maps a request onto one of the three cases, in Java's
+// order (CreateProfileRequest.getAvatarChange).
+//
+// The order is the point: `avatar` is read FIRST, so {avatar:false,
+// sameAvatar:true} CLEARS. Testing sameAvatar first instead makes that
+// combination keep the avatar — the opposite of what the reference server
+// gives a client asking to remove one, on a request the client is free to
+// send.
+func resolveAvatarChange(req SetProfileRequest) avatarChange {
+	switch {
+	case !req.AvatarUpload:
+		return avatarClear
+	case !req.SameAvatar:
+		return avatarUpdate
+	default:
+		return avatarUnchanged
+	}
+}
+
+// previousAvatarKey returns the avatar the account's profile at THIS version
+// already carries, for the sameAvatar case.
+//
+// The version is the one about to be written, matching Java
+// ProfileController.setProfile, which resolves UNCHANGED against
+// profilesManager.get(accountIdentifier, request.version()). Reading the
+// LATEST version instead lets a write at one version adopt another version's
+// key — and because KVProfileStore.Set repoints the latest marker
+// unconditionally, that same write then becomes latest, so a stale read is
+// promoted rather than shadowed.
+//
+// Only a key under avatarObjectPrefix is carried forward, as Java does: an
+// avatar this server never issued is not one it can keep signing for.
+//
+// Only a missing profile resolves to "no avatar": the client is asking to
+// keep an avatar that does not exist yet. Every other failure — a database
+// outage, a cancelled context, an unreadable row — is propagated, because the
+// caller writes this value. Collapsing those into an empty key would let a
+// request that explicitly said "keep my avatar" delete it during a transient
+// backend failure, and report 200 for doing so.
+func (s *Server) previousAvatarKey(ctx context.Context, accountUUID, version string) (string, error) {
+	previous, err := s.profiles.Get(ctx, accountUUID, version)
+	if err != nil {
+		var notFound *profiles.ProfileNotFoundError
+		if errors.As(err, &notFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	if previous == nil || !strings.HasPrefix(previous.Avatar, avatarObjectPrefix) {
+		return "", nil
+	}
+	return previous.Avatar, nil
+}
+
+// avatarObjectPrefix is the CDN key prefix every avatar this server issues
+// lives under. generateAvatarObjectName writes it and previousAvatarKey
+// requires it, so the two cannot drift: a prefix change that reached only one
+// of them would silently clear every avatar it was asked to keep.
+const avatarObjectPrefix = "profiles/"
+
+// generateAvatarObjectName returns a fresh, unguessable CDN object name for a
+// profile avatar. Mirrors Java ProfileHelper.generateAvatarObjectName: 16
+// random bytes, URL-safe base64, under the profiles/ prefix. Deriving the
+// name from the account UUID instead would make every user's avatar object
+// name a function of their account id.
+func generateAvatarObjectName() (string, error) {
+	var object [16]byte
+	if _, err := rand.Read(object[:]); err != nil {
+		return "", err
+	}
+	return avatarObjectPrefix + base64.URLEncoding.EncodeToString(object[:]), nil
 }
 
 // errAvatarCDNNotConfigured indicates avatar upload was requested but no S3
@@ -159,12 +276,15 @@ func (e *avatarCDNNotConfiguredError) Error() string { return "avatar CDN not co
 // profile-avatar upload, signed with the configured CDN credentials. It fails
 // (errAvatarCDNNotConfigured) when the CDN is not configured rather than
 // returning a non-functional placeholder signature.
-func (s *Server) buildAvatarUploadAttributes(accountUUID string) (ProfileAvatarUploadAttributes, error) {
+func (s *Server) buildAvatarUploadAttributes() (ProfileAvatarUploadAttributes, error) {
 	if !s.avatarCDN.Enabled() {
 		return ProfileAvatarUploadAttributes{}, errAvatarCDNNotConfigured
 	}
 
-	avatarKey := "profiles/" + accountUUID
+	avatarKey, err := generateAvatarObjectName()
+	if err != nil {
+		return ProfileAvatarUploadAttributes{}, err
+	}
 	now := time.Now().UTC()
 	dateStamp := now.Format("20060102")
 	amzDate := now.Format("20060102T150405Z")

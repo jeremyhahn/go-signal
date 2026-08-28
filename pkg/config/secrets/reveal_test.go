@@ -351,3 +351,123 @@ func TestClone_DoesNotStagePlaintextOnTheGoHeap(t *testing.T) {
 		t.Errorf("clone length = %d, want %d", len(got), size)
 	}
 }
+
+// --- Equals / IsEmpty -------------------------------------------------------
+
+func TestEquals_MatchesAndMismatches(t *testing.T) {
+	s := MustNewSecureString("dev-secret-key")
+	defer s.Destroy()
+
+	tests := []struct {
+		name string
+		want string
+		ok   bool
+	}{
+		{"exact match", "dev-secret-key", true},
+		{"same length, one byte different", "dev-secret-kex", false},
+		{"prefix of the value", "dev-secret", false},
+		{"value plus a suffix", "dev-secret-key!", false},
+		{"empty", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := s.Equals(tt.want); got != tt.ok {
+				t.Errorf("Equals(%q) = %v, want %v", tt.want, got, tt.ok)
+			}
+		})
+	}
+}
+
+// An unreadable secret is not a matching secret. Every one of these states
+// reaches the same branch — WithBytes reporting that fn did not run — which is
+// also how an enclave that cannot be opened is reported, so that case needs no
+// production seam of its own to be covered.
+func TestEquals_UnreadableSecretsDoNotMatch(t *testing.T) {
+	destroyed := MustNewSecureString("dev-secret-key")
+	destroyed.Destroy()
+
+	absent, err := NewOptionalSecureString("")
+	if err != nil {
+		t.Fatalf("NewOptionalSecureString: %v", err)
+	}
+
+	var nilSecret *SecureString
+
+	for name, s := range map[string]*SecureString{
+		"nil receiver": nilSecret,
+		"destroyed":    destroyed,
+		"absent":       absent,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if s.Equals("dev-secret-key") {
+				t.Error("an unreadable secret reported a match")
+			}
+			if s.Equals("") {
+				t.Error("an unreadable secret matched the empty string")
+			}
+			if !s.IsEmpty() {
+				t.Error("an unreadable secret did not report itself empty")
+			}
+		})
+	}
+}
+
+func TestIsEmpty_ReportsThePresenceOfAValue(t *testing.T) {
+	set := MustNewSecureString("x")
+	defer set.Destroy()
+	if set.IsEmpty() {
+		t.Error("a secret holding a value reported itself empty")
+	}
+}
+
+// TestEqualsAndIsEmpty_DoNotStagePlaintextOnTheGoHeap measures the property
+// that actually changes if either is written as `Plaintext() == want`: the
+// whole secret lands on the Go heap as an immutable string that can never be
+// wiped. The behavioural tests above stay green either way — this is the one
+// that does not.
+//
+// want is deliberately SHORT while the secret is large, so the two
+// implementations separate: comparing inside the borrow window charges one
+// plaintext (the enclave's own Open) plus a few bytes, while revealing to a
+// string charges a second. The bound is revealHeapLimit, whose endpoints were
+// measured on this same stack for WithBytes.
+func TestEqualsAndIsEmpty_DoNotStagePlaintextOnTheGoHeap(t *testing.T) {
+	const size = 1 << 20 // Large enough that one plaintext copy dwarfs constant overhead.
+	big, err := NewSecureStringFromBytes(bytes.Repeat([]byte("k"), size))
+	if err != nil {
+		t.Fatalf("NewSecureStringFromBytes: %v", err)
+	}
+	defer big.Destroy()
+
+	const calls = 8
+	for _, tc := range []struct {
+		name string
+		fn   func() bool
+	}{
+		// Each returns whether the call gave the RIGHT answer, so a
+		// measurement can never be taken from a call that misbehaved.
+		{"Equals", func() bool { return !big.Equals("not-the-secret") }},
+		{"IsEmpty", func() bool { return !big.IsEmpty() }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runtime.GC()
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			for range calls {
+				if !tc.fn() {
+					t.Fatal("the call under measurement returned the wrong answer")
+				}
+			}
+			runtime.ReadMemStats(&after)
+
+			perCall := (after.TotalAlloc - before.TotalAlloc) / calls
+			limit := uint64(size) * revealHeapLimitNumerator / revealHeapLimitDenominator
+			if perCall > limit {
+				t.Errorf("%s charged %d Go-heap bytes per call (%.3fx the secret), limit %d (%.1fx): "+
+					"the plaintext is being staged as a Go string rather than compared in the borrow window",
+					tc.name, perCall, float64(perCall)/float64(size), limit,
+					float64(revealHeapLimitNumerator)/float64(revealHeapLimitDenominator))
+			}
+		})
+	}
+}

@@ -1,6 +1,10 @@
 package secrets
 
-import "github.com/jeremyhahn/go-qrdb/sdk/go/secure"
+import (
+	"crypto/subtle"
+
+	"github.com/jeremyhahn/go-qrdb/sdk/go/secure"
+)
 
 // Protected-memory allocators, indirected so the fail-closed paths that depend
 // on an allocation failure can be exercised by fault injection. Production code
@@ -47,6 +51,51 @@ func (s *SecureString) WithBytes(fn func([]byte)) bool {
 	defer buf.Destroy()
 	fn(buf.Bytes())
 	return true
+}
+
+// Equals reports whether the protected value is exactly want, without ever
+// materialising it as a Go string.
+//
+// The comparison runs inside WithBytes, so the plaintext stays in the secure
+// package's mlocked, guard-paged memory and is wiped on the way out. Plaintext
+// would hand back an immutable heap string the runtime is free to copy and
+// that can never be zeroed — and its own contract limits it to call sites that
+// treat an absent secret as "not configured", which a comparison against a
+// known value is not.
+//
+// This is the accessor for checking a secret against a value that is already
+// known: rejecting a shipped placeholder at boot, say. want is an ordinary
+// string because it is not secret; only the configured value is.
+//
+// The byte comparison is constant time. Nothing much leaks by timing when the
+// other operand is a public placeholder, but a comparison helper that returns
+// early on a mismatch is exactly the one a later caller reuses at a real
+// credential boundary.
+//
+// Reports false when the SecureString is nil, was never set, has been
+// destroyed, or cannot be opened: a value that cannot be read is not a value
+// that matches. Callers deciding "is this the placeholder" get the safe
+// answer, and callers that need to distinguish unreadable from
+// different must check IsAbsent/IsDestroyed themselves.
+func (s *SecureString) Equals(want string) bool {
+	var equal bool
+	ran := s.WithBytes(func(b []byte) {
+		equal = subtle.ConstantTimeCompare(b, []byte(want)) == 1
+	})
+	return ran && equal
+}
+
+// IsEmpty reports whether the protected value is unreadable or zero-length,
+// without materialising it. It is the presence check for a config field whose
+// absence means "not configured".
+//
+// Reading the value through Plaintext to compare it with "" places the whole
+// secret on the Go heap as an immutable string merely to learn its length,
+// which is the same defect as comparing it there.
+func (s *SecureString) IsEmpty() bool {
+	empty := true
+	ran := s.WithBytes(func(b []byte) { empty = len(b) == 0 })
+	return !ran || empty
 }
 
 // NewSecureStringFromBytes seals value in protected memory without routing it

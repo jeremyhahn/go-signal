@@ -560,7 +560,13 @@ func validProductionConfig() *Config {
 		CallingZKConfig: CallingZKConfig{ServerSecret: secrets.MustNewSecureString("calling-secret")},
 		Verification:    VerificationConfig{Transport: "twilio"},
 		Captcha:         CaptchaConfig{Provider: "hcaptcha"},
-		Limits:          LimitsConfig{Messages: RateLimitConfig{BucketSize: 200, LeakRatePerMin: 60}},
+		CDN: CDNConfig{
+			Bucket:    "prod-cdn",
+			Region:    "us-east-1",
+			AccessKey: secrets.MustNewSecureString("AKIAPRODUCTIONKEY"),
+			SecretKey: secrets.MustNewSecureString("prod-secret-key"),
+		},
+		Limits: LimitsConfig{Messages: RateLimitConfig{BucketSize: 200, LeakRatePerMin: 60}},
 	}
 }
 
@@ -606,6 +612,12 @@ func TestValidate_ProductionGate_DetectsEachViolation(t *testing.T) {
 		"zk empty secret":       {func(c *Config) { c.ZKConfig.ServerSecret = nil }, "zkConfig"},
 		"calling zk empty":      {func(c *Config) { c.CallingZKConfig.ServerSecret = nil }, "callingZkConfig"},
 		"calling zk test value": {func(c *Config) { c.CallingZKConfig.ServerSecret = secrets.MustNewSecureString(testCallingZKSecret) }, "well-known development secret"},
+		"empty cdn bucket":      {func(c *Config) { c.CDN.Bucket = "" }, "cdn.bucket"},
+		"empty cdn region":      {func(c *Config) { c.CDN.Region = "" }, "cdn.region"},
+		"empty cdn access key":  {func(c *Config) { c.CDN.AccessKey = nil }, "cdn.accessKey"},
+		"empty cdn secret key":  {func(c *Config) { c.CDN.SecretKey = nil }, "cdn.secretKey"},
+		"dev cdn access key":    {func(c *Config) { c.CDN.AccessKey = secrets.MustNewSecureString(devCDNAccessKey) }, "well-known development placeholders"},
+		"dev cdn secret key":    {func(c *Config) { c.CDN.SecretKey = secrets.MustNewSecureString(devCDNSecretKey) }, "well-known development placeholders"},
 		"no tls cert":           {func(c *Config) { c.Server.TLSCertFile = "" }, "tlsCertFile"},
 		"no tls key":            {func(c *Config) { c.Server.TLSKeyFile = "" }, "tlsKeyFile"},
 		"wildcard origin":       {func(c *Config) { c.Server.AllowedOrigins = []string{"*"} }, "allowedOrigins"},
