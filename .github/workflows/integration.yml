@@ -49,6 +49,11 @@ on:
       - 'test/integration/**'
       - 'test/signal-cli/**'
       - '.dockerignore'
+      # The devcontainer image reads every tool pin from the Makefile, so a
+      # pin change there rebuilds this image and must run this suite. Without
+      # it a tool-version change lands on main having never built the image it
+      # changes (#71).
+      - 'Makefile'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/integration.yml'

@@ -79,6 +79,28 @@ GOVULNCHECK   := govulncheck
 # The ordering is the point and is worth keeping: the deliberate bump surfaced
 # a live defect, where drifting to the same version would have surfaced it as a
 # mystery red on whichever innocent PR ran next.
+# golangci-lint's pin lives HERE now, not in ci.yml, for the same reason the
+# scanners' do: it was stated in three places (ci.yml, .devcontainer/Dockerfile,
+# and the ci-runner image) and the Dockerfile had drifted to an abandoned
+# v2.7.2 while CI ran v2.12.2 — two linters disagreeing, and the undocumented
+# one is the one that gets believed when it happens to be quieter (#71).
+#
+# WHY v2.12.2 AND NOT LATEST: v2.13.0 (2026-08-19) ships honnef.co/go/tools
+# v0.8.0-rc.1, a release candidate whose nilness analyzer PANICS on the
+# getsentry/sentry-go dependency —
+#
+#   nilness: package "sentry": internal error: unhandled builtin recover
+#   Running error: can't run linter goanalysis_metalinter
+#
+# That is a tool crash, not a finding: it exits non-zero with zero file:line
+# results, so the gate reads as "your code is bad" while saying nothing about
+# the code. v2.12.2 ships honnef.co/go/tools v0.7.0 and is clean. It is also
+# what the ci-runner image bakes, so CI on Gitea needs no install at all.
+#
+# UNPIN once upstream ships a golangci-lint carrying a non-RC
+# honnef.co/go/tools that lints this module without panicking.
+GOLANGCI_LINT_VERSION := v2.12.2
+
 GOSEC_VERSION       := v2.29.0
 
 # Matches the ci-runner image exactly, so ci.yml no longer installs it.
@@ -187,13 +209,23 @@ print-build-tags: ## Print the default build tag set (for CI and tooling)
 # Same contract as print-build-tags: CI installs the scanners itself and reads
 # the versions from here, so the pin cannot drift out of sync with the Makefile
 # that documents it.
+print-golangci-lint-version: ## Print the pinned golangci-lint version (for CI and the devcontainer image)
+	@echo '$(GOLANGCI_LINT_VERSION)'
+
 print-gosec-version: ## Print the pinned gosec version (for CI)
 	@echo '$(GOSEC_VERSION)'
 
 print-govulncheck-version: ## Print the pinned govulncheck version (for CI)
 	@echo '$(GOVULNCHECK_VERSION)'
 
+print-protoc-gen-go-version: ## Print the pinned protoc-gen-go version
+	@echo '$(PROTOC_GEN_GO_VERSION)'
+
+print-protoc-gen-go-grpc-version: ## Print the pinned protoc-gen-go-grpc version (no leading v)
+	@echo '$(PROTOC_GEN_GO_GRPC_VERSION)'
+
 .PHONY: print-build-tags print-gosec-version print-govulncheck-version
+.PHONY: print-golangci-lint-version print-protoc-gen-go-version print-protoc-gen-go-grpc-version
 .PHONY: build build-server build-cli build-frontend dev-web proto proto-tools
 .PHONY: build-cdsi build-svr2 build-key-transparency build-registration-service build-storage-service build-services
 

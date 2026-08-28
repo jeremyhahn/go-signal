@@ -1,8 +1,11 @@
 # Two stages over one toolchain, for two different consumers.
 #
 #   toolchain    the interactive devcontainer. Developers mount their checkout
-#                over /workspace and edit live, so it deliberately carries no
-#                source.
+#                over /workspace and edit live, so it carries no source in the
+#                final filesystem. It does COPY the Makefile transiently to read
+#                the tool pins from it — deleted in the same layer, though still
+#                recoverable from image history, which is fine: the Makefile is
+#                public repository content, not a secret.
 #
 #   integration  the same toolchain with the source baked in, for the CI
 #                integration suite.
@@ -51,12 +54,47 @@ RUN CACERTS=$(find /usr/lib/jvm -name cacerts -type f 2>/dev/null | head -1) && 
     fi && \
     rm /tmp/ca-cert.pem
 
-# Install Go tools
-RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@latest && \
-    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest && \
-    go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.7.2 && \
-    go install github.com/securego/gosec/v2/cmd/gosec@latest && \
-    go install golang.org/x/vuln/cmd/govulncheck@latest
+# Install Go tools, at the versions the MAKEFILE declares.
+#
+# Every version here used to be stated a second time, and the second statement
+# drifted: three of these were @latest — so an image rebuild silently changed
+# which scanner ran, and gosec@latest self-reports "Version: dev", which makes a
+# scan result unattributable to any version — while golangci-lint was pinned to
+# an abandoned v2.7.2 against the repo's documented v2.12.2. Two linters
+# disagreeing, and the undocumented one is the one that gets believed when it
+# happens to be quieter (#71).
+#
+# The Makefile is copied in FOR THIS, so the pins have exactly one definition
+# and cannot drift again. It parses standalone — every version here is a plain
+# := assignment — so no module or source tree is needed to read them.
+#
+# `make` comes from the apt layer above. To change a version, change the
+# Makefile; nothing here needs editing.
+#
+# An empty version fails the build rather than installing something unpinned.
+# `@v` with nothing after it is not obviously wrong at a glance, and the
+# grpc plugin's leading "v" sits OUTSIDE the substitution, so that is exactly
+# where an empty value would have looked plausible.
+#
+# ACCEPTED COST: copying the Makefile here means any Makefile edit invalidates
+# this layer and reinstalls all five tools over the network. That is the price
+# of one definition, and it is the right way round — a stale cached tool layer
+# is a wrong scanner that nobody notices, while a slow rebuild is visible. This
+# image is built on the integration path, not on every PR.
+COPY Makefile /tmp/pins/Makefile
+RUN set -eux; \
+    cd /tmp/pins; \
+    pin() { \
+        v="$(make -s "$1")"; \
+        [ -n "$v" ] || { echo "empty version from $1 — refusing to install unpinned" >&2; exit 1; }; \
+        printf '%s' "$v"; \
+    }; \
+    go install google.golang.org/protobuf/cmd/protoc-gen-go@"$(pin print-protoc-gen-go-version)"; \
+    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v"$(pin print-protoc-gen-go-grpc-version)"; \
+    go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@"$(pin print-golangci-lint-version)"; \
+    go install github.com/securego/gosec/v2/cmd/gosec@"$(pin print-gosec-version)"; \
+    go install golang.org/x/vuln/cmd/govulncheck@"$(pin print-govulncheck-version)"; \
+    rm -rf /tmp/pins
 
 WORKDIR /workspace
 
