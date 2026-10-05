@@ -17,10 +17,18 @@ import (
 
 // ConnectWebSocket establishes a persistent WebSocket connection for
 // real-time message delivery. Messages received are passed to the handler.
-func (c *Client) ConnectWebSocket(ctx context.Context, handler func(msg ReceivedMessage)) error {
+// ConnectWebSocketSession dials the authenticated WebSocket and reads messages
+// on a background goroutine. It returns as soon as the handshake completes,
+// NOT when the connection ends.
+//
+// The returned channel is closed when the session's read loop exits — server
+// close, network drop, or ctx cancellation. Callers that maintain a
+// persistent connection must wait on it: without it there is no way to notice
+// a dropped socket, so a reconnecting client silently stops receiving.
+func (c *Client) ConnectWebSocketSession(ctx context.Context, handler func(msg ReceivedMessage)) (<-chan struct{}, error) {
 	creds, err := c.store.GetCredentials()
 	if err != nil || creds == nil {
-		return signalerrors.New(signalerrors.ErrUnauthenticated, "no credentials for WebSocket connection")
+		return nil, signalerrors.New(signalerrors.ErrUnauthenticated, "no credentials for WebSocket connection")
 	}
 
 	scheme := "wss"
@@ -67,11 +75,16 @@ func (c *Client) ConnectWebSocket(ctx context.Context, handler func(msg Received
 
 	conn, _, err := websocket.Dial(ctx, wsURL, opts) //nolint:bodyclose // coder/websocket owns the handshake response; its Dial docs state you never close resp.Body yourself.
 	if err != nil {
-		return signalerrors.Wrap(signalerrors.ErrInternal, "WebSocket connect", err)
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "WebSocket connect", err)
 	}
 
-	// Read messages in a loop.
+	// Read messages in a loop. done is closed as this goroutine returns, which
+	// is the only way a caller can learn the session ended: the read loop
+	// exits on a server close, a network drop, or context cancellation, and
+	// none of those are otherwise observable from outside.
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		defer func() { _ = conn.CloseNow() }()
 		for {
 			_, data, err := conn.Read(ctx)
@@ -88,7 +101,18 @@ func (c *Client) ConnectWebSocket(ctx context.Context, handler func(msg Received
 		}
 	}()
 
-	return nil
+	return done, nil
+}
+
+// ConnectWebSocket dials the authenticated WebSocket and reads messages on a
+// background goroutine, discarding the session-termination signal.
+//
+// Prefer ConnectWebSocketSession for anything that must react to the
+// connection ending — a caller that only has this signature cannot tell a
+// live connection from one the server closed a moment later.
+func (c *Client) ConnectWebSocket(ctx context.Context, handler func(msg ReceivedMessage)) error {
+	_, err := c.ConnectWebSocketSession(ctx, handler)
+	return err
 }
 
 // ReceiveWebSocket connects via WebSocket and waits for messages
