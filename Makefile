@@ -85,21 +85,11 @@ GOVULNCHECK   := govulncheck
 # v2.7.2 while CI ran v2.12.2 — two linters disagreeing, and the undocumented
 # one is the one that gets believed when it happens to be quieter (#71).
 #
-# WHY v2.12.2 AND NOT LATEST: v2.13.0 (2026-08-19) ships honnef.co/go/tools
-# v0.8.0-rc.1, a release candidate whose nilness analyzer PANICS on the
-# getsentry/sentry-go dependency —
-#
-#   nilness: package "sentry": internal error: unhandled builtin recover
-#   Running error: can't run linter goanalysis_metalinter
-#
-# That is a tool crash, not a finding: it exits non-zero with zero file:line
-# results, so the gate reads as "your code is bad" while saying nothing about
-# the code. v2.12.2 ships honnef.co/go/tools v0.7.0 and is clean. It is also
-# what the ci-runner image bakes, so CI on Gitea needs no install at all.
-#
-# UNPIN once upstream ships a golangci-lint carrying a non-RC
-# honnef.co/go/tools that lints this module without panicking.
-GOLANGCI_LINT_VERSION := v2.12.2
+# v2.13.2 (#86): the ci-runner image now bakes v2.13.2, so the v2.12.2 pin
+# failed the lint job's version check on every run. v2.13.2 lints this module
+# clean under both tag sets (0 issues, measured 2026-10-05); the v2.13.0
+# nilness panic on sentry-go that held the pin at v2.12.2 does not reproduce.
+GOLANGCI_LINT_VERSION := v2.13.2
 
 GOSEC_VERSION       := v2.29.0
 

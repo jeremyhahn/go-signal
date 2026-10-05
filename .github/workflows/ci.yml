@@ -1,18 +1,24 @@
-# ci-template: v1.2 (customized)
+# ci-template: v1.15 (customized)
 # Reconciled against software/templates/github-actions/ci.yml in the
 # automatethethings repo (devops.md §1/§8/§9). Divergence outside the
 # repo-specific blocks below is a defect.
+#
+# v1.15 (#86, automatethethings#209): every job starts at once (no `needs`
+# on lint/build), so a run takes as long as its slowest job; CI Gate still
+# needs every job and fails closed. push and pull_request run on main only:
+# automerge.yml v7's merge trains are PRs and get CI from pull_request.
 
 name: CI
 
 on:
   push:
-    # CUSTOMIZE: this repository's default branch is master. The previous
-    # trigger listed only `main`, which matched nothing — no push ever fired a
-    # run, and CI had never executed once since adoption.
-    branches: [master, main, develop]
+    # trunk-based: main is the ONLY trunk (and the default branch).
+    branches: [main]
   pull_request:
-    branches: [master, main, develop]
+    branches: [main]
+  workflow_dispatch:                    # re-fire a whole workflow; also the
+                                        # only retry when a run was never
+                                        # created (ci-template v1.3)
 
 permissions:
   contents: read
@@ -77,7 +83,7 @@ jobs:
       # .golangci.yml enables the §8 security linters.
       - name: Install golangci-lint (GitHub-hosted runners only)
         if: github.server_url == 'https://github.com'
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(make -s print-golangci-lint-version)
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@"$(make -s print-golangci-lint-version)"
 
       # Same contract as the gosec check in the security job: on Gitea nothing
       # installs this, so the pin holds only if PATH resolves to the baked
@@ -107,7 +113,7 @@ jobs:
   security:
     name: Security Scanning
     runs-on: ubuntu-latest
-    needs: [lint, build]  # v1.9 staged fail-fast: expensive tier gates on the fast tier (no cancel API — task #90)
+    # No `needs` (v1.15): starts with lint and build, not after them.
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
@@ -143,7 +149,7 @@ jobs:
       # narrower when a rule stopped firing.
       - name: Install gosec (GitHub-hosted runners only)
         if: github.server_url == 'https://github.com'
-        run: go install github.com/securego/gosec/v2/cmd/gosec@$(make -s print-gosec-version)
+        run: go install github.com/securego/gosec/v2/cmd/gosec@"$(make -s print-gosec-version)"
 
       # A pin is only worth something if the binary that RUNS is the pin, and
       # on Gitea nothing installs gosec any more — the resolution rests entirely
@@ -201,7 +207,7 @@ jobs:
       # working, not drift — and it is why a baked scanner is not a stale one.
       - name: Install govulncheck (GitHub-hosted runners only)
         if: github.server_url == 'https://github.com'
-        run: go install golang.org/x/vuln/cmd/govulncheck@$(make -s print-govulncheck-version)
+        run: go install golang.org/x/vuln/cmd/govulncheck@"$(make -s print-govulncheck-version)"
 
       - name: Verify the govulncheck that will run matches the pin
         run: |
@@ -222,7 +228,7 @@ jobs:
   trivy:
     name: Trivy
     runs-on: ubuntu-latest
-    needs: [lint, build]  # v1.9 staged fail-fast: expensive tier gates on the fast tier (no cancel API — task #90)
+    # No `needs` (v1.15): starts with lint and build, not after them.
     steps:
       - uses: actions/checkout@v6
 
@@ -320,7 +326,7 @@ jobs:
   fips:
     name: FIPS
     runs-on: ubuntu-latest
-    needs: [build]
+    # No `needs` (v1.15): starts with lint and build, not after them.
     timeout-minutes: 30
     env:
       GOFIPS140: latest
@@ -351,7 +357,7 @@ jobs:
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
-    needs: [lint, build]
+    # No `needs` (v1.15): starts with lint and build, not after them.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
