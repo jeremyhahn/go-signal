@@ -4,7 +4,7 @@ This document covers local environment setup for working on go-signal.
 
 ## Prerequisites
 
-- Go 1.26.1 or newer.
+- Go 1.27.1 or newer.
 - Access to the development host `vm-host-1` (198.51.100.51) via SSH, or a local clone of the sibling repositories listed below.
 - Make, Docker, `protoc` with `protoc-gen-go` + `protoc-gen-go-grpc` installed for proto regeneration.
 

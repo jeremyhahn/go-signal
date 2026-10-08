@@ -31,7 +31,7 @@ permissions:
 # break the build when an upstream re-points a tag (go-tpm-tools v0.4.8,
 # 2026-08-14). ci-template v1.1 forbids both.
 env:
-  GO_VERSION: '1.26.7'
+  GO_VERSION: '1.27.1'
 
 jobs:
   lint:
@@ -50,9 +50,9 @@ jobs:
         run: make vet
 
       # On GITEA this step is skipped: the runner image bakes golangci-lint at
-      # v2.12.2, which is this repo's pin exactly. Verified in the image rather
+      # v2.14.0, which is this repo's pin exactly. Verified in the image rather
       # than taken from its manifest — /usr/local/bin/golangci-lint self-reports
-      # 2.12.2 (#63).
+      # 2.14.0 (#63, #88).
       #
       # On GITHUB it still runs, because `ubuntu-latest` there selects GitHub's
       # hosted image, which ships neither golangci-lint nor govulncheck. This
@@ -92,7 +92,7 @@ jobs:
       # an assumption until something checks it.
       #
       # `go version -m` reads the MODULE version, present however the binary was
-      # produced. golangci-lint's own --version prints "2.12.2" without the
+      # produced. golangci-lint's own --version prints "2.14.0" without the
       # leading v, so it cannot be compared to the pin without massaging.
       - name: Verify the golangci-lint that will run matches the pin
         run: |
@@ -196,7 +196,7 @@ jobs:
           sarif_file: gosec.sarif
           category: gosec
 
-      # Skipped on Gitea: the image bakes govulncheck at v1.7.0, this repo's
+      # Skipped on Gitea: the image bakes govulncheck at v1.8.0, this repo's
       # pin exactly, verified in the image rather than from its manifest. Still
       # installed on GitHub, whose hosted image does not carry it — same
       # dual-plane reasoning as the golangci-lint step above.

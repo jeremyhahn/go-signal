@@ -89,12 +89,15 @@ GOVULNCHECK   := govulncheck
 # failed the lint job's version check on every run. v2.13.2 lints this module
 # clean under both tag sets (0 issues, measured 2026-10-05); the v2.13.0
 # nilness panic on sentry-go that held the pin at v2.12.2 does not reproduce.
-GOLANGCI_LINT_VERSION := v2.13.2
+#
+# v2.14.0 (#88): the owner's 2026-10-07 ruling is that every analysis tool
+# tracks its upstream latest, and the ci-runner image moves in step.
+GOLANGCI_LINT_VERSION := v2.14.0
 
 GOSEC_VERSION       := v2.29.0
 
 # Matches the ci-runner image exactly, so ci.yml no longer installs it.
-GOVULNCHECK_VERSION := v1.7.0
+GOVULNCHECK_VERSION := v1.8.0
 
 # gosec exclusions (documented):
 #   G103: unsafe calls (test reflect/unsafe access for unexported fields)
@@ -332,7 +335,7 @@ coverage-desktop: ## Coverage report for desktop packages
 # form. PROTOC_VERSION is the string the binary reports, because that is what
 # the check below can compare.
 PROTOC_VERSION             := 25.1
-PROTOC_GEN_GO_VERSION      := v1.36.11
+PROTOC_GEN_GO_VERSION      := v1.36.12
 PROTOC_GEN_GO_GRPC_VERSION := 1.6.1
 
 # proto-tools fails closed on a version mismatch rather than letting the
