@@ -26,7 +26,7 @@ func encB64(s string) string { return stdbase64.StdEncoding.EncodeToString([]byt
 // verifies password. It writes directly to the store, bypassing the
 // manager's stricter validation (signedPreKey, etc. are not required by
 // the auth path the interceptor exercises).
-func mkAccount(t *testing.T, store *memory.MemoryAccountStore, uuid, password string) {
+func mkAccount(t testing.TB, store *memory.MemoryAccountStore, uuid, password string) {
 	t.Helper()
 	ctx := context.Background()
 	tokenHash, err := auth.NewSaltedTokenHash(password)
@@ -47,6 +47,33 @@ func mkAccount(t *testing.T, store *memory.MemoryAccountStore, uuid, password st
 	if err := store.Create(ctx, acct); err != nil {
 		t.Fatalf("store create: %v", err)
 	}
+}
+
+// benchAuthenticatedUnary drives the interceptor with the given credential so
+// the real (hash verifies) and dummy (account unknown) paths can be compared:
+// their cost must stay equal for the timing equalisation to hold.
+func benchAuthenticatedUnary(b *testing.B, user string) {
+	store := memory.NewMemoryAccountStore()
+	am := accounts.NewAccountsManager(store, 6)
+	mkAccount(b, store, "00000000-0000-0000-0000-0000000000a1", "bench-password")
+	i := interceptors.AuthenticatedUnary(am)
+	md := metadata.Pairs("authorization", "Basic "+encB64(user+":bench-password"))
+	ctx := metadata.NewIncomingContext(context.Background(), md)
+	handler := func(context.Context, interface{}) (interface{}, error) { return nil, nil }
+	info := &grpc.UnaryServerInfo{}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for n := 0; n < b.N; n++ {
+		_, _ = i(ctx, "req", info, handler)
+	}
+}
+
+func BenchmarkAuthenticatedUnary_RealPath(b *testing.B) {
+	benchAuthenticatedUnary(b, "00000000-0000-0000-0000-0000000000a1")
+}
+
+func BenchmarkAuthenticatedUnary_DummyPath(b *testing.B) {
+	benchAuthenticatedUnary(b, "00000000-0000-0000-0000-0000000000ff")
 }
 
 func TestAuthenticatedUnary_ValidCredentials_PopulatesContext(t *testing.T) {

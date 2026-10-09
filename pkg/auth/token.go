@@ -54,7 +54,11 @@ func NewSaltedTokenHash(token string) (*SaltedTokenHash, error) {
 		return nil, &TokenHashError{Cause: err}
 	}
 
-	hash, err := deriveHash(token, salt)
+	// Zero the IKM copy once HKDF has consumed it to minimise the lifetime
+	// of plaintext token bytes on the heap.
+	ikm := []byte(token)
+	hash, err := deriveHash(ikm, salt)
+	zeroBytes(ikm)
 	if err != nil {
 		zeroBytes(salt)
 		return nil, err
@@ -79,8 +83,11 @@ func NewSaltedTokenHash(token string) (*SaltedTokenHash, error) {
 // Returns false for any error (bad hex encoding, derivation failure) so that
 // callers can treat all failures as authentication rejections without
 // branching on error types.
-func (h *SaltedTokenHash) Verify(token string) bool {
-	if token == "" || h == nil {
+//
+// The token is taken as bytes so that callers can wipe it after use; Verify
+// neither retains nor modifies it.
+func (h *SaltedTokenHash) Verify(token []byte) bool {
+	if len(token) == 0 || h == nil {
 		return false
 	}
 
@@ -108,14 +115,8 @@ func (h *SaltedTokenHash) Verify(token string) bool {
 // deriveHash runs HKDF-SHA256 with the given token as the IKM, salt as the
 // HKDF salt, and the package-level hkdfInfo string as the context label.
 // It returns a hashSize-byte output key material slice.
-func deriveHash(token string, salt []byte) ([]byte, error) {
-	ikm := []byte(token)
-	reader := hkdf.New(sha256.New, ikm, salt, []byte(hkdfInfo))
-	// Zero the IKM copy immediately after HKDF construction to minimise
-	// the lifetime of plaintext token bytes on the heap.
-	for i := range ikm {
-		ikm[i] = 0
-	}
+func deriveHash(token, salt []byte) ([]byte, error) {
+	reader := hkdf.New(sha256.New, token, salt, []byte(hkdfInfo))
 	out := make([]byte, hashSize)
 	if _, err := io.ReadFull(reader, out); err != nil {
 		return nil, &TokenHashError{Cause: err}

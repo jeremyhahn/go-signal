@@ -1775,7 +1775,7 @@ func TestHashDeviceAuthToken_ValidToken(t *testing.T) {
 	if d.AuthTokenHash == nil {
 		t.Fatal("expected AuthTokenHash to be set, got nil")
 	}
-	if !d.AuthTokenHash.Verify(token) {
+	if !d.AuthTokenHash.Verify([]byte(token)) {
 		t.Error("Verify returned false for the original token")
 	}
 }
@@ -1787,7 +1787,7 @@ func TestHashDeviceAuthToken_HashDoesNotMatchWrongToken(t *testing.T) {
 	if err := hashDeviceAuthToken(d); err != nil {
 		t.Fatalf("hashDeviceAuthToken returned error: %v", err)
 	}
-	if d.AuthTokenHash.Verify("wrong-token") {
+	if d.AuthTokenHash.Verify([]byte("wrong-token")) {
 		t.Error("Verify must return false for the wrong token")
 	}
 }

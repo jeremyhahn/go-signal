@@ -17,6 +17,7 @@ import (
 
 	ws "github.com/coder/websocket"
 	"github.com/google/uuid"
+	"github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/jeremyhahn/go-signal/pkg/accounts"
@@ -94,13 +95,17 @@ func (h *Handler) HandleAuthenticated(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing credentials", http.StatusUnauthorized)
 		return
 	}
+	// extractCredentials yields a string we cannot wipe; the byte copy
+	// Verify consumes is at least scrubbed on every return path.
+	pw := []byte(password)
+	defer secure.Wipe(pw)
 
 	// Validate credentials.
 	acct, err := h.accounts.Get(r.Context(), acctUUID)
 	if err != nil {
 		// Perform a real hash verification to equalise timing so that
 		// response latency does not reveal whether the UUID exists.
-		h.dummyHash.Verify(password)
+		h.dummyHash.Verify(pw)
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
@@ -108,7 +113,7 @@ func (h *Handler) HandleAuthenticated(w http.ResponseWriter, r *http.Request) {
 	// Verify the password against the primary device's stored token hash.
 	// The constant-time comparison is encapsulated inside AuthTokenHash.Verify.
 	primary := acct.PrimaryDevice()
-	if primary == nil || !primary.AuthTokenHash.Verify(password) {
+	if primary == nil || !primary.AuthTokenHash.Verify(pw) {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
