@@ -137,6 +137,9 @@ func NewSecureStringFromBytes(ctx context.Context, value []byte) (*SecureString,
 //     configured" would silently downgrade a configured deployment under
 //     nothing worse than memory pressure, which is why it is an error and not
 //     an empty value.
+//   - A configured secret that cannot be opened (canceled context, provider
+//     failure, refused budget) yields (nil, *UnavailableSecretError), for the
+//     same reason.
 //
 // Callers must therefore branch on the error before branching on emptiness.
 func (s *SecureString) Clone(ctx context.Context) (*SecureString, error) {
@@ -153,10 +156,10 @@ func (s *SecureString) Clone(ctx context.Context) (*SecureString, error) {
 // would publish stub mode over a key that exists. The manager's whole
 // decision has to come from a single snapshot, which is what this provides.
 //
-// The presence bit describes the SOURCE, not the returned clone: a configured
-// secret that could not be revealed yields (unset clone, true, nil), and the
-// caller must treat that as a failure rather than as an absent secret. The
-// error cases match Clone's.
+// The presence bit describes the SOURCE, not the returned clone. A configured
+// secret that could not be opened yields (nil, true, *UnavailableSecretError),
+// never an unset clone: the caller must treat that as a failure rather than as
+// an absent secret. The other error cases match Clone's.
 func (s *SecureString) CloneWithPresence(ctx context.Context) (*SecureString, bool, error) {
 	if s == nil {
 		return &SecureString{}, false, nil
@@ -179,10 +182,10 @@ func (s *SecureString) cloneLocked(ctx context.Context) (*SecureString, error) {
 	case s.sec != nil:
 		buf, err := s.sec.Open(ctx)
 		if err != nil {
-			// Configured but unopenable. Clone's contract reports this as an
-			// empty clone rather than an error; CloneWithPresence's caller
-			// distinguishes it via the presence bit.
-			return &SecureString{}, nil
+			// Configured but unopenable — a canceled context, a provider
+			// failure, a refused locked-memory budget. That is not "no
+			// secret", and an unset clone would be read as exactly that.
+			return nil, &UnavailableSecretError{Cause: err}
 		}
 		// Open decrypts into a fresh buffer this call owns outright, so that
 		// buffer is sealed in place: no second copy of the plaintext is made.
@@ -195,7 +198,7 @@ func (s *SecureString) cloneLocked(ctx context.Context) (*SecureString, error) {
 		if !ok {
 			// Wiped underneath the read lock by a process-wide sweep: as
 			// unopenable as a sealed value that will not Open.
-			return &SecureString{}, nil
+			return nil, &UnavailableSecretError{}
 		}
 		dst = buf
 	default:
@@ -223,17 +226,21 @@ func copyProtected(src *secure.Buffer) (dst *secure.Buffer, ok bool, err error) 
 	if err != nil {
 		return nil, false, &SealError{Cause: err}
 	}
-	// Two independent buffers, each borrowed under its own lock, so nesting
-	// the borrows cannot deadlock. The length check refuses a source a sweep
+	// go-qrdb forbids any secure-package call inside a WithBytes callback,
+	// whichever object it targets, so the destination cannot be borrowed from
+	// inside the source's borrow. dst was allocated above and is referenced by
+	// nothing else, so its locked pages are mapped for exactly as long as this
+	// function holds it, and its slice can be taken before the one borrow this
+	// function makes: the source's. The length check refuses a source a sweep
 	// shrank between Size and the borrow rather than sealing zeros.
+	//secure:unborrowed allocates-protected dst is the private buffer allocated above; the source borrow cannot nest a second one
+	window := dst.Bytes()
 	copied := false
 	_ = src.WithBytes(func(b []byte) error {
-		return dst.WithBytes(func(d []byte) error {
-			if len(d) == len(b) {
-				copied = copy(d, b) == len(b)
-			}
-			return nil
-		})
+		if len(window) == len(b) {
+			copied = copy(window, b) == len(b)
+		}
+		return nil
 	})
 	if !copied {
 		dst.Destroy()

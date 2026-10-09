@@ -146,7 +146,8 @@ func TestCachingResolver_SealFailure_CacheHit(t *testing.T) {
 		t.Fatalf("first Resolve = %q", got)
 	}
 
-	failSealing(t)
+	// The per-caller copy is a Clone, which seals the copied buffer.
+	failProtectedSeal(t, failSealing(t))
 	s, err := c.Resolve(context.Background(), "kms://key")
 	if err == nil {
 		t.Fatal("expected the cache-hit copy to fail closed")
@@ -173,7 +174,7 @@ func (p *prebuiltResolver) Resolve(_ context.Context, _ string) (*SecureString, 
 func TestCachingResolver_SealFailure_AfterFetch(t *testing.T) {
 	underlying := &prebuiltResolver{secret: MustNewSecureString(t.Context(), "fresh-secret")}
 	c := NewCachingResolver(underlying, time.Minute)
-	failSealing(t)
+	failProtectedSeal(t, failSealing(t))
 
 	s, err := c.Resolve(context.Background(), "kms://key")
 	if err == nil {

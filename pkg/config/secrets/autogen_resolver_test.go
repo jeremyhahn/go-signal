@@ -140,7 +140,8 @@ func TestAutoGenResolver_SealFailure_CachedCopy(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, first.Plaintext(t.Context()))
 
-	failSealing(t)
+	// The per-caller copy is a Clone, which seals the copied buffer.
+	failProtectedSeal(t, failSealing(t))
 	s, err := r.Resolve(context.Background(), "auto")
 	require.Error(t, err)
 	assert.Nil(t, s)

@@ -102,7 +102,10 @@ func (p *ConfigProcessor) resolveStringField(ctx context.Context, v reflect.Valu
 	}
 	defer resolved.Destroy()
 
-	plain := resolved.Plaintext(ctx)
+	plain, err := revealResolved(ctx, resolved)
+	if err != nil {
+		return &ProcessingError{Field: path, Cause: err}
+	}
 	if plain != original {
 		v.SetString(plain)
 	}
@@ -116,9 +119,14 @@ func (p *ConfigProcessor) resolveSecureStringField(ctx context.Context, v reflec
 	// Get the current *SecureString value (may be nil pointer).
 	existing, _ := v.Interface().(*SecureString)
 
-	var original string
-	if existing != nil {
-		original = existing.Plaintext(ctx)
+	// A field that was never set has nothing to resolve; one that is set but
+	// will not open is a failure, not an empty value to skip.
+	if existing.IsAbsent() {
+		return nil
+	}
+	original, err := existing.Reveal(ctx)
+	if err != nil {
+		return &ProcessingError{Field: path, Cause: err}
 	}
 	if original == "" {
 		return nil
@@ -131,7 +139,11 @@ func (p *ConfigProcessor) resolveSecureStringField(ctx context.Context, v reflec
 
 	// If the value changed, replace the field with the resolved SecureString.
 	// Destroy the old value to free protected memory.
-	resolvedPlain := resolved.Plaintext(ctx)
+	resolvedPlain, err := revealResolved(ctx, resolved)
+	if err != nil {
+		resolved.Destroy()
+		return &ProcessingError{Field: path, Cause: err}
+	}
 	if resolvedPlain != original {
 		if existing != nil {
 			existing.Destroy()
@@ -142,4 +154,14 @@ func (p *ConfigProcessor) resolveSecureStringField(ctx context.Context, v reflec
 		resolved.Destroy()
 	}
 	return nil
+}
+
+// revealResolved reads back the value a resolver produced. A resolver may
+// legitimately yield an unset secret (an environment variable exported empty),
+// which reads as ""; a secret that is set but will not open is an error.
+func revealResolved(ctx context.Context, resolved *SecureString) (string, error) {
+	if resolved.IsAbsent() {
+		return "", nil
+	}
+	return resolved.Reveal(ctx)
 }

@@ -59,8 +59,7 @@ func (r *AutoGenResolver) Resolve(ctx context.Context, value string) (*SecureStr
 		r.mu.RUnlock()
 		// Return a fresh SecureString with the same plaintext so each caller
 		// holds independent ownership and can call Destroy independently.
-		plain := cached.Plaintext(ctx)
-		return NewSecureString(ctx, plain)
+		return cached.Clone(ctx)
 	}
 	r.mu.RUnlock()
 
@@ -86,10 +85,9 @@ func (r *AutoGenResolver) Resolve(ctx context.Context, value string) (*SecureStr
 	// Double-check after acquiring write lock.
 	if cached, ok := r.cache[value]; ok {
 		r.mu.Unlock()
-		plain := cached.Plaintext(ctx)
 		entry.Destroy()
 		secretCopy.Destroy()
-		return NewSecureString(ctx, plain)
+		return cached.Clone(ctx)
 	}
 	r.cache[value] = entry
 	r.mu.Unlock()
