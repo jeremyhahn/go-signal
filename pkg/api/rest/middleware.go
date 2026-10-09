@@ -264,6 +264,10 @@ func authMiddleware(am service.AccountService, next http.HandlerFunc) http.Handl
 			writeError(w, http.StatusUnauthorized, "missing credentials")
 			return
 		}
+		// r.BasicAuth hands back a string we cannot wipe; the byte copy
+		// Verify consumes is at least scrubbed on every return path.
+		pw := []byte(password)
+		defer secure.Wipe(pw)
 
 		// The username may be "uuid.deviceId" or just "uuid". When the
 		// device suffix is absent the credential targets the primary device.
@@ -275,7 +279,7 @@ func authMiddleware(am service.AccountService, next http.HandlerFunc) http.Handl
 			if perr != nil || parsed == 0 {
 				// Equalise timing so an invalid device suffix is
 				// indistinguishable from a wrong password.
-				dummyHash.Verify(password)
+				dummyHash.Verify(pw)
 				w.Header().Set("WWW-Authenticate", `Basic realm="signal"`)
 				writeError(w, http.StatusUnauthorized, "invalid credentials")
 				return
@@ -287,7 +291,7 @@ func authMiddleware(am service.AccountService, next http.HandlerFunc) http.Handl
 		if err != nil {
 			// Perform a real hash verification to equalise timing so that
 			// response latency does not reveal whether the UUID exists.
-			dummyHash.Verify(password)
+			dummyHash.Verify(pw)
 			w.Header().Set("WWW-Authenticate", `Basic realm="signal"`)
 			writeError(w, http.StatusUnauthorized, "invalid credentials")
 			return
@@ -301,12 +305,12 @@ func authMiddleware(am service.AccountService, next http.HandlerFunc) http.Handl
 		device := acct.GetDevice(deviceID)
 		if device == nil || device.AuthTokenHash == nil {
 			// Equalise timing for a missing/credential-less device.
-			dummyHash.Verify(password)
+			dummyHash.Verify(pw)
 			w.Header().Set("WWW-Authenticate", `Basic realm="signal"`)
 			writeError(w, http.StatusUnauthorized, "invalid credentials")
 			return
 		}
-		if !device.AuthTokenHash.Verify(password) {
+		if !device.AuthTokenHash.Verify(pw) {
 			w.Header().Set("WWW-Authenticate", `Basic realm="signal"`)
 			writeError(w, http.StatusUnauthorized, "invalid credentials")
 			return

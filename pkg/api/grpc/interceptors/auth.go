@@ -6,12 +6,14 @@
 package interceptors
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
 	"strconv"
 	"strings"
 
+	"github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -76,6 +78,8 @@ func AuthenticatedUnary(am *accounts.AccountsManager) grpc.UnaryServerIntercepto
 		if err != nil {
 			return nil, status.Errorf(codes.Unauthenticated, "invalid credentials: %v", err)
 		}
+		// Wipe the password on every return path below, handler included.
+		defer secure.Wipe(password)
 
 		// The credential is "uuid.deviceId" or just "uuid" (primary device).
 		acctUUID := username
@@ -137,28 +141,36 @@ func AnonymousUnary() grpc.UnaryServerInterceptor {
 // parseBasicMetadata extracts Basic credentials from gRPC metadata. Only
 // the first `authorization` entry is examined; multiple entries return an
 // error to avoid ambiguity about which one was honoured.
-func parseBasicMetadata(md metadata.MD) (username, password string, err error) {
+func parseBasicMetadata(md metadata.MD) (username string, password []byte, err error) {
 	values := md.Get("authorization")
 	switch len(values) {
 	case 0:
-		return "", "", errors.New("no authorization metadata")
+		return "", nil, errors.New("no authorization metadata")
 	case 1:
 		// ok
 	default:
-		return "", "", errors.New("multiple authorization entries")
+		return "", nil, errors.New("multiple authorization entries")
 	}
 	auth := values[0]
 	const prefix = "Basic "
 	if !strings.HasPrefix(auth, prefix) {
-		return "", "", errors.New("not Basic auth")
+		return "", nil, errors.New("not Basic auth")
 	}
+	// raw is an owned buffer: it is never converted to a string, and the
+	// password is returned as a sub-slice of it for the caller to wipe.
 	raw, err := base64.StdEncoding.DecodeString(auth[len(prefix):])
 	if err != nil {
-		return "", "", errors.New("malformed Basic credential")
+		secure.Wipe(raw)
+		return "", nil, errors.New("malformed Basic credential")
 	}
-	idx := strings.IndexByte(string(raw), ':')
+	idx := bytes.IndexByte(raw, ':')
 	if idx < 0 {
-		return "", "", errors.New("malformed Basic credential")
+		secure.Wipe(raw)
+		return "", nil, errors.New("malformed Basic credential")
 	}
-	return string(raw[:idx]), string(raw[idx+1:]), nil
+	// The username is an identifier, not a secret; copy it out and wipe its
+	// half of the buffer so only the password remains live.
+	username = string(raw[:idx])
+	secure.Wipe(raw[:idx+1])
+	return username, raw[idx+1:], nil
 }

@@ -1,6 +1,7 @@
 package interceptors
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"strings"
@@ -36,8 +37,39 @@ func TestParseBasicMetadata_Valid(t *testing.T) {
 	t.Parallel()
 	md := metadata.Pairs("authorization", basicHeader("uuid", "password"))
 	u, p, err := parseBasicMetadata(md)
-	if err != nil || u != "uuid" || p != "password" {
-		t.Fatalf("parse failed: u=%s p=%s err=%v", u, p, err)
+	if err != nil || u != "uuid" || !bytes.Equal(p, []byte("password")) {
+		t.Fatalf("parse failed: u=%s err=%v", u, err)
+	}
+}
+
+func TestParseBasicMetadata_EmptyPassword(t *testing.T) {
+	t.Parallel()
+	md := metadata.Pairs("authorization", basicHeader("uuid", ""))
+	u, p, err := parseBasicMetadata(md)
+	if err != nil || u != "uuid" || len(p) != 0 {
+		t.Fatalf("parse failed: u=%s len(p)=%d err=%v", u, len(p), err)
+	}
+}
+
+func TestParseBasicMetadata_PasswordWithColon(t *testing.T) {
+	t.Parallel()
+	md := metadata.Pairs("authorization", basicHeader("uuid", "pa:ss"))
+	_, p, err := parseBasicMetadata(md)
+	if err != nil || !bytes.Equal(p, []byte("pa:ss")) {
+		t.Fatalf("parse failed: err=%v", err)
+	}
+}
+
+// TestParseBasicMetadata_ErrorReturnsNoPassword asserts no credential bytes
+// escape on any error path.
+func TestParseBasicMetadata_ErrorReturnsNoPassword(t *testing.T) {
+	t.Parallel()
+	bad := base64.StdEncoding.EncodeToString([]byte("nocolonsecret"))
+	for _, h := range []string{"Basic " + bad, "Basic !!!", "Bearer x"} {
+		_, p, err := parseBasicMetadata(metadata.Pairs("authorization", h))
+		if err == nil || p != nil {
+			t.Fatalf("header %q: err=%v p=%v", h, err, p)
+		}
 	}
 }
 

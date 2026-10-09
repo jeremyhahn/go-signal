@@ -67,7 +67,7 @@ func BenchmarkSaltedTokenHash_NewAndVerify(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		hash.Verify("benchmark-token-value")
+		hash.Verify([]byte("benchmark-token-value"))
 	}
 }
 
@@ -81,7 +81,7 @@ func BenchmarkSaltedTokenHash_Verify(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		hash.Verify("benchmark-token-value")
+		hash.Verify([]byte("benchmark-token-value"))
 	}
 }
 

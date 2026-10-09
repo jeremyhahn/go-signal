@@ -121,7 +121,7 @@ func TestVerify_CorrectTokenReturnsTrue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup error: %v", err)
 	}
-	if !h.Verify(token) {
+	if !h.Verify([]byte(token)) {
 		t.Error("expected Verify to return true for the original token")
 	}
 }
@@ -131,7 +131,7 @@ func TestVerify_WrongTokenReturnsFalse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup error: %v", err)
 	}
-	if h.Verify("wrong-token") {
+	if h.Verify([]byte("wrong-token")) {
 		t.Error("expected Verify to return false for an incorrect token")
 	}
 }
@@ -141,14 +141,14 @@ func TestVerify_EmptyTokenReturnsFalse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup error: %v", err)
 	}
-	if h.Verify("") {
+	if h.Verify([]byte("")) {
 		t.Error("expected Verify to return false for empty token")
 	}
 }
 
 func TestVerify_NilReceiverReturnsFalse(t *testing.T) {
 	var h *SaltedTokenHash
-	if h.Verify("any-token") {
+	if h.Verify([]byte("any-token")) {
 		t.Error("expected Verify to return false on nil receiver")
 	}
 }
@@ -159,7 +159,7 @@ func TestVerify_CorruptSaltReturnsFalse(t *testing.T) {
 		t.Fatalf("setup error: %v", err)
 	}
 	h.Salt = "not-hex!!!"
-	if h.Verify("token") {
+	if h.Verify([]byte("token")) {
 		t.Error("expected Verify to return false with corrupt salt")
 	}
 }
@@ -170,7 +170,7 @@ func TestVerify_CorruptHashReturnsFalse(t *testing.T) {
 		t.Fatalf("setup error: %v", err)
 	}
 	h.Hash = "not-hex!!!"
-	if h.Verify("token") {
+	if h.Verify([]byte("token")) {
 		t.Error("expected Verify to return false with corrupt hash")
 	}
 }
@@ -193,7 +193,7 @@ func TestVerify_IsConstantTime_SimilarTokensAllFail(t *testing.T) {
 		strings.ToUpper(token),
 	}
 	for _, v := range variants {
-		if h.Verify(v) {
+		if h.Verify([]byte(v)) {
 			t.Errorf("Verify should return false for near-miss token %q", v)
 		}
 	}
@@ -211,10 +211,10 @@ func TestVerify_DeterministicWithFixedSalt(t *testing.T) {
 	}
 
 	// Verify twice to confirm the derivation is deterministic.
-	if !h.Verify(token) {
+	if !h.Verify([]byte(token)) {
 		t.Error("first Verify call failed")
 	}
-	if !h.Verify(token) {
+	if !h.Verify([]byte(token)) {
 		t.Error("second Verify call failed — derivation is not deterministic")
 	}
 }
@@ -247,7 +247,7 @@ func TestSaltedTokenHash_JSONRoundTrip(t *testing.T) {
 		t.Errorf("hash mismatch after JSON round-trip: got %q, want %q", restored.Hash, original.Hash)
 	}
 
-	if !restored.Verify(token) {
+	if !restored.Verify([]byte(token)) {
 		t.Error("Verify failed on JSON-restored SaltedTokenHash")
 	}
 }
@@ -342,7 +342,7 @@ func TestNewSaltedTokenHash_ZerosRawMaterial(t *testing.T) {
 	}
 
 	// Verify must succeed, proving the encoded strings were not corrupted.
-	if !h.Verify(token) {
+	if !h.Verify([]byte(token)) {
 		t.Error("Verify failed after raw bytes were zeroed — struct fields corrupted")
 	}
 }
@@ -362,7 +362,7 @@ func TestVerify_ZerosIntermediateBuffers(t *testing.T) {
 	hashBefore := h.Hash
 
 	for i := range 5 {
-		if !h.Verify(token) {
+		if !h.Verify([]byte(token)) {
 			t.Errorf("Verify returned false on call %d — intermediate buffer zeroing corrupted struct state", i+1)
 		}
 	}
