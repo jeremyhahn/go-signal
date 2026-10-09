@@ -82,7 +82,7 @@ func TestVerificationConfig_ApplyDefaults_PartialTransport(t *testing.T) {
 }
 
 func TestVerificationConfig_SMTPConfig_Fields(t *testing.T) {
-	smtpPassword := secrets.MustNewSecureString("secret")
+	smtpPassword := secrets.MustNewSecureString(t.Context(), "secret")
 	defer smtpPassword.Destroy()
 
 	cfg := &VerificationConfig{
@@ -125,7 +125,7 @@ func TestVerificationConfig_SMTPConfig_Fields(t *testing.T) {
 	if cfg.SMTP.CarrierGateways["att"] != "txt.att.net" {
 		t.Errorf("got att gateway %q", cfg.SMTP.CarrierGateways["att"])
 	}
-	if cfg.SMTP.Password == nil || cfg.SMTP.Password.Plaintext() != "secret" {
+	if cfg.SMTP.Password == nil || cfg.SMTP.Password.Plaintext(t.Context()) != "secret" {
 		t.Errorf("got smtp password %v", cfg.SMTP.Password)
 	}
 }

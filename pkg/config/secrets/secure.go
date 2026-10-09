@@ -4,6 +4,7 @@
 package secrets
 
 import (
+	"context"
 	"encoding/json"
 	"sync"
 
@@ -19,6 +20,11 @@ const redacted = "[REDACTED]"
 // can be exercised by fault injection; production code never reassigns it.
 var sealSecret = secure.NewSecret
 
+// stageBuffer is the locked-memory allocator a decode hook stages a value in
+// until Seal moves it into sealed storage. Same seam and same reasoning as
+// sealSecret.
+var stageBuffer = secure.NewBufferFromBytes
+
 // SecureString holds sensitive string data in the shared protected-memory
 // abstraction (go-qrdb's secure package, re-exported by the go-xkms SDK as
 // github.com/jeremyhahn/go-xkms/sdk/go/secure). The value is sealed in an
@@ -31,6 +37,13 @@ var sealSecret = secure.NewSecret
 // SecureString adds is the go-signal-specific surface — redaction on
 // String/MarshalJSON and YAML config binding — so it integrates transparently
 // with logging, JSON serialization, and YAML config loading.
+//
+// Every operation that seals or opens the value takes the caller's context:
+// the upstream Sealer may be backed by a key provider that blocks, and the
+// context is what bounds that call. A value decoded from YAML arrives through
+// a hook that carries no context, so it is held in locked memory until Seal
+// moves it into sealed storage; config.Load does that for every secret in
+// the configuration tree.
 //
 // The String() method intentionally returns "[REDACTED]" to prevent
 // accidental exposure in structured log output. Use Plaintext() or
@@ -56,6 +69,11 @@ type SecureString struct {
 	mu  sync.RWMutex
 	sec *secure.Secret
 
+	// staged holds a value decoded by UnmarshalYAML, which has no context to
+	// seal under, until Seal moves it into sec. At most one of sec and staged
+	// is non-nil.
+	staged *secure.Buffer
+
 	// configured records that a value was sealed here at construction. It
 	// is what separates "never set" from "set but no longer available":
 	// Destroy clears sec, and an enclave that will not Open leaves sec
@@ -79,14 +97,17 @@ type SecureString struct {
 // The intermediate byte slice is consumed by the secure package, which wipes
 // it before returning, so plaintext lives in unprotected memory only for the
 // duration of the copy.
-func NewSecureString(value string) (*SecureString, error) {
+//
+// ctx bounds the seal: the upstream Sealer may be backed by a provider that
+// blocks.
+func NewSecureString(ctx context.Context, value string) (*SecureString, error) {
 	if value == "" {
 		return nil, &EmptySecretError{}
 	}
 
 	// NewSecret copies src into an enclave and wipes src on return.
 	src := []byte(value)
-	sec, err := sealSecret(src)
+	sec, err := sealSecret(ctx, src)
 	if err != nil {
 		// Wipe rather than retain plaintext the caller believes is
 		// protected, then report the failure so the caller can abort.
@@ -105,19 +126,19 @@ func NewSecureString(value string) (*SecureString, error) {
 // Credential material must not use this constructor: an issued credential is
 // never legitimately empty, and NewSecureString's *EmptySecretError is what
 // keeps an empty password from reaching a client.
-func NewOptionalSecureString(value string) (*SecureString, error) {
+func NewOptionalSecureString(ctx context.Context, value string) (*SecureString, error) {
 	if value == "" {
 		return &SecureString{}, nil
 	}
-	return NewSecureString(value)
+	return NewSecureString(ctx, value)
 }
 
 // MustNewSecureString is NewOptionalSecureString for call sites that cannot
 // act on a failure — tests and fixtures. It panics if the value cannot be
 // sealed. Production code paths must use NewSecureString or
 // NewOptionalSecureString and propagate the error.
-func MustNewSecureString(value string) *SecureString {
-	s, err := NewOptionalSecureString(value)
+func MustNewSecureString(ctx context.Context, value string) *SecureString {
+	s, err := NewOptionalSecureString(ctx, value)
 	if err != nil {
 		panic("secrets: " + err.Error())
 	}
@@ -139,29 +160,25 @@ func (s *SecureString) String() string {
 // the bearer of, an upstream Authorization header — must use Reveal, so that
 // a secret which is not available fails the operation instead of being
 // serialised as an empty value the peer would treat as valid.
-func (s *SecureString) Reveal() (string, error) {
+func (s *SecureString) Reveal(ctx context.Context) (string, error) {
 	if s == nil {
 		return "", &UnavailableSecretError{}
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.sec == nil {
-		return "", &UnavailableSecretError{}
+	var value string
+	if err := s.withMaterialLocked(ctx, func(b []byte) { value = string(b) }); err != nil {
+		return "", err
 	}
-	buf, err := s.sec.Open()
-	if err != nil {
-		return "", &UnavailableSecretError{Cause: err}
-	}
-	defer buf.Destroy()
-	return string(buf.Bytes()), nil
+	return value, nil
 }
 
 // Plaintext is Reveal for call sites that already treat an absent secret as
 // "not configured" — an optional config field, a presence check. It returns
 // an empty string where Reveal returns an error. Credential boundaries must
 // use Reveal instead.
-func (s *SecureString) Plaintext() string {
-	value, err := s.Reveal()
+func (s *SecureString) Plaintext(ctx context.Context) string {
+	value, err := s.Reveal(ctx)
 	if err != nil {
 		return ""
 	}
@@ -172,22 +189,23 @@ func (s *SecureString) Plaintext() string {
 // The returned slice is a plain heap allocation — callers should zero it
 // when done. Returns nil if the SecureString has been destroyed or was
 // never set.
-func (s *SecureString) Bytes() []byte {
+func (s *SecureString) Bytes(ctx context.Context) []byte {
 	if s == nil {
 		return nil
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.sec == nil {
-		return nil
-	}
-	buf, err := s.sec.Open()
+	buf, release, err := s.openLocked(ctx)
 	if err != nil {
 		return nil
 	}
-	defer buf.Destroy()
-	out := make([]byte, len(buf.Bytes()))
-	copy(out, buf.Bytes())
+	defer release()
+	// CopyOut holds the borrow across the whole copy and refuses an empty
+	// source rather than returning zeros.
+	out, err := secure.CopyOut(buf)
+	if err != nil {
+		return nil
+	}
 	return out
 }
 
@@ -214,21 +232,18 @@ func (s *SecureString) IsAbsent() bool {
 
 // IsDestroyed reports whether the underlying secret has been destroyed
 // or was never set (i.e. was created from an empty string).
-func (s *SecureString) IsDestroyed() bool {
+func (s *SecureString) IsDestroyed(ctx context.Context) bool {
 	if s == nil {
 		return true
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.sec == nil {
-		return true
-	}
 	// Attempt to open; if it fails the secret has been destroyed.
-	buf, err := s.sec.Open()
+	_, release, err := s.openLocked(ctx)
 	if err != nil {
 		return true
 	}
-	buf.Destroy()
+	release()
 	return false
 }
 
@@ -244,11 +259,87 @@ func (s *SecureString) Destroy() {
 	// reader is holding an open buffer when the enclave goes away.
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.sec == nil {
-		return
+	s.destroyLocked()
+}
+
+// destroyLocked wipes whichever form holds the value. The write lock must
+// already be held.
+func (s *SecureString) destroyLocked() {
+	if s.sec != nil {
+		s.sec.Destroy()
+		s.sec = nil
 	}
-	s.sec.Destroy()
-	s.sec = nil
+	if s.staged != nil {
+		s.staged.Destroy()
+		s.staged = nil
+	}
+}
+
+// openLocked returns a borrowable buffer holding the plaintext and the
+// function that releases it. A sealed value is opened into a fresh buffer the
+// caller owns until release; a staged value is borrowed in place and release
+// leaves it alone. The receiver's lock must already be held.
+//
+// An unset, destroyed or unopenable value is *UnavailableSecretError.
+func (s *SecureString) openLocked(ctx context.Context) (*secure.Buffer, func(), error) {
+	if s.sec != nil {
+		buf, err := s.sec.Open(ctx)
+		if err != nil {
+			return nil, nil, &UnavailableSecretError{Cause: err}
+		}
+		return buf, buf.Destroy, nil
+	}
+	if s.staged != nil {
+		return s.staged, func() {}, nil
+	}
+	return nil, nil, &UnavailableSecretError{}
+}
+
+// withMaterialLocked runs fn over the plaintext inside the buffer's own
+// borrow, so the pages stay mapped for the whole of fn, and releases the
+// buffer before returning — including when fn panics. The receiver's lock
+// must already be held.
+func (s *SecureString) withMaterialLocked(ctx context.Context, fn func([]byte)) error {
+	buf, release, err := s.openLocked(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err := buf.WithBytes(func(b []byte) error {
+		fn(b)
+		return nil
+	}); err != nil {
+		return &UnavailableSecretError{Cause: err}
+	}
+	return nil
+}
+
+// Seal moves a value staged by UnmarshalYAML into sealed storage, under ctx.
+// It is a no-op for a nil receiver and for a value that is already sealed,
+// unset or destroyed, so a loader can call it on every secret it decoded.
+//
+// A seal failure is *SealError and leaves the value configured but
+// unavailable: the staged buffer is consumed either way, and a secret that
+// could not be protected must fail the load rather than linger unsealed.
+func (s *SecureString) Seal(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.staged == nil {
+		return nil
+	}
+	// NewSecretFromBuffer consumes the buffer on every return path.
+	staged := s.staged
+	s.staged = nil
+	sec, err := sealProtectedBuffer(ctx, staged)
+	if err != nil {
+		staged.Destroy()
+		return &SealError{Cause: err}
+	}
+	s.sec = sec
+	return nil
 }
 
 // MarshalJSON implements encoding/json.Marshaler and always serialises as
@@ -269,11 +360,21 @@ func (s *SecureString) UnmarshalYAML(unmarshal func(any) error) error {
 		return err
 	}
 	// We cannot control Go string internals, so the intermediate `raw`
-	// cannot be wiped; the enclave copy is what outlives this call. A YAML
+	// cannot be wiped; the locked copy is what outlives this call. A YAML
 	// key may legitimately be absent or empty, so this is an optional value.
-	created, err := NewOptionalSecureString(raw)
-	if err != nil {
-		return err
+	//
+	// The hook carries no context, so the value cannot be sealed here: it is
+	// moved into locked memory, readable at once, and sealed by Seal under
+	// the loader's context. config.Load seals every secret it decodes.
+	var staged *secure.Buffer
+	if raw != "" {
+		// NewBufferFromBytes copies src into locked memory and wipes src on
+		// every return path.
+		buf, err := stageBuffer([]byte(raw))
+		if err != nil {
+			return &SealError{Cause: err}
+		}
+		staged = buf
 	}
 	// Decoding into a SecureString that already holds a value replaces it;
 	// wipe the previous allocation rather than abandoning it, and only once
@@ -282,10 +383,8 @@ func (s *SecureString) UnmarshalYAML(unmarshal func(any) error) error {
 	// the gap between them.
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.sec != nil {
-		s.sec.Destroy()
-	}
-	s.sec = created.sec
+	s.destroyLocked()
+	s.staged = staged
 	// configured travels with the value, not just the allocation. Without
 	// this every secret loaded from YAML reports IsAbsent() == true even
 	// when the file supplies one, and a call site that selects a legacy or
@@ -294,6 +393,6 @@ func (s *SecureString) UnmarshalYAML(unmarshal func(any) error) error {
 	// It is assigned rather than OR-ed: decoding an empty node over a
 	// previously configured value genuinely leaves this SecureString unset,
 	// and claiming otherwise would report a key that is not there.
-	s.configured = created.configured
+	s.configured = staged != nil
 	return nil
 }

@@ -21,7 +21,7 @@ func TestAutoGenResolver_Resolve_AutoSentinel(t *testing.T) {
 	require.NotNil(t, result)
 	defer result.Destroy()
 
-	plain := result.Plaintext()
+	plain := result.Plaintext(t.Context())
 	assert.Len(t, plain, 64) // 32 bytes → 64 hex chars
 	assert.NotEqual(t, "auto", plain)
 }
@@ -34,7 +34,7 @@ func TestAutoGenResolver_Resolve_ChangemeSentinel(t *testing.T) {
 	require.NotNil(t, result)
 	defer result.Destroy()
 
-	assert.Len(t, result.Plaintext(), 32) // 16 bytes → 32 hex chars
+	assert.Len(t, result.Plaintext(t.Context()), 32) // 16 bytes → 32 hex chars
 }
 
 func TestAutoGenResolver_Resolve_PlaceholderSentinel(t *testing.T) {
@@ -45,7 +45,7 @@ func TestAutoGenResolver_Resolve_PlaceholderSentinel(t *testing.T) {
 	require.NotNil(t, result)
 	defer result.Destroy()
 
-	assert.Len(t, result.Plaintext(), 64)
+	assert.Len(t, result.Plaintext(t.Context()), 64)
 }
 
 func TestAutoGenResolver_Resolve_NonSentinelPassthrough(t *testing.T) {
@@ -56,7 +56,7 @@ func TestAutoGenResolver_Resolve_NonSentinelPassthrough(t *testing.T) {
 	require.NotNil(t, result)
 	defer result.Destroy()
 
-	assert.Equal(t, "actual-password", result.Plaintext())
+	assert.Equal(t, "actual-password", result.Plaintext(t.Context()))
 }
 
 func TestAutoGenResolver_Resolve_CachedOnSecondCall(t *testing.T) {
@@ -70,7 +70,7 @@ func TestAutoGenResolver_Resolve_CachedOnSecondCall(t *testing.T) {
 	require.NoError(t, err)
 	defer second.Destroy()
 
-	assert.Equal(t, first.Plaintext(), second.Plaintext())
+	assert.Equal(t, first.Plaintext(t.Context()), second.Plaintext(t.Context()))
 }
 
 func TestAutoGenResolver_Resolve_DifferentSentinelsDifferentValues(t *testing.T) {
@@ -84,7 +84,7 @@ func TestAutoGenResolver_Resolve_DifferentSentinelsDifferentValues(t *testing.T)
 	require.NoError(t, err)
 	defer changemeResult.Destroy()
 
-	assert.NotEqual(t, autoResult.Plaintext(), changemeResult.Plaintext())
+	assert.NotEqual(t, autoResult.Plaintext(t.Context()), changemeResult.Plaintext(t.Context()))
 }
 
 func TestAutoGenResolver_DefaultByteLength(t *testing.T) {
@@ -95,7 +95,7 @@ func TestAutoGenResolver_DefaultByteLength(t *testing.T) {
 	require.NotNil(t, result)
 	defer result.Destroy()
 
-	assert.Len(t, result.Plaintext(), 64) // default 32 bytes → 64 hex chars
+	assert.Len(t, result.Plaintext(t.Context()), 64) // default 32 bytes → 64 hex chars
 }
 
 func TestAutoGenResolver_Resolve_ReturnsSecureString(t *testing.T) {
@@ -108,7 +108,7 @@ func TestAutoGenResolver_Resolve_ReturnsSecureString(t *testing.T) {
 
 	// String() must never expose the generated secret.
 	assert.Equal(t, redacted, result.String())
-	assert.NotEmpty(t, result.Plaintext())
+	assert.NotEmpty(t, result.Plaintext(t.Context()))
 }
 
 func TestIsSentinel(t *testing.T) {
@@ -138,7 +138,7 @@ func TestAutoGenResolver_SealFailure_CachedCopy(t *testing.T) {
 	r := NewAutoGenResolver(16)
 	first, err := r.Resolve(context.Background(), "auto")
 	require.NoError(t, err)
-	require.NotEmpty(t, first.Plaintext())
+	require.NotEmpty(t, first.Plaintext(t.Context()))
 
 	failSealing(t)
 	s, err := r.Resolve(context.Background(), "auto")

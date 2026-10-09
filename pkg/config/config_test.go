@@ -34,7 +34,7 @@ storage:
 
 func TestLoad_ValidConfig(t *testing.T) {
 	path := writeYAML(t, validYAML())
-	cfg, err := Load(path)
+	cfg, err := Load(t.Context(), path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestLoad_ValidConfig(t *testing.T) {
 }
 
 func TestLoad_FileNotFound(t *testing.T) {
-	_, err := Load("/nonexistent/path/config.yaml")
+	_, err := Load(t.Context(), "/nonexistent/path/config.yaml")
 	if err == nil {
 		t.Fatal("expected error for nonexistent file")
 	}
@@ -68,7 +68,7 @@ func TestLoad_FileNotFound(t *testing.T) {
 
 func TestLoad_InvalidYAML(t *testing.T) {
 	path := writeYAML(t, "{{{{invalid yaml")
-	_, err := Load(path)
+	_, err := Load(t.Context(), path)
 	if err == nil {
 		t.Fatal("expected error for invalid YAML")
 	}
@@ -86,7 +86,7 @@ storage:
   backend: "memory"
 `
 	path := writeYAML(t, yaml)
-	_, err := Load(path)
+	_, err := Load(t.Context(), path)
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
@@ -107,7 +107,7 @@ storage:
   backend: ""
 `
 	path := writeYAML(t, yaml)
-	_, err := Load(path)
+	_, err := Load(t.Context(), path)
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
@@ -122,7 +122,7 @@ storage:
 
 func TestLoad_EmptyFile(t *testing.T) {
 	path := writeYAML(t, "")
-	_, err := Load(path)
+	_, err := Load(t.Context(), path)
 	if err == nil {
 		t.Fatal("expected validation error for empty config")
 	}
@@ -136,7 +136,7 @@ storage:
   backend: "memory"
 `
 	path := writeYAML(t, yaml)
-	cfg, err := Load(path)
+	cfg, err := Load(t.Context(), path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -153,7 +153,7 @@ storage:
   backend: "memory"
 `
 	path := writeYAML(t, yaml)
-	cfg, err := Load(path)
+	cfg, err := Load(t.Context(), path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -170,7 +170,7 @@ storage:
   backend: "memory"
 `
 	path := writeYAML(t, yaml)
-	cfg, err := Load(path)
+	cfg, err := Load(t.Context(), path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -188,7 +188,7 @@ storage:
   backend: "memory"
 `
 	path := writeYAML(t, yaml)
-	cfg, err := Load(path)
+	cfg, err := Load(t.Context(), path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -267,7 +267,7 @@ directory:
   enabled: true
 `
 	path := writeYAML(t, yaml)
-	cfg, err := Load(path)
+	cfg, err := Load(t.Context(), path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -291,13 +291,13 @@ directory:
 	if len(cfg.Turn.Cloudflare.URLs) != 2 {
 		t.Errorf("got %d turn URLs", len(cfg.Turn.Cloudflare.URLs))
 	}
-	if cfg.Turn.Cloudflare.APIToken == nil || cfg.Turn.Cloudflare.APIToken.Plaintext() != "cf-token" {
+	if cfg.Turn.Cloudflare.APIToken == nil || cfg.Turn.Cloudflare.APIToken.Plaintext(t.Context()) != "cf-token" {
 		t.Errorf("got cloudflare api token %v", cfg.Turn.Cloudflare.APIToken)
 	}
 	if !cfg.ZKConfig.Enabled {
 		t.Error("expected zkConfig enabled")
 	}
-	if cfg.Payments.Stripe.APIKey == nil || cfg.Payments.Stripe.APIKey.Plaintext() != "sk_test_xxx" {
+	if cfg.Payments.Stripe.APIKey == nil || cfg.Payments.Stripe.APIKey.Plaintext(t.Context()) != "sk_test_xxx" {
 		t.Errorf("got stripe key %v", cfg.Payments.Stripe.APIKey)
 	}
 	if !cfg.Directory.Enabled {
@@ -309,7 +309,7 @@ func TestValidate_BothPortsZero(t *testing.T) {
 	cfg := &Config{
 		Storage: StorageConfig{Backend: "memory"},
 	}
-	err := cfg.Validate()
+	err := cfg.Validate(t.Context())
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
@@ -324,7 +324,7 @@ func TestValidate_HTTPPortSet(t *testing.T) {
 		Server:  ServerConfig{HTTPPort: 8080},
 		Storage: StorageConfig{Backend: "memory"},
 	}
-	err := cfg.Validate()
+	err := cfg.Validate(t.Context())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -335,7 +335,7 @@ func TestValidate_GRPCPortSet(t *testing.T) {
 		Server:  ServerConfig{GRPCPort: 9090},
 		Storage: StorageConfig{Backend: "memory"},
 	}
-	err := cfg.Validate()
+	err := cfg.Validate(t.Context())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestValidate_MissingBackend(t *testing.T) {
 	cfg := &Config{
 		Server: ServerConfig{HTTPPort: 8080},
 	}
-	err := cfg.Validate()
+	err := cfg.Validate(t.Context())
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
@@ -363,7 +363,7 @@ func TestValidate_DefaultMaxDevices(t *testing.T) {
 		Server:  ServerConfig{HTTPPort: 8080},
 		Storage: StorageConfig{Backend: "memory"},
 	}
-	err := cfg.Validate()
+	err := cfg.Validate(t.Context())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -377,7 +377,7 @@ func TestValidate_PreserveExistingMaxDevices(t *testing.T) {
 		Server:  ServerConfig{HTTPPort: 8080, MaxDevices: 12},
 		Storage: StorageConfig{Backend: "memory"},
 	}
-	err := cfg.Validate()
+	err := cfg.Validate(t.Context())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -493,34 +493,34 @@ func TestConfig_Destroy(t *testing.T) {
 		Storage: StorageConfig{
 			Backend: "memory",
 			Postgres: PostgresConfig{
-				Password: secrets.MustNewSecureString("db-password"),
+				Password: secrets.MustNewSecureString(t.Context(), "db-password"),
 			},
 		},
 		Cache: CacheConfig{
 			Redis: RedisConfig{
-				Password: secrets.MustNewSecureString("redis-password"),
+				Password: secrets.MustNewSecureString(t.Context(), "redis-password"),
 			},
 		},
 		ZKConfig: ZKConfig{
-			ServerSecret: secrets.MustNewSecureString("zk-secret"),
+			ServerSecret: secrets.MustNewSecureString(t.Context(), "zk-secret"),
 		},
 		Captcha: CaptchaConfig{
-			SecretKey: secrets.MustNewSecureString("captcha-secret"),
+			SecretKey: secrets.MustNewSecureString(t.Context(), "captcha-secret"),
 		},
 	}
 
 	cfg.Destroy()
 
-	if cfg.Storage.Postgres.Password != nil && !cfg.Storage.Postgres.Password.IsDestroyed() {
+	if cfg.Storage.Postgres.Password != nil && !cfg.Storage.Postgres.Password.IsDestroyed(t.Context()) {
 		t.Error("expected Postgres.Password to be destroyed")
 	}
-	if cfg.Cache.Redis.Password != nil && !cfg.Cache.Redis.Password.IsDestroyed() {
+	if cfg.Cache.Redis.Password != nil && !cfg.Cache.Redis.Password.IsDestroyed(t.Context()) {
 		t.Error("expected Redis.Password to be destroyed")
 	}
-	if cfg.ZKConfig.ServerSecret != nil && !cfg.ZKConfig.ServerSecret.IsDestroyed() {
+	if cfg.ZKConfig.ServerSecret != nil && !cfg.ZKConfig.ServerSecret.IsDestroyed(t.Context()) {
 		t.Error("expected ZKConfig.ServerSecret to be destroyed")
 	}
-	if cfg.Captcha.SecretKey != nil && !cfg.Captcha.SecretKey.IsDestroyed() {
+	if cfg.Captcha.SecretKey != nil && !cfg.Captcha.SecretKey.IsDestroyed(t.Context()) {
 		t.Error("expected Captcha.SecretKey to be destroyed")
 	}
 }
@@ -540,7 +540,7 @@ func TestConfig_Destroy_Idempotent(t *testing.T) {
 		Storage: StorageConfig{
 			Backend: "memory",
 			Postgres: PostgresConfig{
-				Password: secrets.MustNewSecureString("db-password"),
+				Password: secrets.MustNewSecureString(t.Context(), "db-password"),
 			},
 		},
 	}
@@ -550,28 +550,29 @@ func TestConfig_Destroy_Idempotent(t *testing.T) {
 
 // validProductionConfig returns a Config that passes the production gate.
 // Tests mutate one field at a time to assert each violation is detected.
-func validProductionConfig() *Config {
+func validProductionConfig(t *testing.T) *Config {
+	t.Helper()
 	return &Config{
 		Mode:            "production",
 		Server:          ServerConfig{HTTPPort: 443, MaxDevices: 6, TLSCertFile: "/tls/c.pem", TLSKeyFile: "/tls/k.pem", AllowedOrigins: []string{"https://chat.example.com"}},
 		Storage:         StorageConfig{Backend: "postgres"},
 		Cache:           CacheConfig{Backend: "redis"},
-		ZKConfig:        ZKConfig{Enabled: true, ServerSecret: secrets.MustNewSecureString("zk-secret")},
-		CallingZKConfig: CallingZKConfig{ServerSecret: secrets.MustNewSecureString("calling-secret")},
+		ZKConfig:        ZKConfig{Enabled: true, ServerSecret: secrets.MustNewSecureString(t.Context(), "zk-secret")},
+		CallingZKConfig: CallingZKConfig{ServerSecret: secrets.MustNewSecureString(t.Context(), "calling-secret")},
 		Verification:    VerificationConfig{Transport: "twilio"},
 		Captcha:         CaptchaConfig{Provider: "hcaptcha"},
 		CDN: CDNConfig{
 			Bucket:    "prod-cdn",
 			Region:    "us-east-1",
-			AccessKey: secrets.MustNewSecureString("AKIAPRODUCTIONKEY"),
-			SecretKey: secrets.MustNewSecureString("prod-secret-key"),
+			AccessKey: secrets.MustNewSecureString(t.Context(), "AKIAPRODUCTIONKEY"),
+			SecretKey: secrets.MustNewSecureString(t.Context(), "prod-secret-key"),
 		},
 		Limits: LimitsConfig{Messages: RateLimitConfig{BucketSize: 200, LeakRatePerMin: 60}},
 	}
 }
 
 func TestValidate_ProductionConfig_Passes(t *testing.T) {
-	if err := validProductionConfig().Validate(); err != nil {
+	if err := validProductionConfig(t).Validate(t.Context()); err != nil {
 		t.Fatalf("expected valid production config to pass, got: %v", err)
 	}
 }
@@ -586,7 +587,7 @@ func TestValidate_ProductionConfig_NonProductionModeSkipsGate(t *testing.T) {
 		Verification: VerificationConfig{Transport: "stub", FixedCode: "123456"},
 		Captcha:      CaptchaConfig{Provider: "test"},
 	}
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.Validate(t.Context()); err != nil {
 		t.Fatalf("non-production mode should skip the gate, got: %v", err)
 	}
 	if cfg.IsProduction() {
@@ -599,25 +600,27 @@ func TestValidate_ProductionGate_DetectsEachViolation(t *testing.T) {
 		mutate     func(*Config)
 		wantSubstr string
 	}{
-		"memory storage":        {func(c *Config) { c.Storage.Backend = "memory" }, "storage.backend"},
-		"qrdb storage":          {func(c *Config) { c.Storage.Backend = "qrdb" }, "storage.backend"},
-		"dynamodb storage":      {func(c *Config) { c.Storage.Backend = "dynamodb" }, "storage.backend"},
-		"memory cache":          {func(c *Config) { c.Cache.Backend = "memory" }, "cache.backend"},
-		"stub transport":        {func(c *Config) { c.Verification.Transport = "stub" }, "verification.transport"},
-		"empty transport":       {func(c *Config) { c.Verification.Transport = "" }, "verification.transport"},
-		"fixed code":            {func(c *Config) { c.Verification.FixedCode = "123456" }, "verification.fixedCode"},
-		"test captcha":          {func(c *Config) { c.Captcha.Provider = "test" }, "captcha.provider"},
-		"empty captcha":         {func(c *Config) { c.Captcha.Provider = "" }, "captcha.provider"},
-		"zk disabled":           {func(c *Config) { c.ZKConfig.Enabled = false }, "zkConfig"},
-		"zk empty secret":       {func(c *Config) { c.ZKConfig.ServerSecret = nil }, "zkConfig"},
-		"calling zk empty":      {func(c *Config) { c.CallingZKConfig.ServerSecret = nil }, "callingZkConfig"},
-		"calling zk test value": {func(c *Config) { c.CallingZKConfig.ServerSecret = secrets.MustNewSecureString(testCallingZKSecret) }, "well-known development secret"},
+		"memory storage":   {func(c *Config) { c.Storage.Backend = "memory" }, "storage.backend"},
+		"qrdb storage":     {func(c *Config) { c.Storage.Backend = "qrdb" }, "storage.backend"},
+		"dynamodb storage": {func(c *Config) { c.Storage.Backend = "dynamodb" }, "storage.backend"},
+		"memory cache":     {func(c *Config) { c.Cache.Backend = "memory" }, "cache.backend"},
+		"stub transport":   {func(c *Config) { c.Verification.Transport = "stub" }, "verification.transport"},
+		"empty transport":  {func(c *Config) { c.Verification.Transport = "" }, "verification.transport"},
+		"fixed code":       {func(c *Config) { c.Verification.FixedCode = "123456" }, "verification.fixedCode"},
+		"test captcha":     {func(c *Config) { c.Captcha.Provider = "test" }, "captcha.provider"},
+		"empty captcha":    {func(c *Config) { c.Captcha.Provider = "" }, "captcha.provider"},
+		"zk disabled":      {func(c *Config) { c.ZKConfig.Enabled = false }, "zkConfig"},
+		"zk empty secret":  {func(c *Config) { c.ZKConfig.ServerSecret = nil }, "zkConfig"},
+		"calling zk empty": {func(c *Config) { c.CallingZKConfig.ServerSecret = nil }, "callingZkConfig"},
+		"calling zk test value": {func(c *Config) {
+			c.CallingZKConfig.ServerSecret = secrets.MustNewSecureString(t.Context(), testCallingZKSecret)
+		}, "well-known development secret"},
 		"empty cdn bucket":      {func(c *Config) { c.CDN.Bucket = "" }, "cdn.bucket"},
 		"empty cdn region":      {func(c *Config) { c.CDN.Region = "" }, "cdn.region"},
 		"empty cdn access key":  {func(c *Config) { c.CDN.AccessKey = nil }, "cdn.accessKey"},
 		"empty cdn secret key":  {func(c *Config) { c.CDN.SecretKey = nil }, "cdn.secretKey"},
-		"dev cdn access key":    {func(c *Config) { c.CDN.AccessKey = secrets.MustNewSecureString(devCDNAccessKey) }, "well-known development placeholders"},
-		"dev cdn secret key":    {func(c *Config) { c.CDN.SecretKey = secrets.MustNewSecureString(devCDNSecretKey) }, "well-known development placeholders"},
+		"dev cdn access key":    {func(c *Config) { c.CDN.AccessKey = secrets.MustNewSecureString(t.Context(), devCDNAccessKey) }, "well-known development placeholders"},
+		"dev cdn secret key":    {func(c *Config) { c.CDN.SecretKey = secrets.MustNewSecureString(t.Context(), devCDNSecretKey) }, "well-known development placeholders"},
 		"no tls cert":           {func(c *Config) { c.Server.TLSCertFile = "" }, "tlsCertFile"},
 		"no tls key":            {func(c *Config) { c.Server.TLSKeyFile = "" }, "tlsKeyFile"},
 		"wildcard origin":       {func(c *Config) { c.Server.AllowedOrigins = []string{"*"} }, "allowedOrigins"},
@@ -628,9 +631,9 @@ func TestValidate_ProductionGate_DetectsEachViolation(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			cfg := validProductionConfig()
+			cfg := validProductionConfig(t)
 			tc.mutate(cfg)
-			err := cfg.Validate()
+			err := cfg.Validate(t.Context())
 			if err == nil {
 				t.Fatalf("expected production violation for %q, got nil", name)
 			}
@@ -653,11 +656,11 @@ func TestValidate_ProductionGate_DetectsEachViolation(t *testing.T) {
 }
 
 func TestValidate_ProductionGate_AggregatesMultiple(t *testing.T) {
-	cfg := validProductionConfig()
+	cfg := validProductionConfig(t)
 	cfg.Storage.Backend = "memory"
 	cfg.Verification.Transport = "stub"
 	cfg.Captcha.Provider = "test"
-	err := cfg.Validate()
+	err := cfg.Validate(t.Context())
 	var pErr *ProductionValidationError
 	if !errors.As(err, &pErr) {
 		t.Fatalf("expected *ProductionValidationError, got %T", err)
@@ -684,7 +687,7 @@ func TestLoad_ProductionTemplate_PassesGate(t *testing.T) {
 	// The shipped production template must always satisfy the production
 	// gate; ${ENV} secret references are stored verbatim at load (resolution
 	// happens later) and read as non-empty, so the presence checks pass.
-	cfg, err := Load("../../configs/signal-server-prod.yml")
+	cfg, err := Load(t.Context(), "../../configs/signal-server-prod.yml")
 	if err != nil {
 		t.Fatalf("production template must load and pass the gate, got: %v", err)
 	}

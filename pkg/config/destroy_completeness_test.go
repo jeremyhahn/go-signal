@@ -67,7 +67,7 @@ func TestDestroy_WipesEveryProtectedFieldInTheConfigTree(t *testing.T) {
 		if !field.CanSet() {
 			t.Fatalf("%s is not settable — the walk cannot populate it, so this test would pass vacuously", path)
 		}
-		field.Set(reflect.ValueOf(secrets.MustNewSecureString("value-for-" + path)))
+		field.Set(reflect.ValueOf(secrets.MustNewSecureString(t.Context(), "value-for-"+path)))
 		populated = append(populated, path)
 	})
 
@@ -81,7 +81,7 @@ func TestDestroy_WipesEveryProtectedFieldInTheConfigTree(t *testing.T) {
 	var survivors []string
 	walkProtectedFields(reflect.ValueOf(cfg), "", func(path string, field reflect.Value) {
 		ss, _ := field.Interface().(*secrets.SecureString)
-		if !ss.IsDestroyed() {
+		if !ss.IsDestroyed(t.Context()) {
 			survivors = append(survivors, path)
 		}
 	})
@@ -111,7 +111,7 @@ server:
   httpPort: "not-a-number"
 `)
 
-	cfg, err := Load(path)
+	cfg, err := Load(t.Context(), path)
 	if err == nil {
 		t.Fatal("Load accepted a malformed config")
 	}
@@ -123,7 +123,7 @@ server:
 	if c == nil {
 		t.Fatal("a failed parse abandoned the Config it had already built")
 	}
-	if url := c.Storage.Postgres.URL; url != nil && !url.IsDestroyed() {
+	if url := c.Storage.Postgres.URL; url != nil && !url.IsDestroyed(t.Context()) {
 		t.Error("storage.postgres.url survived a failed parse — the DSN's embedded credentials are still resident")
 	}
 }

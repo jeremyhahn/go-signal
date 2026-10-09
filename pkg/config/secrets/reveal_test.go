@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"runtime"
 	"testing"
@@ -40,11 +41,11 @@ const (
 )
 
 func TestWithBytes_RevealsTheStoredValue(t *testing.T) {
-	s := MustNewSecureString("hunter2")
+	s := MustNewSecureString(t.Context(), "hunter2")
 	defer s.Destroy()
 
 	var got []byte
-	if ok := s.WithBytes(func(b []byte) {
+	if ok := s.WithBytes(t.Context(), func(b []byte) {
 		got = append(got, b...)
 	}); !ok {
 		t.Fatal("WithBytes reported the secret unavailable")
@@ -62,7 +63,7 @@ func TestWithBytes_RevealsTheStoredValue(t *testing.T) {
 // revealHeapLimitNumerator for the measured endpoints.
 func TestWithBytes_RevealedBufferIsNotAHeapCopy(t *testing.T) {
 	const size = 1 << 20 // Large enough that one plaintext copy dwarfs constant overhead.
-	big, err := NewSecureStringFromBytes(bytes.Repeat([]byte("k"), size))
+	big, err := NewSecureStringFromBytes(t.Context(), bytes.Repeat([]byte("k"), size))
 	if err != nil {
 		t.Fatalf("NewSecureStringFromBytes: %v", err)
 	}
@@ -73,7 +74,7 @@ func TestWithBytes_RevealedBufferIsNotAHeapCopy(t *testing.T) {
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
 	for range reveals {
-		if ok := big.WithBytes(func(b []byte) {
+		if ok := big.WithBytes(t.Context(), func(b []byte) {
 			if len(b) != size {
 				t.Errorf("revealed %d bytes, want %d", len(b), size)
 			}
@@ -93,29 +94,29 @@ func TestWithBytes_RevealedBufferIsNotAHeapCopy(t *testing.T) {
 
 	// The plaintext is also unreachable through every public accessor once
 	// destroyed — necessary, but on its own it would not have caught a copy.
-	s := MustNewSecureString("hunter2")
+	s := MustNewSecureString(t.Context(), "hunter2")
 	var revealedLen int
-	s.WithBytes(func(b []byte) { revealedLen = len(b) })
+	s.WithBytes(t.Context(), func(b []byte) { revealedLen = len(b) })
 	if revealedLen != len("hunter2") {
 		t.Fatalf("revealed %d bytes, want %d", revealedLen, len("hunter2"))
 	}
 
 	s.Destroy()
-	if got := s.Plaintext(); got != "" {
+	if got := s.Plaintext(t.Context()); got != "" {
 		t.Errorf("Plaintext() = %q after Destroy, want empty", got)
 	}
-	if got := s.Bytes(); got != nil {
+	if got := s.Bytes(t.Context()); got != nil {
 		t.Errorf("Bytes() = %q after Destroy, want nil", got)
 	}
 }
 
 func TestWithBytes_RepeatedCallsEachSeeTheValue(t *testing.T) {
-	s := MustNewSecureString("rotate-me")
+	s := MustNewSecureString(t.Context(), "rotate-me")
 	defer s.Destroy()
 
 	for i := range 3 {
 		var got string
-		if ok := s.WithBytes(func(b []byte) { got = string(b) }); !ok {
+		if ok := s.WithBytes(t.Context(), func(b []byte) { got = string(b) }); !ok {
 			t.Fatalf("call %d: WithBytes reported the secret unavailable", i)
 		}
 		if got != "rotate-me" {
@@ -127,7 +128,7 @@ func TestWithBytes_RepeatedCallsEachSeeTheValue(t *testing.T) {
 func TestWithBytes_NilReceiverDoesNotRunFn(t *testing.T) {
 	var s *SecureString
 	ran := false
-	if ok := s.WithBytes(func([]byte) { ran = true }); ok {
+	if ok := s.WithBytes(t.Context(), func([]byte) { ran = true }); ok {
 		t.Error("WithBytes on a nil receiver reported success")
 	}
 	if ran {
@@ -136,11 +137,11 @@ func TestWithBytes_NilReceiverDoesNotRunFn(t *testing.T) {
 }
 
 func TestWithBytes_DestroyedSecretDoesNotRunFn(t *testing.T) {
-	s := MustNewSecureString("gone")
+	s := MustNewSecureString(t.Context(), "gone")
 	s.Destroy()
 
 	ran := false
-	if ok := s.WithBytes(func([]byte) { ran = true }); ok {
+	if ok := s.WithBytes(t.Context(), func([]byte) { ran = true }); ok {
 		t.Error("WithBytes on a destroyed secret reported success")
 	}
 	if ran {
@@ -149,9 +150,9 @@ func TestWithBytes_DestroyedSecretDoesNotRunFn(t *testing.T) {
 }
 
 func TestWithBytes_UnsetSecretDoesNotRunFn(t *testing.T) {
-	s := MustNewSecureString("")
+	s := MustNewSecureString(t.Context(), "")
 	ran := false
-	if ok := s.WithBytes(func([]byte) { ran = true }); ok {
+	if ok := s.WithBytes(t.Context(), func([]byte) { ran = true }); ok {
 		t.Error("WithBytes on an unset secret reported success")
 	}
 	if ran {
@@ -160,27 +161,27 @@ func TestWithBytes_UnsetSecretDoesNotRunFn(t *testing.T) {
 }
 
 func TestWithBytes_NilFnReportsFailure(t *testing.T) {
-	s := MustNewSecureString("value")
+	s := MustNewSecureString(t.Context(), "value")
 	defer s.Destroy()
-	if s.WithBytes(nil) {
+	if s.WithBytes(t.Context(), nil) {
 		t.Error("WithBytes(nil) reported success")
 	}
 }
 
 func TestNewSecureStringFromBytes_SealsTheValue(t *testing.T) {
-	ss, err := NewSecureStringFromBytes([]byte("from-bytes"))
+	ss, err := NewSecureStringFromBytes(t.Context(), []byte("from-bytes"))
 	if err != nil {
 		t.Fatalf("NewSecureStringFromBytes: %v", err)
 	}
 	defer ss.Destroy()
-	if got := ss.Plaintext(); got != "from-bytes" {
+	if got := ss.Plaintext(t.Context()); got != "from-bytes" {
 		t.Errorf("Plaintext() = %q, want %q", got, "from-bytes")
 	}
 }
 
 func TestNewSecureStringFromBytes_WipesTheSourceSlice(t *testing.T) {
 	src := []byte("wipe-me")
-	ss, err := NewSecureStringFromBytes(src)
+	ss, err := NewSecureStringFromBytes(t.Context(), src)
 	if err != nil {
 		t.Fatalf("NewSecureStringFromBytes: %v", err)
 	}
@@ -197,7 +198,7 @@ func TestNewSecureStringFromBytes_EmptyAndNilAreRejected(t *testing.T) {
 	// with nothing.
 	for name, value := range map[string][]byte{"nil": nil, "empty": {}} {
 		t.Run(name, func(t *testing.T) {
-			ss, err := NewSecureStringFromBytes(value)
+			ss, err := NewSecureStringFromBytes(t.Context(), value)
 			if err == nil {
 				t.Fatal("expected an error for an empty value")
 			}
@@ -218,11 +219,11 @@ func TestNewSecureStringFromBytes_SealFailureWipesTheSource(t *testing.T) {
 	// plaintext must not be left behind in the caller's slice.
 	injected := errors.New("seal failed")
 	restore := sealSecret
-	sealSecret = func([]byte) (*secure.Secret, error) { return nil, injected }
+	sealSecret = func(context.Context, []byte) (*secure.Secret, error) { return nil, injected }
 	t.Cleanup(func() { sealSecret = restore })
 
 	src := []byte("wipe-on-failure")
-	ss, err := NewSecureStringFromBytes(src)
+	ss, err := NewSecureStringFromBytes(t.Context(), src)
 	if err == nil {
 		t.Fatal("expected a seal failure")
 	}
@@ -235,41 +236,41 @@ func TestNewSecureStringFromBytes_SealFailureWipesTheSource(t *testing.T) {
 }
 
 func TestClone_CopiesTheValue(t *testing.T) {
-	orig := MustNewSecureString("shared-secret")
+	orig := MustNewSecureString(t.Context(), "shared-secret")
 	defer orig.Destroy()
 
-	clone, err := orig.Clone()
+	clone, err := orig.Clone(t.Context())
 	if err != nil {
 		t.Fatalf("Clone: %v", err)
 	}
 	defer clone.Destroy()
 
-	if got := clone.Plaintext(); got != "shared-secret" {
+	if got := clone.Plaintext(t.Context()); got != "shared-secret" {
 		t.Errorf("clone Plaintext() = %q, want %q", got, "shared-secret")
 	}
 }
 
 func TestClone_DestroyingTheCloneLeavesTheOriginalUsable(t *testing.T) {
-	orig := MustNewSecureString("shared-secret")
+	orig := MustNewSecureString(t.Context(), "shared-secret")
 	defer orig.Destroy()
 
-	clone, err := orig.Clone()
+	clone, err := orig.Clone(t.Context())
 	if err != nil {
 		t.Fatalf("Clone: %v", err)
 	}
 	clone.Destroy()
 
-	if !clone.IsDestroyed() {
+	if !clone.IsDestroyed(t.Context()) {
 		t.Error("clone should be destroyed")
 	}
-	if got := orig.Plaintext(); got != "shared-secret" {
+	if got := orig.Plaintext(t.Context()); got != "shared-secret" {
 		t.Errorf("original Plaintext() = %q, want %q — the clone shared its allocation", got, "shared-secret")
 	}
 }
 
 func TestClone_DestroyingTheOriginalLeavesTheCloneUsable(t *testing.T) {
-	orig := MustNewSecureString("shared-secret")
-	clone, err := orig.Clone()
+	orig := MustNewSecureString(t.Context(), "shared-secret")
+	clone, err := orig.Clone(t.Context())
 	if err != nil {
 		t.Fatalf("Clone: %v", err)
 	}
@@ -277,30 +278,30 @@ func TestClone_DestroyingTheOriginalLeavesTheCloneUsable(t *testing.T) {
 
 	orig.Destroy()
 
-	if got := clone.Plaintext(); got != "shared-secret" {
+	if got := clone.Plaintext(t.Context()); got != "shared-secret" {
 		t.Errorf("clone Plaintext() = %q, want %q", got, "shared-secret")
 	}
 }
 
 func TestClone_NilUnsetAndDestroyedCloneToUnset(t *testing.T) {
-	destroyed := MustNewSecureString("x")
+	destroyed := MustNewSecureString(t.Context(), "x")
 	destroyed.Destroy()
 
 	cases := map[string]*SecureString{
 		"nil":       nil,
-		"unset":     MustNewSecureString(""),
+		"unset":     MustNewSecureString(t.Context(), ""),
 		"destroyed": destroyed,
 	}
 	for name, src := range cases {
 		t.Run(name, func(t *testing.T) {
-			clone, err := src.Clone()
+			clone, err := src.Clone(t.Context())
 			if err != nil {
 				t.Fatalf("Clone: %v", err)
 			}
 			if clone == nil {
 				t.Fatal("Clone returned nil")
 			}
-			if !clone.IsDestroyed() {
+			if !clone.IsDestroyed(t.Context()) {
 				t.Error("expected an unset clone")
 			}
 		})
@@ -314,7 +315,7 @@ func TestClone_NilUnsetAndDestroyedCloneToUnset(t *testing.T) {
 // cloneHeapLimitNumerator for the measured endpoints.
 func TestClone_DoesNotStagePlaintextOnTheGoHeap(t *testing.T) {
 	const size = 1 << 20 // Large enough that one plaintext copy dwarfs any constant overhead.
-	src, err := NewSecureStringFromBytes(bytes.Repeat([]byte("k"), size))
+	src, err := NewSecureStringFromBytes(t.Context(), bytes.Repeat([]byte("k"), size))
 	if err != nil {
 		t.Fatalf("NewSecureStringFromBytes: %v", err)
 	}
@@ -332,7 +333,7 @@ func TestClone_DoesNotStagePlaintextOnTheGoHeap(t *testing.T) {
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
 	for range clones {
-		c, err := src.Clone()
+		c, err := src.Clone(t.Context())
 		if err != nil {
 			t.Fatalf("Clone: %v", err)
 		}
@@ -347,7 +348,7 @@ func TestClone_DoesNotStagePlaintextOnTheGoHeap(t *testing.T) {
 	}
 
 	// The clones must still be correct, not merely cheap.
-	if got := made[0].Plaintext(); len(got) != size {
+	if got := made[0].Plaintext(t.Context()); len(got) != size {
 		t.Errorf("clone length = %d, want %d", len(got), size)
 	}
 }
@@ -355,7 +356,7 @@ func TestClone_DoesNotStagePlaintextOnTheGoHeap(t *testing.T) {
 // --- Equals / IsEmpty -------------------------------------------------------
 
 func TestEquals_MatchesAndMismatches(t *testing.T) {
-	s := MustNewSecureString("dev-secret-key")
+	s := MustNewSecureString(t.Context(), "dev-secret-key")
 	defer s.Destroy()
 
 	tests := []struct {
@@ -371,7 +372,7 @@ func TestEquals_MatchesAndMismatches(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := s.Equals(tt.want); got != tt.ok {
+			if got := s.Equals(t.Context(), tt.want); got != tt.ok {
 				t.Errorf("Equals(%q) = %v, want %v", tt.want, got, tt.ok)
 			}
 		})
@@ -383,10 +384,10 @@ func TestEquals_MatchesAndMismatches(t *testing.T) {
 // also how an enclave that cannot be opened is reported, so that case needs no
 // production seam of its own to be covered.
 func TestEquals_UnreadableSecretsDoNotMatch(t *testing.T) {
-	destroyed := MustNewSecureString("dev-secret-key")
+	destroyed := MustNewSecureString(t.Context(), "dev-secret-key")
 	destroyed.Destroy()
 
-	absent, err := NewOptionalSecureString("")
+	absent, err := NewOptionalSecureString(t.Context(), "")
 	if err != nil {
 		t.Fatalf("NewOptionalSecureString: %v", err)
 	}
@@ -399,13 +400,13 @@ func TestEquals_UnreadableSecretsDoNotMatch(t *testing.T) {
 		"absent":       absent,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if s.Equals("dev-secret-key") {
+			if s.Equals(t.Context(), "dev-secret-key") {
 				t.Error("an unreadable secret reported a match")
 			}
-			if s.Equals("") {
+			if s.Equals(t.Context(), "") {
 				t.Error("an unreadable secret matched the empty string")
 			}
-			if !s.IsEmpty() {
+			if !s.IsEmpty(t.Context()) {
 				t.Error("an unreadable secret did not report itself empty")
 			}
 		})
@@ -413,9 +414,9 @@ func TestEquals_UnreadableSecretsDoNotMatch(t *testing.T) {
 }
 
 func TestIsEmpty_ReportsThePresenceOfAValue(t *testing.T) {
-	set := MustNewSecureString("x")
+	set := MustNewSecureString(t.Context(), "x")
 	defer set.Destroy()
-	if set.IsEmpty() {
+	if set.IsEmpty(t.Context()) {
 		t.Error("a secret holding a value reported itself empty")
 	}
 }
@@ -433,7 +434,7 @@ func TestIsEmpty_ReportsThePresenceOfAValue(t *testing.T) {
 // measured on this same stack for WithBytes.
 func TestEqualsAndIsEmpty_DoNotStagePlaintextOnTheGoHeap(t *testing.T) {
 	const size = 1 << 20 // Large enough that one plaintext copy dwarfs constant overhead.
-	big, err := NewSecureStringFromBytes(bytes.Repeat([]byte("k"), size))
+	big, err := NewSecureStringFromBytes(t.Context(), bytes.Repeat([]byte("k"), size))
 	if err != nil {
 		t.Fatalf("NewSecureStringFromBytes: %v", err)
 	}
@@ -446,8 +447,8 @@ func TestEqualsAndIsEmpty_DoNotStagePlaintextOnTheGoHeap(t *testing.T) {
 	}{
 		// Each returns whether the call gave the RIGHT answer, so a
 		// measurement can never be taken from a call that misbehaved.
-		{"Equals", func() bool { return !big.Equals("not-the-secret") }},
-		{"IsEmpty", func() bool { return !big.IsEmpty() }},
+		{"Equals", func() bool { return !big.Equals(t.Context(), "not-the-secret") }},
+		{"IsEmpty", func() bool { return !big.IsEmpty(t.Context()) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			runtime.GC()

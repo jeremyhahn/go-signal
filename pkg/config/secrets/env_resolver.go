@@ -27,10 +27,10 @@ func (r *EnvResolver) Scheme() string {
 // "${VAR_NAME}" resolves to the value of the VAR_NAME environment variable
 // wrapped in a SecureString. If the variable is not set, an EnvVarNotSetError
 // is returned. Values that are not env var references are wrapped unchanged.
-func (r *EnvResolver) Resolve(_ context.Context, value string) (*SecureString, error) {
+func (r *EnvResolver) Resolve(ctx context.Context, value string) (*SecureString, error) {
 	varName, ok := parseEnvVar(value)
 	if !ok {
-		return NewOptionalSecureString(value)
+		return NewOptionalSecureString(ctx, value)
 	}
 
 	envValue, exists := os.LookupEnv(varName)
@@ -40,7 +40,7 @@ func (r *EnvResolver) Resolve(_ context.Context, value string) (*SecureString, e
 
 	// An exported-but-empty variable is a legitimate configuration state;
 	// it is the unset variable above that is an error.
-	return NewOptionalSecureString(envValue)
+	return NewOptionalSecureString(ctx, envValue)
 }
 
 // IsEnvVar reports whether the value is an environment variable reference.

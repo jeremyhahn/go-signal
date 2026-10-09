@@ -13,10 +13,10 @@ import (
 // resident is the defect this exists to prevent.
 func TestConfig_Destroy_WipesHMACSharedSecrets(t *testing.T) {
 	cfg := &Config{
-		Attachments:    AttachmentConfig{TusSharedSecret: secrets.MustNewSecureString("tus-secret")},
-		StorageService: StorageServiceConfig{SharedSecret: secrets.MustNewSecureString("storage-secret")},
-		CDSI:           CDSIConfig{SharedSecret: secrets.MustNewSecureString("cdsi-secret")},
-		SVR2:           SVR2Config{SharedSecret: secrets.MustNewSecureString("svr2-secret")},
+		Attachments:    AttachmentConfig{TusSharedSecret: secrets.MustNewSecureString(t.Context(), "tus-secret")},
+		StorageService: StorageServiceConfig{SharedSecret: secrets.MustNewSecureString(t.Context(), "storage-secret")},
+		CDSI:           CDSIConfig{SharedSecret: secrets.MustNewSecureString(t.Context(), "cdsi-secret")},
+		SVR2:           SVR2Config{SharedSecret: secrets.MustNewSecureString(t.Context(), "svr2-secret")},
 	}
 
 	cfg.Destroy()
@@ -27,7 +27,7 @@ func TestConfig_Destroy_WipesHMACSharedSecrets(t *testing.T) {
 		"CDSI.SharedSecret":           cfg.CDSI.SharedSecret,
 		"SVR2.SharedSecret":           cfg.SVR2.SharedSecret,
 	} {
-		if !ss.IsDestroyed() {
+		if !ss.IsDestroyed(t.Context()) {
 			t.Errorf("expected %s to be destroyed", name)
 		}
 	}
@@ -66,7 +66,7 @@ svr2:
 		t.Fatalf("write config: %v", err)
 	}
 
-	cfg, err := Load(path)
+	cfg, err := Load(t.Context(), path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -81,7 +81,7 @@ svr2:
 		"cdsi.sharedSecret":           {cfg.CDSI.SharedSecret, "cdsi-secret"},
 		"svr2.sharedSecret":           {cfg.SVR2.SharedSecret, "svr2-secret"},
 	} {
-		if got := tc.got.Plaintext(); got != tc.want {
+		if got := tc.got.Plaintext(t.Context()); got != tc.want {
 			t.Errorf("%s = %q, want %q", name, got, tc.want)
 		}
 	}
@@ -103,7 +103,7 @@ storage:
 		t.Fatalf("write config: %v", err)
 	}
 
-	cfg, err := Load(path)
+	cfg, err := Load(t.Context(), path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -115,7 +115,7 @@ storage:
 		"cdsi.sharedSecret":           cfg.CDSI.SharedSecret,
 		"svr2.sharedSecret":           cfg.SVR2.SharedSecret,
 	} {
-		if !ss.IsDestroyed() {
+		if !ss.IsDestroyed(t.Context()) {
 			t.Errorf("expected %s to be unset when absent from the config file", name)
 		}
 	}
@@ -157,7 +157,7 @@ storageService:
 		t.Fatalf("write config: %v", err)
 	}
 
-	cfg, err := Load(path)
+	cfg, err := Load(t.Context(), path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -172,7 +172,7 @@ storageService:
 			t.Errorf("%s: IsAbsent() = true for a secret the config supplies — "+
 				"credential managers would fall back to the legacy stub", name)
 		}
-		if s.Plaintext() == "" {
+		if s.Plaintext(t.Context()) == "" {
 			t.Errorf("%s: value did not survive loading", name)
 		}
 	}

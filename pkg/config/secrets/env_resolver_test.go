@@ -21,7 +21,7 @@ func TestEnvResolver_Resolve_EnvVarSet(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	defer result.Destroy()
-	assert.Equal(t, "my-secret", result.Plaintext())
+	assert.Equal(t, "my-secret", result.Plaintext(t.Context()))
 }
 
 func TestEnvResolver_Resolve_EnvVarNotSet(t *testing.T) {
@@ -42,7 +42,7 @@ func TestEnvResolver_Resolve_PlainValuePassthrough(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	defer result.Destroy()
-	assert.Equal(t, "plain-value", result.Plaintext())
+	assert.Equal(t, "plain-value", result.Plaintext(t.Context()))
 }
 
 func TestEnvResolver_Resolve_EmptyValue(t *testing.T) {
@@ -52,7 +52,7 @@ func TestEnvResolver_Resolve_EmptyValue(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	defer result.Destroy()
-	assert.Equal(t, "", result.Plaintext())
+	assert.Equal(t, "", result.Plaintext(t.Context()))
 }
 
 func TestEnvResolver_Resolve_EmptyEnvVarValue(t *testing.T) {
@@ -63,7 +63,7 @@ func TestEnvResolver_Resolve_EmptyEnvVarValue(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	defer result.Destroy()
-	assert.Equal(t, "", result.Plaintext())
+	assert.Equal(t, "", result.Plaintext(t.Context()))
 }
 
 func TestEnvResolver_Resolve_ReturnsSecureString(t *testing.T) {
@@ -77,7 +77,7 @@ func TestEnvResolver_Resolve_ReturnsSecureString(t *testing.T) {
 
 	// String() must never expose the plaintext value.
 	assert.Equal(t, redacted, result.String())
-	assert.Equal(t, "secure-secret", result.Plaintext())
+	assert.Equal(t, "secure-secret", result.Plaintext(t.Context()))
 }
 
 func TestIsEnvVar(t *testing.T) {

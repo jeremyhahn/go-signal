@@ -2,6 +2,7 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"os"
@@ -320,9 +321,9 @@ type PostgresConfig struct {
 // the structured fields are assembled. SSLMode defaults to "disable" only
 // when both URL and SSLMode are unset — production deployments must set
 // it explicitly via either the URL query parameter or sslMode field.
-func (p PostgresConfig) DSN() string {
+func (p PostgresConfig) DSN(ctx context.Context) string {
 	if p.URL != nil {
-		if u := p.URL.Plaintext(); u != "" {
+		if u := p.URL.Plaintext(ctx); u != "" {
 			return u
 		}
 	}
@@ -340,7 +341,7 @@ func (p PostgresConfig) DSN() string {
 	}
 	pwd := ""
 	if p.Password != nil {
-		pwd = p.Password.Plaintext()
+		pwd = p.Password.Plaintext(ctx)
 	}
 	return fmt.Sprintf(
 		"postgres://%s:%s@%s:%d/%s?sslmode=%s",
@@ -533,7 +534,11 @@ var destroyConfig = (*Config).Destroy
 // never wipe them; without this they would stay resident for the life of the
 // process. That matters most where a failed load is not immediately followed
 // by exit: an in-process reload, or a supervisor retrying a bad file.
-func Load(path string) (*Config, error) {
+//
+// YAML decoding carries no context, so each secret is staged in locked memory
+// as it is decoded and then sealed here under ctx, before Validate reads any
+// of them.
+func Load(ctx context.Context, path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, &ConfigLoadError{Path: path, Cause: err}
@@ -560,7 +565,13 @@ func Load(path string) (*Config, error) {
 		return nil, &ConfigParseError{Path: path, Cause: err}
 	}
 
-	if err := config.Validate(); err != nil {
+	for _, ss := range config.secureStrings() {
+		if err := ss.Seal(ctx); err != nil {
+			return nil, &ConfigLoadError{Path: path, Cause: err}
+		}
+	}
+
+	if err := config.Validate(ctx); err != nil {
 		return nil, err
 	}
 
@@ -576,13 +587,21 @@ func (c *Config) Destroy() {
 	if c == nil {
 		return
 	}
+	for _, ss := range c.secureStrings() {
+		ss.Destroy()
+	}
+}
+
+// secureStrings lists every *secrets.SecureString reachable from Config: the
+// set Load seals and Destroy wipes. Entries may be nil.
+func (c *Config) secureStrings() []*secrets.SecureString {
 	// Every *secrets.SecureString reachable from Config must appear here.
 	// The list is hand-maintained and has drifted once already
 	// (Storage.Postgres.URL was missing), so
 	// TestDestroy_WipesEveryProtectedFieldInTheConfigTree walks the tree by
 	// reflection and fails if a field is added to Config without being added
 	// here. Add the field to both, or the test will say so.
-	for _, ss := range []*secrets.SecureString{
+	return []*secrets.SecureString{
 		c.Storage.Postgres.URL,
 		c.Storage.Postgres.Password,
 		c.Cache.Redis.Password,
@@ -603,15 +622,11 @@ func (c *Config) Destroy() {
 		c.StorageService.SharedSecret,
 		c.CDSI.SharedSecret,
 		c.SVR2.SharedSecret,
-	} {
-		if ss != nil {
-			ss.Destroy()
-		}
 	}
 }
 
 // Validate checks the configuration for required fields and valid values.
-func (c *Config) Validate() error {
+func (c *Config) Validate(ctx context.Context) error {
 	if c.Server.HTTPPort == 0 && c.Server.GRPCPort == 0 {
 		return &ConfigValidationError{Field: "server", Message: "at least one of httpPort or grpcPort must be set"}
 	}
@@ -622,7 +637,7 @@ func (c *Config) Validate() error {
 		c.Server.MaxDevices = 6 // Signal default
 	}
 	if c.IsProduction() {
-		if err := c.validateProduction(); err != nil {
+		if err := c.validateProduction(ctx); err != nil {
 			return err
 		}
 	}
@@ -660,7 +675,7 @@ const (
 // deployment is a hard error here; all violations are collected so an
 // operator sees the full list in one boot attempt rather than fixing
 // them one at a time.
-func (c *Config) validateProduction() error {
+func (c *Config) validateProduction(ctx context.Context) error {
 	var v []string
 
 	// Durable, real storage only — memory loses data on restart, qrdb is
@@ -699,12 +714,12 @@ func (c *Config) validateProduction() error {
 	// Profile-key / group ZK credentials must use a provisioned server
 	// secret. Without it certificates.Manager issues an HMAC placeholder
 	// that is not a valid zkgroup credential.
-	if !c.ZKConfig.Enabled || c.ZKConfig.ServerSecret.IsEmpty() {
+	if !c.ZKConfig.Enabled || c.ZKConfig.ServerSecret.IsEmpty(ctx) {
 		v = append(v, "zkConfig must be enabled with a non-empty serverSecret in production (otherwise profile-key credentials are an insecure stub)")
 	}
-	if c.CallingZKConfig.ServerSecret.IsEmpty() {
+	if c.CallingZKConfig.ServerSecret.IsEmpty(ctx) {
 		v = append(v, "callingZkConfig.serverSecret must be set in production")
-	} else if c.CallingZKConfig.ServerSecret.Equals(testCallingZKSecret) {
+	} else if c.CallingZKConfig.ServerSecret.Equals(ctx, testCallingZKSecret) {
 		v = append(v, "callingZkConfig.serverSecret is the well-known development secret and must be replaced in production")
 	}
 
@@ -716,9 +731,9 @@ func (c *Config) validateProduction() error {
 	// bucket, region AND access key, so a config missing only the region
 	// fails closed at runtime with a 503 on every avatar upload rather than
 	// at boot where an operator would see it.
-	if c.CDN.AccessKey.IsEmpty() || c.CDN.SecretKey.IsEmpty() || c.CDN.Bucket == "" || c.CDN.Region == "" {
+	if c.CDN.AccessKey.IsEmpty(ctx) || c.CDN.SecretKey.IsEmpty(ctx) || c.CDN.Bucket == "" || c.CDN.Region == "" {
 		v = append(v, "cdn.bucket, cdn.region, cdn.accessKey and cdn.secretKey are required in production (avatar and attachment uploads are signed with them)")
-	} else if c.CDN.AccessKey.Equals(devCDNAccessKey) || c.CDN.SecretKey.Equals(devCDNSecretKey) {
+	} else if c.CDN.AccessKey.Equals(ctx, devCDNAccessKey) || c.CDN.SecretKey.Equals(ctx, devCDNSecretKey) {
 		v = append(v, "cdn.accessKey/cdn.secretKey are the well-known development placeholders and must be replaced in production")
 	}
 

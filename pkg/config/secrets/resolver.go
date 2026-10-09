@@ -44,12 +44,12 @@ func (r *ResolverRegistry) Register(resolver SecretResolver) {
 // for empty input.
 func (r *ResolverRegistry) Resolve(ctx context.Context, value string) (*SecureString, error) {
 	if value == "" {
-		return NewOptionalSecureString(value)
+		return NewOptionalSecureString(ctx, value)
 	}
 
 	scheme, _, ok := parseScheme(value)
 	if !ok {
-		return NewOptionalSecureString(value)
+		return NewOptionalSecureString(ctx, value)
 	}
 
 	resolver, exists := r.resolvers[scheme]

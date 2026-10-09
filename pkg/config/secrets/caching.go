@@ -65,7 +65,7 @@ func (c *CachingResolver) Scheme() string { return c.underlying.Scheme() }
 func (c *CachingResolver) Resolve(ctx context.Context, uri string) (*SecureString, error) {
 	c.mu.Lock()
 	if entry, ok := c.entries[uri]; ok && c.clock().Before(entry.expiresAt) {
-		dup, err := NewOptionalSecureString(entry.secret.Plaintext())
+		dup, err := NewOptionalSecureString(ctx, entry.secret.Plaintext(ctx))
 		c.mu.Unlock()
 		if err != nil {
 			return nil, err
@@ -93,7 +93,7 @@ func (c *CachingResolver) Resolve(ctx context.Context, uri string) (*SecureStrin
 		expiresAt: c.clock().Add(c.ttl),
 	}
 	// Hand the caller an independent copy; the cache keeps and owns `fresh`.
-	dup, err := NewOptionalSecureString(fresh.Plaintext())
+	dup, err := NewOptionalSecureString(ctx, fresh.Plaintext(ctx))
 	c.mu.Unlock()
 	if err != nil {
 		return nil, err

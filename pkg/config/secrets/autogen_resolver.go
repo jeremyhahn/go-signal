@@ -49,9 +49,9 @@ func (r *AutoGenResolver) Scheme() string {
 // values, wrapped in a SecureString. Non-sentinel values are wrapped
 // unchanged. Generated values are cached by the input sentinel key so
 // repeated calls return the same secret.
-func (r *AutoGenResolver) Resolve(_ context.Context, value string) (*SecureString, error) {
+func (r *AutoGenResolver) Resolve(ctx context.Context, value string) (*SecureString, error) {
 	if !IsSentinel(value) {
-		return NewOptionalSecureString(value)
+		return NewOptionalSecureString(ctx, value)
 	}
 
 	r.mu.RLock()
@@ -59,8 +59,8 @@ func (r *AutoGenResolver) Resolve(_ context.Context, value string) (*SecureStrin
 		r.mu.RUnlock()
 		// Return a fresh SecureString with the same plaintext so each caller
 		// holds independent ownership and can call Destroy independently.
-		plain := cached.Plaintext()
-		return NewSecureString(plain)
+		plain := cached.Plaintext(ctx)
+		return NewSecureString(ctx, plain)
 	}
 	r.mu.RUnlock()
 
@@ -71,12 +71,12 @@ func (r *AutoGenResolver) Resolve(_ context.Context, value string) (*SecureStrin
 
 	// Seal both copies before taking the write lock so a sealing failure
 	// aborts the resolution instead of leaving an unset entry in the cache.
-	entry, err := NewSecureString(secret)
+	entry, err := NewSecureString(ctx, secret)
 	if err != nil {
 		return nil, err
 	}
 	// Wipe the intermediate hex string from stack memory as much as Go allows.
-	secretCopy, err := NewSecureString(secret)
+	secretCopy, err := NewSecureString(ctx, secret)
 	if err != nil {
 		entry.Destroy()
 		return nil, err
@@ -86,10 +86,10 @@ func (r *AutoGenResolver) Resolve(_ context.Context, value string) (*SecureStrin
 	// Double-check after acquiring write lock.
 	if cached, ok := r.cache[value]; ok {
 		r.mu.Unlock()
-		plain := cached.Plaintext()
+		plain := cached.Plaintext(ctx)
 		entry.Destroy()
 		secretCopy.Destroy()
-		return NewSecureString(plain)
+		return NewSecureString(ctx, plain)
 	}
 	r.cache[value] = entry
 	r.mu.Unlock()

@@ -102,7 +102,7 @@ func (p *ConfigProcessor) resolveStringField(ctx context.Context, v reflect.Valu
 	}
 	defer resolved.Destroy()
 
-	plain := resolved.Plaintext()
+	plain := resolved.Plaintext(ctx)
 	if plain != original {
 		v.SetString(plain)
 	}
@@ -118,7 +118,7 @@ func (p *ConfigProcessor) resolveSecureStringField(ctx context.Context, v reflec
 
 	var original string
 	if existing != nil {
-		original = existing.Plaintext()
+		original = existing.Plaintext(ctx)
 	}
 	if original == "" {
 		return nil
@@ -131,7 +131,7 @@ func (p *ConfigProcessor) resolveSecureStringField(ctx context.Context, v reflec
 
 	// If the value changed, replace the field with the resolved SecureString.
 	// Destroy the old value to free protected memory.
-	resolvedPlain := resolved.Plaintext()
+	resolvedPlain := resolved.Plaintext(ctx)
 	if resolvedPlain != original {
 		if existing != nil {
 			existing.Destroy()

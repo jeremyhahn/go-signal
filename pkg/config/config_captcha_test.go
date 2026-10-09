@@ -57,14 +57,14 @@ func TestCaptchaConfig_ZeroValue(t *testing.T) {
 func TestCaptchaConfig_Fields(t *testing.T) {
 	c := CaptchaConfig{
 		Provider:       "hcaptcha",
-		SecretKey:      secrets.MustNewSecureString("my-secret"),
+		SecretKey:      secrets.MustNewSecureString(t.Context(), "my-secret"),
 		SiteKey:        "my-site",
 		ScoreThreshold: 0.7,
 	}
 	if c.Provider != "hcaptcha" {
 		t.Errorf("got %q, want %q", c.Provider, "hcaptcha")
 	}
-	if c.SecretKey == nil || c.SecretKey.Plaintext() != "my-secret" {
+	if c.SecretKey == nil || c.SecretKey.Plaintext(t.Context()) != "my-secret" {
 		t.Errorf("got SecretKey %v, want plaintext %q", c.SecretKey, "my-secret")
 	}
 	if c.SiteKey != "my-site" {
@@ -88,14 +88,14 @@ captcha:
   scoreThreshold: 0.5
 `
 	path := writeYAML(t, yaml)
-	cfg, err := Load(path)
+	cfg, err := Load(t.Context(), path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if cfg.Captcha.Provider != "hcaptcha" {
 		t.Errorf("got provider %q, want %q", cfg.Captcha.Provider, "hcaptcha")
 	}
-	if cfg.Captcha.SecretKey == nil || cfg.Captcha.SecretKey.Plaintext() != "s3cr3t" {
+	if cfg.Captcha.SecretKey == nil || cfg.Captcha.SecretKey.Plaintext(t.Context()) != "s3cr3t" {
 		t.Errorf("got secretKey %v, want plaintext %q", cfg.Captcha.SecretKey, "s3cr3t")
 	}
 	if cfg.Captcha.SiteKey != "public-site-key" {
@@ -109,7 +109,7 @@ captcha:
 func TestLoad_CaptchaConfig_Defaults(t *testing.T) {
 	// Omitting captcha section from YAML: all fields should be zero/empty.
 	path := writeYAML(t, validYAML())
-	cfg, err := Load(path)
+	cfg, err := Load(t.Context(), path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -126,7 +126,7 @@ captcha:
   scoreThreshold: 0.6
 `
 	path := writeYAML(t, yaml)
-	cfg, err := Load(path)
+	cfg, err := Load(t.Context(), path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

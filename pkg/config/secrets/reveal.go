@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"context"
 	"crypto/subtle"
 
 	"github.com/jeremyhahn/go-qrdb/sdk/go/secure"
@@ -32,7 +33,7 @@ var (
 // Reports whether fn ran. False means the SecureString is nil, was never set,
 // or has been destroyed — callers must treat that as a failure to authenticate
 // rather than proceeding with an empty key.
-func (s *SecureString) WithBytes(fn func([]byte)) bool {
+func (s *SecureString) WithBytes(ctx context.Context, fn func([]byte)) bool {
 	if s == nil || fn == nil {
 		return false
 	}
@@ -41,16 +42,7 @@ func (s *SecureString) WithBytes(fn func([]byte)) bool {
 	// and every reveal after that Destroy fails closed.
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if s.sec == nil {
-		return false
-	}
-	buf, err := s.sec.Open()
-	if err != nil {
-		return false
-	}
-	defer buf.Destroy()
-	fn(buf.Bytes())
-	return true
+	return s.withMaterialLocked(ctx, fn) == nil
 }
 
 // Equals reports whether the protected value is exactly want, without ever
@@ -77,9 +69,9 @@ func (s *SecureString) WithBytes(fn func([]byte)) bool {
 // that matches. Callers deciding "is this the placeholder" get the safe
 // answer, and callers that need to distinguish unreadable from
 // different must check IsAbsent/IsDestroyed themselves.
-func (s *SecureString) Equals(want string) bool {
+func (s *SecureString) Equals(ctx context.Context, want string) bool {
 	var equal bool
-	ran := s.WithBytes(func(b []byte) {
+	ran := s.WithBytes(ctx, func(b []byte) {
 		equal = subtle.ConstantTimeCompare(b, []byte(want)) == 1
 	})
 	return ran && equal
@@ -92,9 +84,9 @@ func (s *SecureString) Equals(want string) bool {
 // Reading the value through Plaintext to compare it with "" places the whole
 // secret on the Go heap as an immutable string merely to learn its length,
 // which is the same defect as comparing it there.
-func (s *SecureString) IsEmpty() bool {
+func (s *SecureString) IsEmpty(ctx context.Context) bool {
 	empty := true
-	ran := s.WithBytes(func(b []byte) { empty = len(b) == 0 })
+	ran := s.WithBytes(ctx, func(b []byte) { empty = len(b) == 0 })
 	return !ran || empty
 }
 
@@ -106,11 +98,11 @@ func (s *SecureString) IsEmpty() bool {
 // Empty input and allocation failure are reported the same way as
 // NewSecureString: *EmptySecretError and *SealError respectively, so a caller
 // that cannot place a secret in protected memory fails closed.
-func NewSecureStringFromBytes(value []byte) (*SecureString, error) {
+func NewSecureStringFromBytes(ctx context.Context, value []byte) (*SecureString, error) {
 	if len(value) == 0 {
 		return nil, &EmptySecretError{}
 	}
-	sec, err := sealSecret(value)
+	sec, err := sealSecret(ctx, value)
 	if err != nil {
 		// Wipe rather than leave plaintext the caller believes was consumed.
 		secure.Wipe(value)
@@ -127,12 +119,12 @@ func NewSecureStringFromBytes(value []byte) (*SecureString, error) {
 // the HMAC secret it signs with — so that the component's Destroy cannot reach
 // back into the caller's copy.
 //
-// The value never leaves protected memory. It is copied straight from the
-// source's mlocked buffer into a freshly allocated one and that buffer is
-// sealed in place; there is deliberately no intermediate Go-heap slice, which
-// would put the raw key in ordinary memory the runtime may copy and the
-// allocator may hand out again. TestClone_DoesNotStagePlaintextOnTheGoHeap
-// guards this.
+// The value never leaves protected memory. A sealed source is opened into a
+// fresh mlocked buffer and that buffer is sealed in place; a staged source is
+// copied page to page into a freshly allocated one, which is sealed. There is
+// deliberately no intermediate Go-heap slice, which would put the raw key in
+// ordinary memory the runtime may copy and the allocator may hand out again.
+// TestClone_DoesNotStagePlaintextOnTheGoHeap guards this.
 //
 // The two ways this can fail to produce a key are deliberately NOT the same
 // result, because conflating them is a fail-open:
@@ -147,8 +139,8 @@ func NewSecureStringFromBytes(value []byte) (*SecureString, error) {
 //     an empty value.
 //
 // Callers must therefore branch on the error before branching on emptiness.
-func (s *SecureString) Clone() (*SecureString, error) {
-	clone, _, err := s.CloneWithPresence()
+func (s *SecureString) Clone(ctx context.Context) (*SecureString, error) {
+	clone, _, err := s.CloneWithPresence(ctx)
 	return clone, err
 }
 
@@ -165,7 +157,7 @@ func (s *SecureString) Clone() (*SecureString, error) {
 // secret that could not be revealed yields (unset clone, true, nil), and the
 // caller must treat that as a failure rather than as an absent secret. The
 // error cases match Clone's.
-func (s *SecureString) CloneWithPresence() (*SecureString, bool, error) {
+func (s *SecureString) CloneWithPresence(ctx context.Context) (*SecureString, bool, error) {
 	if s == nil {
 		return &SecureString{}, false, nil
 	}
@@ -174,40 +166,80 @@ func (s *SecureString) CloneWithPresence() (*SecureString, bool, error) {
 	defer s.mu.RUnlock()
 
 	configured := s.configured
-	out, err := s.cloneLocked()
+	out, err := s.cloneLocked(ctx)
 	return out, configured, err
 }
 
 // cloneLocked performs the protected-page copy. The receiver's read lock must
 // already be held; it is the shared body of Clone and CloneWithPresence, so
 // the two cannot drift apart.
-func (s *SecureString) cloneLocked() (*SecureString, error) {
-	if s.sec == nil {
+func (s *SecureString) cloneLocked(ctx context.Context) (*SecureString, error) {
+	var dst *secure.Buffer
+	switch {
+	case s.sec != nil:
+		buf, err := s.sec.Open(ctx)
+		if err != nil {
+			// Configured but unopenable. Clone's contract reports this as an
+			// empty clone rather than an error; CloneWithPresence's caller
+			// distinguishes it via the presence bit.
+			return &SecureString{}, nil
+		}
+		// Open decrypts into a fresh buffer this call owns outright, so that
+		// buffer is sealed in place: no second copy of the plaintext is made.
+		dst = buf
+	case s.staged != nil:
+		buf, ok, err := copyProtected(s.staged)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			// Wiped underneath the read lock by a process-wide sweep: as
+			// unopenable as a sealed value that will not Open.
+			return &SecureString{}, nil
+		}
+		dst = buf
+	default:
 		return &SecureString{}, nil
 	}
-	buf, err := s.sec.Open()
+	sec, err := sealProtectedBuffer(ctx, dst)
 	if err != nil {
-		// Configured but unopenable. Clone's contract reports this as an
-		// empty clone rather than an error; CloneWithPresence's caller
-		// distinguishes it via the presence bit.
-		return &SecureString{}, nil
-	}
-	defer buf.Destroy()
-
-	b := buf.Bytes()
-	dst, err := newProtectedBuffer(len(b))
-	if err != nil {
-		return nil, &SealError{Cause: err}
-	}
-	// dst.Bytes() is the mlocked destination: protected page to protected
-	// page, with no Go-heap staging in between.
-	copy(dst.Bytes(), b)
-	sec, err := sealProtectedBuffer(dst)
-	if err != nil {
+		// NewSecretFromBuffer consumes dst; Destroy is idempotent.
 		dst.Destroy()
 		return nil, &SealError{Cause: err}
 	}
 	return &SecureString{sec: sec, configured: true}, nil
+}
+
+// copyProtected copies src into a freshly allocated locked buffer, protected
+// page to protected page with no Go-heap staging in between. ok is false when
+// src has no readable material left — a process-wide wipe took it — and err
+// is *SealError when the destination could not be allocated.
+func copyProtected(src *secure.Buffer) (dst *secure.Buffer, ok bool, err error) {
+	size := src.Size()
+	if size == 0 {
+		return nil, false, nil
+	}
+	dst, err = newProtectedBuffer(size)
+	if err != nil {
+		return nil, false, &SealError{Cause: err}
+	}
+	// Two independent buffers, each borrowed under its own lock, so nesting
+	// the borrows cannot deadlock. The length check refuses a source a sweep
+	// shrank between Size and the borrow rather than sealing zeros.
+	copied := false
+	_ = src.WithBytes(func(b []byte) error {
+		return dst.WithBytes(func(d []byte) error {
+			if len(d) == len(b) {
+				copied = copy(d, b) == len(b)
+			}
+			return nil
+		})
+	})
+	if !copied {
+		dst.Destroy()
+		return nil, false, nil
+	}
+	return dst, true, nil
 }
 
 // TryWithBytes is WithBytes with a fallible result: it distinguishes a secret
@@ -222,7 +254,7 @@ func (s *SecureString) cloneLocked() (*SecureString, error) {
 // *UnavailableSecretError when a configured secret could not be opened or has
 // been destroyed. fn carries the same contract as in WithBytes: it must not
 // retain or mutate the slice, and must not Destroy the same SecureString.
-func (s *SecureString) TryWithBytes(fn func([]byte)) error {
+func (s *SecureString) TryWithBytes(ctx context.Context, fn func([]byte)) error {
 	if s == nil {
 		return &AbsentSecretError{}
 	}
@@ -234,15 +266,6 @@ func (s *SecureString) TryWithBytes(fn func([]byte)) error {
 	if !s.configured {
 		return &AbsentSecretError{}
 	}
-	if s.sec == nil {
-		// Configured, then destroyed: unavailable, never absent.
-		return &UnavailableSecretError{}
-	}
-	buf, err := s.sec.Open()
-	if err != nil {
-		return &UnavailableSecretError{Cause: err}
-	}
-	defer buf.Destroy()
-	fn(buf.Bytes())
-	return nil
+	// Configured, then destroyed or unopenable: unavailable, never absent.
+	return s.withMaterialLocked(ctx, fn)
 }
