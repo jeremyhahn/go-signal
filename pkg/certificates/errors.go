@@ -35,6 +35,24 @@ type Ed25519KeyError struct {
 	Cause error
 }
 
+// HMACKeyError indicates that the legacy HMAC signing key could not be opened:
+// it is not configured, or the open was refused (canceled context, provider
+// failure, locked-memory budget). Nothing is signed in that case; HMAC under an
+// empty key would be a credential anyone can recompute.
+type HMACKeyError struct {
+	Cause error
+}
+
+// Error returns a human-readable description of the HMAC key failure.
+func (e *HMACKeyError) Error() string {
+	return "hmac signing key unavailable: " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause.
+func (e *HMACKeyError) Unwrap() error {
+	return e.Cause
+}
+
 // Error returns a human-readable description of the Ed25519 key error.
 func (e *Ed25519KeyError) Error() string {
 	return "ed25519 key error: " + e.Cause.Error()

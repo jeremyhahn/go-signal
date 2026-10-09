@@ -503,15 +503,23 @@ func (m *CertificatesManager) signCertificate(ctx context.Context, cert *SenderC
 	}
 
 	// HMAC-SHA256 fallback for backwards compatibility.
-	keyBytes := m.signingKey.Bytes(ctx)
-	defer func() {
-		for i := range keyBytes {
-			keyBytes[i] = 0
-		}
-	}()
-	mac := hmac.New(sha256.New, keyBytes)
-	mac.Write(data)
-	return mac.Sum(nil), nil
+	return m.hmacSHA256(ctx, data)
+}
+
+// hmacSHA256 signs data with the legacy HMAC key inside the key's own borrow,
+// so the key never leaves protected memory. A key that is not configured or
+// cannot be opened is *HMACKeyError: signing under an empty key would produce
+// a credential anyone can recompute.
+func (m *CertificatesManager) hmacSHA256(ctx context.Context, data []byte) ([]byte, error) {
+	var sum []byte
+	if err := m.signingKey.TryWithBytes(ctx, func(key []byte) {
+		mac := hmac.New(sha256.New, key)
+		mac.Write(data)
+		sum = mac.Sum(nil)
+	}); err != nil {
+		return nil, &HMACKeyError{Cause: err}
+	}
+	return sum, nil
 }
 
 // issueAuthCredentialWithPni issues a zkgroup AuthCredentialWithPniZkc for the
@@ -619,15 +627,7 @@ func (m *CertificatesManager) generateGroupCredential(ctx context.Context, uuid 
 		return nil, err
 	}
 
-	keyBytes := m.signingKey.Bytes(ctx)
-	defer func() {
-		for i := range keyBytes {
-			keyBytes[i] = 0
-		}
-	}()
-	mac := hmac.New(sha256.New, keyBytes)
-	mac.Write(data)
-	return mac.Sum(nil), nil
+	return m.hmacSHA256(ctx, data)
 }
 
 // stubProfileKeyCredential returns a structured stub ExpiringProfileKeyCredential
@@ -652,15 +652,10 @@ func (m *CertificatesManager) stubProfileKeyCredential(
 		return nil, &CertificateGenerationError{Operation: "stub-profile-key-credential", Cause: err}
 	}
 
-	keyBytes := m.signingKey.Bytes(ctx)
-	defer func() {
-		for i := range keyBytes {
-			keyBytes[i] = 0
-		}
-	}()
-	mac := hmac.New(sha256.New, keyBytes)
-	mac.Write(data)
-	credBytes := mac.Sum(nil)
+	credBytes, err := m.hmacSHA256(ctx, data)
+	if err != nil {
+		return nil, err
+	}
 
 	return &ExpiringProfileKeyCredentialResponse{
 		Credential:               credBytes,
