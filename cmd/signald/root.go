@@ -11,6 +11,10 @@ var (
 	cfg     *config.Config
 )
 
+// addressKeys are the listen addresses signald binds itself, each settable
+// by flag, environment and config file.
+var addressKeys = []config.AddressKey{config.KeyHealthListen}
+
 // rootCmd is the base command for the signald server.
 var rootCmd = &cobra.Command{
 	Use:   "signald",
@@ -22,7 +26,7 @@ var rootCmd = &cobra.Command{
 			return nil
 		}
 
-		loaded, err := config.Load(cfgPath)
+		loaded, err := config.LoadWithFlags(cfgPath, cmd.Flags())
 		if err != nil {
 			return &StartupError{Stage: "loading configuration", Cause: err}
 		}
@@ -34,6 +38,7 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
+	config.AddAddressFlags(rootCmd.PersistentFlags(), addressKeys...)
 	rootCmd.PersistentFlags().StringVar(&cfgPath, "config", "configs/signal-server.yml", "path to configuration file")
 }
 

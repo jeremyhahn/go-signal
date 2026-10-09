@@ -35,8 +35,6 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/metrics"
 )
 
-const defaultWSListen = "0.0.0.0:8094"
-
 var startCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the cdsi WebSocket service",
@@ -110,9 +108,6 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	}()
 
 	wsListen := cfg.CDSI.WSListen
-	if wsListen == "" {
-		wsListen = defaultWSListen
-	}
 	wsMux := http.NewServeMux()
 	wsMux.Handle("/v1/lookup", newWebSocketHandler(logger, att, dispatcher, staticPub, staticPriv, cfg.CDSI.SharedSecret))
 	probes := health.New()

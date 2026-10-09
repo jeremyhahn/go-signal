@@ -12,6 +12,10 @@ var (
 	cfg     *config.Config
 )
 
+// addressKeys are the listen addresses svr2 binds, each settable by flag,
+// environment and config file.
+var addressKeys = []config.AddressKey{config.KeySVR2HTTPListen, config.KeySVR2WSListen}
+
 var rootCmd = &cobra.Command{
 	Use:   "svr2",
 	Short: "Signal SVR2 (Secure Value Recovery v2) service",
@@ -22,7 +26,7 @@ var rootCmd = &cobra.Command{
 		if cmd.Name() == "version" {
 			return nil
 		}
-		loaded, err := config.Load(cfgPath)
+		loaded, err := config.LoadWithFlags(cfgPath, cmd.Flags())
 		if err != nil {
 			return signalerrors.Wrap(signalerrors.ErrInternal, "loading configuration", err)
 		}
@@ -34,6 +38,7 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
+	config.AddAddressFlags(rootCmd.PersistentFlags(), addressKeys...)
 	rootCmd.PersistentFlags().StringVar(&cfgPath, "config",
 		"configs/svr2.yml",
 		"path to configuration file")

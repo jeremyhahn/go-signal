@@ -22,8 +22,6 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/metrics"
 )
 
-const defaultGRPCListen = "0.0.0.0:8098"
-
 var startCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the key-transparency gRPC service",
@@ -40,9 +38,6 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	defer stop()
 
 	listen := cfg.KeyTransparency.GRPCListen
-	if listen == "" {
-		listen = defaultGRPCListen
-	}
 
 	// Generate a fresh ed25519 signing key at startup. Production
 	// deployments will load a persistent key from KMS (planned for
@@ -67,7 +62,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	probes := health.New()
 	metricsReg := metrics.NewRegistry("key-transparency")
 	go func() {
-		if err := health.RunSidecar(ctx, probes, metricsReg, ""); err != nil {
+		if err := health.RunSidecar(ctx, probes, metricsReg, cfg.Health.Listen); err != nil {
 			logger.Error("health sidecar", slog.Any("error", err))
 		}
 	}()

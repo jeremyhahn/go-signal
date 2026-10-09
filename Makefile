@@ -22,10 +22,10 @@ CLI_BINARY    := signal
 BUILD_DIR     := build
 BIN_DIR       := $(BUILD_DIR)/bin
 COVER_DIR     := $(BUILD_DIR)/coverage
-VERSION       := $(shell cat VERSION 2>/dev/null || echo "0.0.1-alpha")
+BUILD_VERSION := $(shell cat VERSION 2>/dev/null || echo "0.0.1-alpha")
 GIT_COMMIT    := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE    := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
-LDFLAGS       := -X main.version=$(VERSION) -X main.gitCommit=$(GIT_COMMIT) -X main.buildDate=$(BUILD_DATE)
+LDFLAGS       := -X main.version=$(BUILD_VERSION) -X main.gitCommit=$(GIT_COMMIT) -X main.buildDate=$(BUILD_DATE)
 
 # Go tooling
 GO            := go
@@ -998,27 +998,24 @@ docs-check: docs
 	fi
 	@echo "==> Documentation is current."
 
-SUBMODULE_TAGS := 
 # Builds never resolve through a workspace: modules come from Gitea tags
 # (dependency-resolution.md §2). Immunizes against stray go.work files.
 export GOWORK=off
 
 # ---- dependency-resolution.md targets (2026-08-13 cutover) ----
-# SUBMODULE_TAGS lists nested modules tagged in lockstep with the root
-# (release-versioning.md P2). deps-latest runs before compiling in a
-# consumer repo; release-alpha publishes this repo's next -alpha tag to dev.
+# deps-latest runs before compiling in a consumer repo. release-alpha is the
+# handbook template v2 (mk/release-alpha.mk + mk/release-common.mk, copied
+# verbatim): `make release-alpha VERSION=vX.Y.Z-alpha`. This repo has no
+# nested modules, so LOCKSTEP_MODULES stays empty.
 # deps-latest picks the highest tag INCLUDING -alpha prereleases — bare
 # 'go get @latest' ignores prereleases and would downgrade to legacy v0.0.0.
 
-.PHONY: release-alpha deps-latest
+.PHONY: deps-latest
 
-release-alpha:
-	@V=$$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || echo v0.0.0-alpha); \
-	NEXT=$$(echo $$V | awk -F'[.-]' '{printf "v%s.%s.%d-alpha", substr($$1,2), $$2, $$3+1}'); \
-	echo $${NEXT#v} > VERSION && git add VERSION && git commit -q -m "chore(release): $$NEXT" || true; \
-	git tag $$NEXT; \
-	for s in $(SUBMODULE_TAGS); do git tag "$$s/$$NEXT"; done; \
-	git push dev HEAD --tags && echo "Tagged $$NEXT"
+AGENT_GIT      ?= agent-git.sh
+REPO_NAME      ?= go-signal
+RELEASE_REMOTE ?= dev
+include mk/release-alpha.mk
 
 deps-latest:
 	@GOWORK=off sh -c ' \

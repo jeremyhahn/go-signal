@@ -31,11 +31,6 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/svr2"
 )
 
-const (
-	defaultHTTPListen = "0.0.0.0:8091"
-	defaultWSListen   = "0.0.0.0:8092"
-)
-
 var startCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the svr2 WebSocket + admin HTTP services",
@@ -77,13 +72,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	hmacSecret := cfg.SVR2.SharedSecret
 
 	wsListen := cfg.SVR2.WSListen
-	if wsListen == "" {
-		wsListen = defaultWSListen
-	}
 	httpListen := cfg.SVR2.HTTPListen
-	if httpListen == "" {
-		httpListen = defaultHTTPListen
-	}
 
 	// Snapshot the static key material once at startup. Attester's
 	// PublicKey is what the NKhfs responder commits to.

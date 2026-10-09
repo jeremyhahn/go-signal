@@ -31,8 +31,6 @@ import (
 	qrdbstorage "github.com/jeremyhahn/go-signal/pkg/storage/qrdb"
 )
 
-const defaultHTTPListen = "0.0.0.0:8096"
-
 var startCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the storage-service HTTP server",
@@ -60,9 +58,6 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	}
 
 	listen := cfg.StorageService.HTTPListen
-	if listen == "" {
-		listen = defaultHTTPListen
-	}
 
 	store, err := buildManifestStore(ctx, cfg.Storage, logger)
 	if err != nil {

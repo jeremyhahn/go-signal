@@ -1,4 +1,29 @@
 // Package config provides configuration loading and validation for the Signal server.
+//
+// # Precedence
+//
+// Every bind address resolves through four layers, highest first:
+//
+//	flag > environment > config file > defaults
+//
+// LoadWithFlags fills the defaults layer (defaults.go), decodes the YAML
+// file over it, overlays the environment through viper, and finally
+// applies each flag the operator actually set (pflag's Changed), so a
+// flag's zero value never masks a lower layer.
+//
+// # Environment variable names
+//
+// Env names are derived mechanically from the YAML key path: the prefix
+// SIGNAL_, then the key upper-cased with each "." replaced by "_". The
+// camelCase of a key is not split, so keyTransparency.grpcListen is
+// SIGNAL_KEYTRANSPARENCY_GRPCLISTEN and health.listen is
+// SIGNAL_HEALTH_LISTEN. An empty variable is treated as unset.
+//
+// # Flag names
+//
+// Flag names are the key path in kebab case, with "." and each camelCase
+// boundary becoming "-": keyTransparency.grpcListen is
+// --key-transparency-grpc-listen.
 package config
 
 import (
@@ -9,6 +34,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
 
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
@@ -47,6 +73,7 @@ type Config struct {
 	CDSI              CDSIConfig              `yaml:"cdsi"`
 	StorageService    StorageServiceConfig    `yaml:"storageService"`
 	KeyTransparency   KeyTransparencyConfig   `yaml:"keyTransparency"`
+	Health            HealthConfig            `yaml:"health"`
 }
 
 // KeyTransparencyConfig configures the standalone key-transparency
@@ -56,7 +83,7 @@ type Config struct {
 type KeyTransparencyConfig struct {
 	// GRPCListen is the host:port the binary binds the
 	// KeyTransparencyQueryService gRPC listener to. Defaults to
-	// 0.0.0.0:8098.
+	// DefaultKeyTransparencyGRPCListen.
 	GRPCListen string `yaml:"grpcListen"`
 
 	// RemoteAddr is the gRPC endpoint signald calls for KT lookups.
@@ -77,7 +104,7 @@ type KeyTransparencyConfig struct {
 // account deletion.
 type StorageServiceConfig struct {
 	// HTTPListen is the host:port the binary binds to. Defaults to
-	// 0.0.0.0:8096 when empty.
+	// DefaultStorageServiceHTTPListen.
 	HTTPListen string `yaml:"httpListen"`
 
 	// SharedSecret is the HMAC secret signald and storage-service
@@ -104,7 +131,7 @@ type StorageServiceConfig struct {
 // /v2/directory/auth HMAC credential issuance.
 type CDSIConfig struct {
 	// WSListen is the host:port the cdsi binary binds the client-
-	// facing WebSocket listener to. Defaults to 0.0.0.0:8094.
+	// facing WebSocket listener to. Defaults to DefaultCDSIWSListen.
 	WSListen string `yaml:"wsListen"`
 
 	// Attestation is the attester flavour for the WebSocket Noise
@@ -138,12 +165,12 @@ type CDSIConfig struct {
 type SVR2Config struct {
 	// HTTPListen is the host:port the binary binds the admin HTTP
 	// listener to (handles DELETE /v1/delete). Defaults to
-	// 0.0.0.0:8091 when empty.
+	// DefaultSVR2HTTPListen.
 	HTTPListen string `yaml:"httpListen"`
 
 	// WSListen is the host:port the binary binds the
 	// client-facing WebSocket listener to (Noise NKhfs over
-	// WebSocket). Defaults to 0.0.0.0:8092 when empty.
+	// WebSocket). Defaults to DefaultSVR2WSListen.
 	WSListen string `yaml:"wsListen"`
 
 	// Attestation selects the attestation flavour:
@@ -534,6 +561,14 @@ var destroyConfig = (*Config).Destroy
 // process. That matters most where a failed load is not immediately followed
 // by exit: an in-process reload, or a supervisor retrying a bad file.
 func Load(path string) (*Config, error) {
+	return LoadWithFlags(path, nil)
+}
+
+// LoadWithFlags is Load with the flag layer on top: after defaults, file
+// and environment are resolved, each address flag registered on flags (see
+// AddAddressFlags) that the operator set overrides its key. A nil flags
+// applies no flag layer.
+func LoadWithFlags(path string, flags *pflag.FlagSet) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, &ConfigLoadError{Path: path, Cause: err}
@@ -547,6 +582,7 @@ func Load(path string) (*Config, error) {
 	}()
 
 	config := &Config{}
+	applyDefaults(config)
 	// Guarded by the success flag rather than placed on each error path, so a
 	// future early return cannot forget it.
 	loaded := false
@@ -559,7 +595,12 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, config); err != nil {
 		return nil, &ConfigParseError{Path: path, Cause: err}
 	}
+	applyEnv(config)
+	applyFlags(config, flags)
 
+	if err := validateAddresses(config); err != nil {
+		return nil, err
+	}
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}

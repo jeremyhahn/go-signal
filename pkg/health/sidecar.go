@@ -6,8 +6,13 @@ import (
 	"net/http"
 	"time"
 
+	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 	"github.com/jeremyhahn/go-signal/pkg/metrics"
 )
+
+// ErrNoListenAddr is returned by RunSidecar when no listen address is
+// supplied. The address comes from the health.listen config key.
+var ErrNoListenAddr = signalerrors.New(signalerrors.ErrInvalidArgument, "health sidecar: listen address is required")
 
 // RunSidecar starts a tiny HTTP server hosting /healthz, /readyz, and
 // /metrics on the supplied listen address. Used by gRPC-native
@@ -17,10 +22,11 @@ import (
 //
 // Returns once ctx is canceled (graceful shutdown) or once the
 // listener errors. Pass nil for metricsReg to skip the /metrics
-// endpoint. listenAddr defaults to "0.0.0.0:8099" when empty.
+// endpoint. listenAddr is the resolved health.listen config value; an
+// empty address returns ErrNoListenAddr rather than binding a guess.
 func RunSidecar(ctx context.Context, p *Probes, metricsReg *metrics.Registry, listenAddr string) error {
 	if listenAddr == "" {
-		listenAddr = "0.0.0.0:8099"
+		return ErrNoListenAddr
 	}
 	mux := http.NewServeMux()
 	MountAdmin(mux, p, metricsReg)

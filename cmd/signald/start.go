@@ -558,7 +558,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	metricsReg := metrics.NewRegistry("signald")
 	probes.Add("cache", checks.Ping("cache", cacheClient))
 	go func() {
-		if err := health.RunSidecar(ctx, probes, metricsReg, ""); err != nil {
+		if err := health.RunSidecar(ctx, probes, metricsReg, cfg.Health.Listen); err != nil {
 			logger.Error("signald health sidecar", slog.Any("error", err))
 		}
 	}()
