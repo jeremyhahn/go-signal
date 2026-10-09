@@ -59,7 +59,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	// idempotent and nil-safe.
 	defer cfg.Destroy()
 
-	if cfg.CDSI.SharedSecret.IsDestroyed() {
+	if cfg.CDSI.SharedSecret.IsDestroyed(ctx) {
 		return errors.New("cdsi: shared secret is required")
 	}
 	if cfg.CDSI.SignaldDirectoryAddr == "" {
@@ -276,7 +276,7 @@ func validateBasicAuth(r *http.Request, secret *secrets.SecureString) (string, b
 		identity string
 		ok       bool
 	)
-	secret.WithBytes(func(key []byte) { identity, ok = validateBasicAuthKey(r, key) })
+	secret.WithBytes(r.Context(), func(key []byte) { identity, ok = validateBasicAuthKey(r, key) })
 	return identity, ok
 }
 

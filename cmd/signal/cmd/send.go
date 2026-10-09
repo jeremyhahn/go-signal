@@ -47,7 +47,7 @@ Examples:
 			return &UsageError{Message: "recipient is required (or use --note-to-self or --group-id)"}
 		}
 
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}

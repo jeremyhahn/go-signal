@@ -22,7 +22,7 @@ var rootCmd = &cobra.Command{
 		if cmd.Name() == "version" {
 			return nil
 		}
-		loaded, err := config.Load(cfgPath)
+		loaded, err := config.Load(cmd.Context(), cfgPath)
 		if err != nil {
 			return signalerrors.Wrap(signalerrors.ErrInternal, "loading configuration", err)
 		}

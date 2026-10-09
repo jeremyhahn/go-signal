@@ -22,7 +22,7 @@ var rootCmd = &cobra.Command{
 			return nil
 		}
 
-		loaded, err := config.Load(cfgPath)
+		loaded, err := config.Load(cmd.Context(), cfgPath)
 		if err != nil {
 			return &StartupError{Stage: "loading configuration", Cause: err}
 		}

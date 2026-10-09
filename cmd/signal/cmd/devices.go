@@ -20,7 +20,7 @@ var listDevicesCmd = &cobra.Command{
 	Use:   "listDevices",
 	Short: "List linked devices",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -50,7 +50,7 @@ var removeDeviceCmd = &cobra.Command{
 		if err != nil {
 			return &UsageError{Message: fmt.Sprintf("invalid device ID: %s", args[0])}
 		}
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -68,7 +68,7 @@ var addDeviceCmd = &cobra.Command{
 			return &UsageError{Message: "provisioning URI is required (--uri)"}
 		}
 
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}

@@ -27,7 +27,7 @@ it creates a new session and performs the full registration flow.`,
 		number := args[0]
 		code := args[1]
 
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}

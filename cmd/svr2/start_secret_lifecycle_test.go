@@ -26,7 +26,7 @@ func TestRunStart_AbortedStartupWipesSharedSecret(t *testing.T) {
 	cfg = &config.Config{
 		SVR2: config.SVR2Config{
 			Attestation:  "tpm", // unsupported standalone: runStart aborts here
-			SharedSecret: secrets.MustNewSecureString("svr2-secret"),
+			SharedSecret: secrets.MustNewSecureString(t.Context(), "svr2-secret"),
 		},
 	}
 	secret := cfg.SVR2.SharedSecret
@@ -37,7 +37,7 @@ func TestRunStart_AbortedStartupWipesSharedSecret(t *testing.T) {
 	if err := runStart(cmd, nil); err == nil {
 		t.Fatal("expected runStart to abort on the unsupported attester")
 	}
-	if !secret.IsDestroyed() {
+	if !secret.IsDestroyed(t.Context()) {
 		t.Error("SVR2.SharedSecret survived an aborted startup")
 	}
 }
@@ -51,7 +51,7 @@ func TestRunStart_MissingSecretStillWipesTheConfig(t *testing.T) {
 
 	cfg = &config.Config{
 		SVR2: config.SVR2Config{Attestation: "tpm"},
-		CDSI: config.CDSIConfig{SharedSecret: secrets.MustNewSecureString("cdsi-secret")},
+		CDSI: config.CDSIConfig{SharedSecret: secrets.MustNewSecureString(t.Context(), "cdsi-secret")},
 	}
 	other := cfg.CDSI.SharedSecret
 
@@ -61,7 +61,7 @@ func TestRunStart_MissingSecretStillWipesTheConfig(t *testing.T) {
 	if err := runStart(cmd, nil); err == nil {
 		t.Fatal("expected runStart to abort")
 	}
-	if !other.IsDestroyed() {
+	if !other.IsDestroyed(t.Context()) {
 		t.Error("CDSI.SharedSecret survived an aborted startup")
 	}
 }

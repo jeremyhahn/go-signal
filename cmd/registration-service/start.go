@@ -47,7 +47,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	transport, err := buildTransport(cfg.Verification, logger)
+	transport, err := buildTransport(ctx, cfg.Verification, logger)
 	if err != nil {
 		return signalerrors.Wrap(signalerrors.ErrInternal, "transport", err)
 	}
@@ -120,7 +120,7 @@ func buildSessionStore(ctx context.Context, cfg config.StorageConfig, logger *sl
 	case "postgres":
 		logger.Info("registration-service: using postgres storage backend")
 		pgClient, err := pgstorage.New(ctx, pgstorage.Config{
-			DSN:             cfg.Postgres.DSN(),
+			DSN:             cfg.Postgres.DSN(ctx),
 			MaxConns:        int32(cfg.Postgres.MaxConns),
 			MinConns:        int32(cfg.Postgres.MinConns),
 			MaxConnLifetime: cfg.Postgres.MaxConnLifetime,
@@ -144,6 +144,6 @@ func buildSessionStore(ctx context.Context, cfg config.StorageConfig, logger *sl
 
 // buildTransport constructs the verification transport per the YAML config
 // via the shared factory (stub for development, twilio for production).
-func buildTransport(vc config.VerificationConfig, logger *slog.Logger) (verification.VerificationTransport, error) {
-	return factory.Build(vc, logger)
+func buildTransport(ctx context.Context, vc config.VerificationConfig, logger *slog.Logger) (verification.VerificationTransport, error) {
+	return factory.Build(ctx, vc, logger)
 }

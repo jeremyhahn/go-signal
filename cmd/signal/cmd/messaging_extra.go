@@ -49,7 +49,7 @@ var sendReactionCmd = &cobra.Command{
 			ts = n
 		}
 
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -90,7 +90,7 @@ var sendReceiptCmd = &cobra.Command{
 			timestamps = append(timestamps, n)
 		}
 
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -111,7 +111,7 @@ var sendTypingCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		stop, _ := cmd.Flags().GetBool("stop")
 
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -138,7 +138,7 @@ var remoteDeleteCmd = &cobra.Command{
 			return &UsageError{Message: "invalid target-timestamp: " + tsStr}
 		}
 
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -156,7 +156,7 @@ var sendContactsCmd = &cobra.Command{
 	Use:   "sendContacts",
 	Short: "Sync contacts to all linked devices",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}

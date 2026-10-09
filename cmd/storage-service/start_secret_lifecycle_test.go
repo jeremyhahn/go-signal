@@ -27,8 +27,8 @@ func TestRunStart_AbortedStartupWipesTheConfigSecrets(t *testing.T) {
 
 	cfg = &config.Config{
 		// StorageService.SharedSecret deliberately unset: runStart aborts here.
-		CDSI: config.CDSIConfig{SharedSecret: secrets.MustNewSecureString("cdsi-secret")},
-		SVR2: config.SVR2Config{SharedSecret: secrets.MustNewSecureString("svr2-secret")},
+		CDSI: config.CDSIConfig{SharedSecret: secrets.MustNewSecureString(t.Context(), "cdsi-secret")},
+		SVR2: config.SVR2Config{SharedSecret: secrets.MustNewSecureString(t.Context(), "svr2-secret")},
 	}
 	others := map[string]*secrets.SecureString{
 		"CDSI.SharedSecret": cfg.CDSI.SharedSecret,
@@ -42,7 +42,7 @@ func TestRunStart_AbortedStartupWipesTheConfigSecrets(t *testing.T) {
 		t.Fatal("expected runStart to abort on the missing shared secret")
 	}
 	for name, ss := range others {
-		if !ss.IsDestroyed() {
+		if !ss.IsDestroyed(t.Context()) {
 			t.Errorf("%s survived an aborted startup", name)
 		}
 	}

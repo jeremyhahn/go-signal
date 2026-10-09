@@ -71,7 +71,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 		return signalerrors.Wrap(signalerrors.ErrInternal, "svr2 storage", err)
 	}
 	dispatcher := svr2.NewDispatcher(storage)
-	if cfg.SVR2.SharedSecret.IsDestroyed() {
+	if cfg.SVR2.SharedSecret.IsDestroyed(ctx) {
 		return errors.New("svr2: shared secret is required")
 	}
 	hmacSecret := cfg.SVR2.SharedSecret
@@ -323,7 +323,7 @@ func validateBasicAuth(r *http.Request, secret *secrets.SecureString) (string, b
 		identity string
 		ok       bool
 	)
-	secret.WithBytes(func(key []byte) { identity, ok = validateBasicAuthKey(r, key) })
+	secret.WithBytes(r.Context(), func(key []byte) { identity, ok = validateBasicAuthKey(r, key) })
 	return identity, ok
 }
 

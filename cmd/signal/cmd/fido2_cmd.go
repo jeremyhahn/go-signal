@@ -25,7 +25,7 @@ var fido2CapabilitiesCmd = &cobra.Command{
 	Use:   "capabilities",
 	Short: "Show server FIDO2 capabilities",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -43,7 +43,7 @@ var fido2ListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List registered security keys",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -73,7 +73,7 @@ var fido2DeleteCmd = &cobra.Command{
 	Short: "Delete a security key",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -87,7 +87,7 @@ var fido2RenameCmd = &cobra.Command{
 	Short: "Rename a security key",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}

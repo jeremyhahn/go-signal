@@ -22,7 +22,7 @@ import (
 func newTestMux(t *testing.T, secret string) (*httptest.Server, *memstorage.MemoryManifestStore) {
 	t.Helper()
 	store := memstorage.NewMemoryManifestStore()
-	mux := NewMux(store, secrets.MustNewSecureString(secret), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	mux := NewMux(store, secrets.MustNewSecureString(t.Context(), secret), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv, store

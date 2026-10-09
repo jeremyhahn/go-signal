@@ -33,7 +33,7 @@ Examples:
   signal receive -a +15555550100 --timeout 10
   signal receive -a +15555550100 --output json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
