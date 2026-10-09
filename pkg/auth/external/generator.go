@@ -199,57 +199,58 @@ func (g *Generator) Validate(ctx context.Context, creds *Credentials, maxAge tim
 	if creds == nil {
 		return time.Time{}, errors.New("external: nil credentials")
 	}
-	// Parse and compare inside the borrow: Plaintext() would copy the whole
+	// Parse inside the credential's borrow: Plaintext() would copy the whole
 	// credential into a Go string that cannot be wiped, which is the same
-	// exposure Generate now avoids. Only the timestamp — not secret — leaves
-	// this scope.
+	// exposure Generate now avoids. Only the two fields the check needs leave
+	// the borrow, as byte slices that are wiped on the way out.
+	//
+	// The HMAC is recomputed AFTER that borrow ends: go-qrdb allows exactly one
+	// protected borrow at a time per goroutine, and recomputing it needs the
+	// generator key, a second protected secret.
 	var (
 		tsDigits []byte
+		sig      []byte
 		verr     error
 	)
+	defer func() { wipe(tsDigits); wipe(sig) }()
 	revealed := creds.Password.WithBytes(ctx, func(password []byte) {
 		parts := bytes.Split(password, []byte{':'})
-		var tsBytes, sig []byte
 		switch {
 		case len(parts) == 3 && g.cfg.PrependUsername:
 			if !bytes.Equal(parts[0], []byte(creds.Username)) {
 				verr = errors.New("external: identity mismatch")
 				return
 			}
-			tsBytes, sig = parts[1], parts[2]
+			tsDigits = append(tsDigits, parts[1]...)
+			sig = append(sig, parts[2]...)
 		case len(parts) == 2 && !g.cfg.PrependUsername:
-			tsBytes, sig = parts[0], parts[1]
+			tsDigits = append(tsDigits, parts[0]...)
+			sig = append(sig, parts[1]...)
 		default:
 			verr = errors.New("external: malformed password")
-			return
 		}
-
-		signed := make([]byte, 0, len(creds.Username)+1+len(tsBytes))
-		signed = append(signed, creds.Username...)
-		signed = append(signed, ':')
-		signed = append(signed, tsBytes...)
-		defer wipe(signed)
-
-		expected, ok := g.hmac(ctx, signed)
-		if !ok {
-			verr = errors.New("external: generator has been destroyed")
-			return
-		}
-		defer wipe(expected)
-
-		if !hmac.Equal(expected, sig) {
-			verr = errors.New("external: signature mismatch")
-			return
-		}
-		// The timestamp is not secret; copy it out so parsing happens after
-		// the protected pages are released.
-		tsDigits = append(tsDigits, tsBytes...)
 	})
 	if !revealed {
 		return time.Time{}, errors.New("external: credentials have no password")
 	}
 	if verr != nil {
 		return time.Time{}, verr
+	}
+
+	signed := make([]byte, 0, len(creds.Username)+1+len(tsDigits))
+	signed = append(signed, creds.Username...)
+	signed = append(signed, ':')
+	signed = append(signed, tsDigits...)
+	defer wipe(signed)
+
+	expected, ok := g.hmac(ctx, signed)
+	if !ok {
+		return time.Time{}, errors.New("external: generator has been destroyed")
+	}
+	defer wipe(expected)
+
+	if !hmac.Equal(expected, sig) {
+		return time.Time{}, errors.New("external: signature mismatch")
 	}
 	tsInt, err := strconv.ParseInt(string(tsDigits), 10, 64)
 	if err != nil {
