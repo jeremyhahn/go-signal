@@ -11,6 +11,8 @@ import (
 
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 
+	qrdbdao "github.com/jeremyhahn/go-qrdb/pkg/dao"
+
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	"github.com/jeremyhahn/go-signal/pkg/daostore"
 	"github.com/jeremyhahn/go-signal/pkg/daostore/entities"
@@ -105,6 +107,12 @@ func NewDefaultDAOStore(dataDir string) (*DAOStore, error) {
 	return store, nil
 }
 
+// queryFailure wraps a lookup error that is not the typed not-found condition.
+// Callers check dao.IsNotFound first: only that may be read as "no such row".
+func queryFailure(op string, err error) error {
+	return signalerrors.Wrap(signalerrors.ErrInternal, "signal: "+op, err)
+}
+
 // daoOpTimeout bounds a single store operation.
 const daoOpTimeout = 5 * time.Second
 
@@ -119,7 +127,10 @@ func (s *DAOStore) GetCredentials(ctx context.Context) (*Credentials, error) {
 
 	entity, err := s.factory.Settings.QueryOneByIndex(ctx, "Key", "credentials")
 	if err != nil {
-		return nil, nil // not found — no credentials stored yet
+		if qrdbdao.IsNotFound(err) {
+			return nil, nil // no credentials stored yet
+		}
+		return nil, queryFailure("load credentials", err)
 	}
 
 	// Credentials are stored as JSON in the settings entity value.
@@ -140,8 +151,11 @@ func (s *DAOStore) SaveCredentials(ctx context.Context, creds *Credentials) erro
 		return err
 	}
 
-	existing, getErr := s.factory.Settings.QueryOneByIndex(ctx, "Key", "credentials")
-	if getErr == nil && existing != nil {
+	existing, err := s.factory.Settings.QueryOneByIndex(ctx, "Key", "credentials")
+	if err != nil && !qrdbdao.IsNotFound(err) {
+		return queryFailure("look up credentials", err)
+	}
+	if existing != nil {
 		existing.Value = value
 		return s.factory.Settings.Save(ctx, existing)
 	}
@@ -186,9 +200,10 @@ func (s *DAOStore) SaveContact(contact *Contact) error {
 	var entity *entities.ContactEntity
 	if contact.UUID != "" {
 		existing, err := s.factory.Contacts.QueryOneByIndex(ctx, "UUID", contact.UUID)
-		if err == nil && existing != nil {
-			entity = existing
+		if err != nil && !qrdbdao.IsNotFound(err) {
+			return queryFailure("look up contact", err)
 		}
+		entity = existing
 	}
 	if entity == nil {
 		entity = &entities.ContactEntity{}
@@ -211,7 +226,10 @@ func (s *DAOStore) DeleteContact(number string) error {
 
 	entity, err := s.factory.Contacts.QueryOneByIndex(ctx, "E164", number)
 	if err != nil {
-		return nil
+		if qrdbdao.IsNotFound(err) {
+			return nil
+		}
+		return queryFailure("look up contact", err)
 	}
 	return s.factory.Contacts.Delete(ctx, entity)
 }
@@ -293,7 +311,10 @@ func (s *DAOStore) SaveGroup(group *Group) error {
 
 	var entity *entities.GroupEntity
 	existing, err := s.factory.Groups.QueryOneByIndex(ctx, "GroupID", group.ID)
-	if err == nil && existing != nil {
+	if err != nil && !qrdbdao.IsNotFound(err) {
+		return queryFailure("look up group", err)
+	}
+	if existing != nil {
 		entity = existing
 	} else {
 		entity = &entities.GroupEntity{}
@@ -336,7 +357,10 @@ func (s *DAOStore) SaveStickerPack(pack *InstalledStickerPack) error {
 	defer cancel()
 	var entity *entities.StickerPackEntity
 	existing, err := s.factory.StickerPacks.QueryOneByIndex(ctx, "PackID", pack.PackID)
-	if err == nil && existing != nil {
+	if err != nil && !qrdbdao.IsNotFound(err) {
+		return queryFailure("look up sticker pack", err)
+	}
+	if existing != nil {
 		entity = existing
 	} else {
 		entity = &entities.StickerPackEntity{}
@@ -353,7 +377,10 @@ func (s *DAOStore) DeleteStickerPack(packID string) error {
 	ctx, cancel := s.ctx()
 	defer cancel()
 	existing, err := s.factory.StickerPacks.QueryOneByIndex(ctx, "PackID", packID)
-	if err != nil || existing == nil {
+	if err != nil && !qrdbdao.IsNotFound(err) {
+		return queryFailure("look up sticker pack", err)
+	}
+	if existing == nil {
 		return nil
 	}
 	return s.factory.StickerPacks.Delete(ctx, existing)
@@ -383,9 +410,14 @@ func (s *DAOStore) Factory() *daostore.Factory {
 // The password is stored as plaintext in the DB (protected by OS-level
 // file permissions on PebbleDB's data directory).
 func marshalCredentials(ctx context.Context, creds *Credentials) (string, error) {
+	// Only a password that was never set is stored empty. One that is set but will
+	// not open is an error: persisting "" would replace the account's token.
 	pw := ""
-	if creds.Password != nil {
-		pw = creds.Password.Plaintext(ctx)
+	if creds.Password != nil && !creds.Password.IsAbsent() {
+		var err error
+		if pw, err = creds.Password.Reveal(ctx); err != nil {
+			return "", signalerrors.Wrap(signalerrors.ErrUnavailable, "signal: open password to save credentials", err)
+		}
 	}
 	return fmt.Sprintf(`{"number":%q,"uuid":%q,"pni":%q,"password":%q,"deviceId":%d}`,
 		creds.Number, creds.UUID, creds.PNI, pw, creds.DeviceID), nil
