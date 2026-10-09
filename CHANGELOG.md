@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- `make lint` now ends with actionlint over `.github/workflows/` (new `make actionlint` target, pinned at `ACTIONLINT_VERSION` v1.7.12; CI's Lint job installs that pin unless the runner already carries it). `make trivy` and `make trivy-image` fail with an install hint when trivy is not on PATH instead of skipping and exiting 0, so `make security` can no longer pass without its scanner (#92).
+
 ## [0.2.1-alpha] - 2026-10-09
 
 ### Security

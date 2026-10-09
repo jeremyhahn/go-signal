@@ -40,6 +40,8 @@ GOSEC_TOOL    := $(TOOLS_BIN)/gosec
 # tools/gosec build is skipped; the default is the binary that build produces.
 GOSEC         ?= $(GOSEC_TOOL)
 GOVULNCHECK   := govulncheck
+ACTIONLINT    := actionlint
+TRIVY         := trivy
 
 # The scanners are pinned for the same reason golangci-lint is: unpinned, they
 # decide whether the security gate is red based on what upstream released that
@@ -112,6 +114,11 @@ GOSEC_VERSION       := v2.29.0
 
 # Matches the ci-runner image exactly, so ci.yml no longer installs it.
 GOVULNCHECK_VERSION := v1.8.0
+
+# actionlint's pin is the software-factory worker image's, the latest release
+# (devops.md §9). CI installs exactly this when the runner does not already
+# carry it, and checks the binary that runs against it either way (#92).
+ACTIONLINT_VERSION  := v1.7.12
 
 # gosec exclusions (documented):
 #   G103: unsafe calls (test reflect/unsafe access for unexported fields)
@@ -224,6 +231,9 @@ print-gosec-version: ## Print the pinned gosec version (for CI)
 
 print-govulncheck-version: ## Print the pinned govulncheck version (for CI)
 	@echo '$(GOVULNCHECK_VERSION)'
+
+print-actionlint-version: ## Print the pinned actionlint version (for CI)
+	@echo '$(ACTIONLINT_VERSION)'
 
 print-protoc-gen-go-version: ## Print the pinned protoc-gen-go version
 	@echo '$(PROTOC_GEN_GO_VERSION)'
@@ -725,7 +735,7 @@ coverage-smtp:
 # CI / Quality
 # ==============================================================================
 
-.PHONY: ci fmt vet lint gosec gosec-tool vuln modverify trivy trivy-image security
+.PHONY: ci fmt vet lint actionlint gosec gosec-tool vuln modverify trivy trivy-image security
 
 ci: fmt vet lint security build test ## Run the full CI pipeline
 	@echo "==> CI pipeline complete."
@@ -757,11 +767,28 @@ vet: ## Run go vet, under the repo's build tags and again with the integration t
 # was invisible to the first pass as well. When it was first linted it produced
 # 33 findings, including a HIGH-severity gosec G402 in a file the security gate
 # had never opened either.
-lint: ## Run golangci-lint, twice: repo tags, then again with the integration tag
+#
+# actionlint runs last (devops.md §4, the `make lint` row), so workflow syntax,
+# expressions and runner labels fail here before CI parses them.
+lint: ## Run golangci-lint (repo tags, then the integration tag), then actionlint
 	@echo "==> Running linter (tags: $(or $(strip $(BUILD_TAGS)),none))..."
 	$(GOLINT) run --timeout 5m --build-tags "$(strip $(BUILD_TAGS))" ./...
 	@echo "==> Running linter (tags: integration $(strip $(BUILD_TAGS)))..."
 	$(GOLINT) run --timeout 5m --build-tags "integration $(strip $(BUILD_TAGS))" ./...
+	@$(MAKE) --no-print-directory actionlint
+
+# Every workflow under .github/workflows/, with .github/actionlint.yaml when the
+# repo carries one (actionlint finds it itself; every runs-on here is
+# ubuntu-latest, a label it already knows). shellcheck, when on PATH, checks
+# the run: scripts too. A missing actionlint fails the target: a lint gate that
+# skips its own tool passes vacuously.
+actionlint: ## Lint the GitHub Actions workflows
+	@command -v $(ACTIONLINT) >/dev/null 2>&1 || { \
+		echo "==> actionlint not installed: go install github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)" >&2; \
+		exit 1; \
+	}
+	@echo "==> Running actionlint..."
+	$(ACTIONLINT)
 
 # GOSEC_FMT and GOSEC_OUT exist so CI can reuse this exact invocation while
 # still producing SARIF. CI used to restate the flags in YAML, and that is how
@@ -811,13 +838,18 @@ modverify: ## Verify module integrity against go.sum
 # Filesystem CVE/secret scan, gated on CRITICAL/HIGH. test/ is the integration
 # and performance harness; build/, bin/ and data/ are gitignored local
 # artifacts. None of them ship.
+#
+# A missing trivy fails the target. It used to print "skipping" and exit 0,
+# so `make security` passed on any machine without the scanner (#92).
+TRIVY_INSTALL_HINT := install trivy: https://trivy.dev/latest/getting-started/installation/
+
 trivy: ## Run trivy filesystem scan (CRITICAL/HIGH gate)
-	@command -v trivy >/dev/null 2>&1 || { \
-		echo "==> trivy not installed - skipping filesystem scan (see https://trivy.dev/latest/getting-started/installation/)"; \
-		exit 0; \
+	@command -v $(TRIVY) >/dev/null 2>&1 || { \
+		echo "==> trivy not installed - $(TRIVY_INSTALL_HINT)" >&2; \
+		exit 1; \
 	}; \
 	echo "==> Running trivy filesystem scan..."; \
-	trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 \
+	$(TRIVY) fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 \
 		--skip-dirs test,build,bin,data .
 
 # Image scan of the six deploy/ service images — the artifacts
@@ -851,12 +883,12 @@ trivy: ## Run trivy filesystem scan (CRITICAL/HIGH gate)
 DEPLOY_SERVICES := signald cdsi svr2 key-transparency registration-service storage-service
 
 trivy-image: ## Build and scan the deploy/ service images (see Makefile note)
-	@command -v docker >/dev/null 2>&1 || { echo "==> docker not installed - skipping image scan"; exit 0; }; \
-	command -v trivy >/dev/null 2>&1 || { echo "==> trivy not installed - skipping image scan"; exit 0; }; \
+	@command -v docker >/dev/null 2>&1 || { echo "==> docker not installed - cannot build the images to scan" >&2; exit 1; }; \
+	command -v $(TRIVY) >/dev/null 2>&1 || { echo "==> trivy not installed - $(TRIVY_INSTALL_HINT)" >&2; exit 1; }; \
 	for svc in $(DEPLOY_SERVICES); do \
 		echo "==> Building and scanning go-signal-$$svc..."; \
 		docker build -f deploy/Dockerfile.$$svc -t go-signal-$$svc:security . || exit 1; \
-		trivy image --scanners vuln,secret --severity CRITICAL,HIGH --ignore-unfixed \
+		$(TRIVY) image --scanners vuln,secret --severity CRITICAL,HIGH --ignore-unfixed \
 			--exit-code 1 go-signal-$$svc:security || exit 1; \
 	done
 

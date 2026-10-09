@@ -107,7 +107,27 @@ jobs:
             exit 1
           fi
 
-      - name: Run golangci-lint
+      # `make lint` ends with actionlint (devops.md §4) and fails when it is
+      # absent. GitHub's hosted image does not carry it, and whether a Gitea
+      # runner image bakes it is not something this file can assume, so the
+      # step installs the pin only when the binary on PATH is not already it,
+      # then checks the result the same way as golangci-lint above.
+      - name: Install actionlint (unless the pinned one is on PATH)
+        run: |
+          want="$(make -s print-actionlint-version)"
+          have() {
+            bin="$(command -v actionlint)" || return 1
+            got="$(go version -m "$bin" | awk '$1 == "mod" && $2 == "github.com/rhysd/actionlint" { print $3 }')"
+            [ "$got" = "$want" ]
+          }
+          have || go install github.com/rhysd/actionlint/cmd/actionlint@"$want"
+          if ! have; then
+            echo "actionlint version mismatch: want $want, got ${got:-<unreadable>} at ${bin:-<not on PATH>}" >&2
+            exit 1
+          fi
+          echo "actionlint:  $bin ($got)"
+
+      - name: Run golangci-lint and actionlint
         run: make lint
 
   security:
