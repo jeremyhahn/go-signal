@@ -7,6 +7,7 @@
 package common
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -69,9 +70,9 @@ func ValidateBasicAuth(authHeader string, sharedSecret []byte) (string, bool) {
 //
 // Returns "" when the secret is unset or destroyed — the caller must treat
 // that as a failure to authenticate rather than sending an unsigned header.
-func BasicAuthHeaderSecret(identity string, sharedSecret *secrets.SecureString) string {
+func BasicAuthHeaderSecret(ctx context.Context, identity string, sharedSecret *secrets.SecureString) string {
 	var header string
-	sharedSecret.WithBytes(func(key []byte) {
+	sharedSecret.WithBytes(ctx, func(key []byte) {
 		header = BasicAuthHeader(identity, key)
 	})
 	return header
@@ -83,12 +84,12 @@ func BasicAuthHeaderSecret(identity string, sharedSecret *secrets.SecureString) 
 //
 // Returns ("", false) when the secret is unset or destroyed, so a wiped
 // secret fails closed instead of authenticating anything.
-func ValidateBasicAuthSecret(authHeader string, sharedSecret *secrets.SecureString) (string, bool) {
+func ValidateBasicAuthSecret(ctx context.Context, authHeader string, sharedSecret *secrets.SecureString) (string, bool) {
 	var (
 		username string
 		ok       bool
 	)
-	sharedSecret.WithBytes(func(key []byte) {
+	sharedSecret.WithBytes(ctx, func(key []byte) {
 		username, ok = ValidateBasicAuth(authHeader, key)
 	})
 	return username, ok

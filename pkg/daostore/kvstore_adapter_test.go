@@ -1,6 +1,7 @@
 package daostore
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -57,6 +58,32 @@ func (m *mockKVServicer) PutIfAbsent(_ context.Context, key string, value []byte
 	return true, nil
 }
 
+// CompareAndDelete removes key only while it still holds expected, matching
+// the real engines' guarded release.
+func (m *mockKVServicer) CompareAndDelete(_ context.Context, key string, expected []byte) (bool, error) {
+	if m.delErr != nil {
+		return false, m.delErr
+	}
+	if v, exists := m.data[key]; !exists || !bytes.Equal(v, expected) {
+		return false, nil
+	}
+	delete(m.data, key)
+	return true, nil
+}
+
+// CompareAndSwap replaces key's value only while it still holds expected; an
+// absent key stays absent, as in the real engines.
+func (m *mockKVServicer) CompareAndSwap(_ context.Context, key string, expected, next []byte) (bool, error) {
+	if m.putErr != nil {
+		return false, m.putErr
+	}
+	if v, exists := m.data[key]; !exists || !bytes.Equal(v, expected) {
+		return false, nil
+	}
+	m.data[key] = bytes.Clone(next)
+	return true, nil
+}
+
 func (m *mockKVServicer) Get(_ context.Context, key string) ([]byte, error) {
 	if m.getErr != nil {
 		return nil, m.getErr
@@ -109,6 +136,12 @@ func (m *mockKVServicer) Scan(_ context.Context, prefix string) (map[string][]by
 func (m *mockKVServicer) GetStale(_ context.Context, key string) ([]byte, error) {
 	return m.Get(context.Background(), key)
 }
+
+// ListAll is List without the internal-key guard; the mock applies none.
+func (m *mockKVServicer) ListAll(ctx context.Context, prefix string) ([]string, error) {
+	return m.List(ctx, prefix)
+}
+
 func (m *mockKVServicer) ListStale(_ context.Context, prefix string) ([]string, error) {
 	return m.List(context.Background(), prefix)
 }

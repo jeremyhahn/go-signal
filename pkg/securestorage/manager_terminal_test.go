@@ -21,8 +21,8 @@ func recordClones(t *testing.T) func() []*secrets.SecureString {
 		mu     sync.Mutex
 		clones []*secrets.SecureString
 	)
-	cloneSecret = func(s *secrets.SecureString) (*secrets.SecureString, bool, error) {
-		clone, configured, err := original(s)
+	cloneSecret = func(s *secrets.SecureString, ctx context.Context) (*secrets.SecureString, bool, error) {
+		clone, configured, err := original(s, ctx)
 		if clone != nil {
 			mu.Lock()
 			clones = append(clones, clone)
@@ -43,13 +43,13 @@ func recordClones(t *testing.T) func() []*secrets.SecureString {
 // simplest form: once shutdown has run, nothing installs another key.
 func TestSetSharedSecret_AfterDestroyIsRefused(t *testing.T) {
 	m := NewSecureStorageManager(testLogger())
-	if err := m.SetSharedSecret(secrets.MustNewSecureString("storage-shared-secret")); err != nil {
+	if err := m.SetSharedSecret(t.Context(), secrets.MustNewSecureString(t.Context(), "storage-shared-secret")); err != nil {
 		t.Fatalf("SetSharedSecret: %v", err)
 	}
 	m.Destroy()
 
 	clones := recordClones(t)
-	err := m.SetSharedSecret(secrets.MustNewSecureString("a-second-secret"))
+	err := m.SetSharedSecret(t.Context(), secrets.MustNewSecureString(t.Context(), "a-second-secret"))
 
 	var destroyed *ManagerDestroyedError
 	if !errors.As(err, &destroyed) {
@@ -58,7 +58,7 @@ func TestSetSharedSecret_AfterDestroyIsRefused(t *testing.T) {
 	// The refused call owned the clone it made; refusing to publish does not
 	// excuse it from wiping one.
 	for i, clone := range clones() {
-		if !clone.IsDestroyed() {
+		if !clone.IsDestroyed(t.Context()) {
 			t.Errorf("clone %d survived a refused SetSharedSecret", i)
 		}
 	}
@@ -82,14 +82,14 @@ func TestDestroy_OnNeverConfiguredManagerIsTerminal(t *testing.T) {
 	m.Destroy()
 
 	clones := recordClones(t)
-	err := m.SetSharedSecret(secrets.MustNewSecureString("storage-shared-secret"))
+	err := m.SetSharedSecret(t.Context(), secrets.MustNewSecureString(t.Context(), "storage-shared-secret"))
 
 	var destroyed *ManagerDestroyedError
 	if !errors.As(err, &destroyed) {
 		t.Fatalf("SetSharedSecret on a destroyed unconfigured manager = %v, want ManagerDestroyedError", err)
 	}
 	for i, clone := range clones() {
-		if !clone.IsDestroyed() {
+		if !clone.IsDestroyed(t.Context()) {
 			t.Errorf("clone %d survived a refused SetSharedSecret", i)
 		}
 	}
@@ -132,7 +132,7 @@ func TestSetSharedSecret_RacingDestroyNeverLeavesALiveSecret(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			setErr = m.SetSharedSecret(secrets.MustNewSecureString("storage-shared-secret"))
+			setErr = m.SetSharedSecret(t.Context(), secrets.MustNewSecureString(t.Context(), "storage-shared-secret"))
 		}()
 		go func() {
 			defer wg.Done()
@@ -159,7 +159,7 @@ func TestSetSharedSecret_RacingDestroyNeverLeavesALiveSecret(t *testing.T) {
 	}
 
 	for i, clone := range clones() {
-		if !clone.IsDestroyed() {
+		if !clone.IsDestroyed(t.Context()) {
 			t.Errorf("clone %d is still live after its manager was destroyed", i)
 		}
 	}

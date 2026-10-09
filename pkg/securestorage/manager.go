@@ -99,7 +99,7 @@ func NewSecureStorageManager(logger *slog.Logger) *SecureStorageManager {
 // as fatal rather than proceeding: continuing would run with GetAuth's legacy
 // stub, issuing random credentials the peer rejects. An absent secret is not
 // an error; it selects the stub deliberately.
-func (m *SecureStorageManager) SetSharedSecret(secret *secrets.SecureString) error {
+func (m *SecureStorageManager) SetSharedSecret(ctx context.Context, secret *secrets.SecureString) error {
 	// Three outcomes have to stay distinct here, and only one of them may
 	// select the legacy stub:
 	//
@@ -123,7 +123,7 @@ func (m *SecureStorageManager) SetSharedSecret(secret *secrets.SecureString) err
 	//
 	// Nothing is published until both questions are answered, so an error
 	// leaves the previously installed configuration — key included — intact.
-	clone, configured, err := cloneSecret(secret)
+	clone, configured, err := cloneSecret(secret, ctx)
 	if err != nil {
 		// Nothing has been published and nothing displaced, so the currently
 		// installed configuration — including a live key — survives intact.
@@ -146,7 +146,7 @@ func (m *SecureStorageManager) SetSharedSecret(secret *secrets.SecureString) err
 		// over it. Publishing a key that cannot mint is the same fail-open in
 		// a different disguise: the mode says "authenticated" and every token
 		// it issues is unusable.
-		if err := clone.TryWithBytes(func([]byte) {}); err != nil {
+		if err := clone.TryWithBytes(ctx, func([]byte) {}); err != nil {
 			clone.Destroy()
 			return err
 		}
@@ -336,7 +336,7 @@ func (m *SecureStorageManager) Read(ctx context.Context, accountUUID string, key
 // Once a secret has been configured, a reveal that fails — the secret was
 // destroyed, or the enclave would not open — is a
 // SharedSecretUnavailableError, never a fallback to the stub.
-func (m *SecureStorageManager) GetAuth(_ context.Context, accountUUID string) (*StorageCredentials, error) {
+func (m *SecureStorageManager) GetAuth(ctx context.Context, accountUUID string) (*StorageCredentials, error) {
 	// One Load: mode and key come from the same published state, so the
 	// branch below cannot be taken against a configuration that no longer
 	// exists.
@@ -349,7 +349,7 @@ func (m *SecureStorageManager) GetAuth(_ context.Context, accountUUID string) (*
 		if err != nil {
 			return nil, err
 		}
-		password, err := newSecureStringBytes(raw)
+		password, err := newSecureStringBytes(ctx, raw)
 		if err != nil {
 			return nil, err
 		}
@@ -360,7 +360,7 @@ func (m *SecureStorageManager) GetAuth(_ context.Context, accountUUID string) (*
 	// which the runtime may copy and which cannot be wiped;
 	// NewSecureStringFromBytes consumes and wipes the slice instead.
 	var derived []byte
-	if !st.secret.WithBytes(func(key []byte) {
+	if !st.secret.WithBytes(ctx, func(key []byte) {
 		mac := hmac.New(sha256.New, key)
 		mac.Write([]byte(accountUUID))
 		sum := mac.Sum(nil)
@@ -370,7 +370,7 @@ func (m *SecureStorageManager) GetAuth(_ context.Context, accountUUID string) (*
 	}) {
 		return nil, &SharedSecretUnavailableError{AccountUUID: accountUUID}
 	}
-	password, err := newSecureStringBytes(derived)
+	password, err := newSecureStringBytes(ctx, derived)
 	if err != nil {
 		return nil, err
 	}

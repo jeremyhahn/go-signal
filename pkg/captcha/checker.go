@@ -48,7 +48,7 @@ func (p *parsedToken) Destroy() {
 //
 // Returns *InvalidTokenFormatError when the input does not have exactly
 // four dot-separated slots or the action slot does not parse.
-func parseToken(input string) (*parsedToken, error) {
+func parseToken(ctx context.Context, input string) (*parsedToken, error) {
 	// SplitN(_, 4) preserves any literal dots inside the token slot.
 	parts := strings.SplitN(input, tokenSeparator, 4)
 	if len(parts) < 4 {
@@ -70,7 +70,7 @@ func parseToken(input string) (*parsedToken, error) {
 	if provider == "" || siteKey == "" || token == "" {
 		return nil, &InvalidTokenFormatError{Reason: "empty slot in captcha token"}
 	}
-	sealed, err := secrets.NewSecureString(token)
+	sealed, err := secrets.NewSecureString(ctx, token)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +127,7 @@ func (a *Assessment) Accepted() bool {
 //     accepted the underlying solution; this prevents replay across flows.
 //   - remoteIP is forwarded to the provider for fraud signals.
 func (c *Checker) Verify(ctx context.Context, expectedAction Action, input, remoteIP string) (*Assessment, error) {
-	parsed, err := parseToken(input)
+	parsed, err := parseToken(ctx, input)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +137,7 @@ func (c *Checker) Verify(ctx context.Context, expectedAction Action, input, remo
 	}
 	// The solution is opened here and lives only for the duration of the
 	// provider round-trip; parsed.Token is wiped by the deferred Destroy.
-	token := parsed.Token.Plaintext()
+	token := parsed.Token.Plaintext(ctx)
 	if parsed.IsShort {
 		if c.ShortCodes == nil {
 			return nil, &ShortCodeUnsupportedError{}

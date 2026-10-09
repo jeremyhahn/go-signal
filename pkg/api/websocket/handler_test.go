@@ -1265,7 +1265,7 @@ func TestHandleIncomingMessage_SendErrorKeepalive(t *testing.T) {
 				Path: "/api/v1/keepalive",
 			},
 		}
-		h.handleIncomingMessage(session, keepaliveMsg)
+		h.handleIncomingMessage(t.Context(), session, keepaliveMsg)
 		close(handlerDone)
 	}))
 	defer srv.Close()
@@ -1324,7 +1324,7 @@ func TestHandleIncomingMessage_SendErrorPUTMessage(t *testing.T) {
 				Path: "/api/v1/message",
 			},
 		}
-		h.handleIncomingMessage(session, putMsg)
+		h.handleIncomingMessage(t.Context(), session, putMsg)
 		close(handlerDone)
 	}))
 	defer srv.Close()
@@ -1383,7 +1383,7 @@ func TestHandleIncomingMessage_SendErrorUnknownRoute(t *testing.T) {
 				Path: "/api/v1/unknown",
 			},
 		}
-		h.handleIncomingMessage(session, unknownMsg)
+		h.handleIncomingMessage(t.Context(), session, unknownMsg)
 		close(handlerDone)
 	}))
 	defer srv.Close()
@@ -1500,7 +1500,7 @@ func TestRouteToHTTP_NilHTTPHandler_ClosedSession(t *testing.T) {
 			},
 		}
 		// routeToHTTP with nil httpHandler on closed session: Send should fail.
-		h.routeToHTTP(session, msg)
+		h.routeToHTTP(t.Context(), session, msg)
 		close(handlerDone)
 	}))
 	defer srv.Close()
@@ -1566,7 +1566,7 @@ func TestRouteToHTTP_InvalidBase64Body(t *testing.T) {
 				Body: "!!!not-valid-base64!!!",
 			},
 		}
-		h.routeToHTTP(session, msg)
+		h.routeToHTTP(t.Context(), session, msg)
 
 		// Drain the response from the send channel to confirm it was queued.
 		select {
@@ -1646,7 +1646,7 @@ func TestRouteToHTTP_InvalidBase64Body_ClosedSession(t *testing.T) {
 				Body: "!!!not-valid-base64!!!",
 			},
 		}
-		h.routeToHTTP(session, msg)
+		h.routeToHTTP(t.Context(), session, msg)
 		close(handlerDone)
 	}))
 	defer srv.Close()
@@ -2017,7 +2017,7 @@ func TestRouteToHTTP_SendResponseError_ClosedSession(t *testing.T) {
 		if err != nil {
 			return
 		}
-		session := signalws.NewSession(conn, "send-resp-err-uuid", 1, secrets.MustNewSecureString("token"), logger)
+		session := signalws.NewSession(conn, "send-resp-err-uuid", 1, secrets.MustNewSecureString(t.Context(), "token"), logger)
 		// Close the session so the final Send in routeToHTTP fails.
 		session.Close()
 		msg := &signalws.WebSocketMessage{
@@ -2028,7 +2028,7 @@ func TestRouteToHTTP_SendResponseError_ClosedSession(t *testing.T) {
 				Path: "/v1/some/path",
 			},
 		}
-		h.routeToHTTP(session, msg)
+		h.routeToHTTP(t.Context(), session, msg)
 		close(handlerDone)
 	}))
 	defer srv.Close()

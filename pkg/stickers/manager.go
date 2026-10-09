@@ -39,8 +39,8 @@ type S3Config struct {
 }
 
 // configured returns true when every required S3 field is populated.
-func (c S3Config) configured() bool {
-	return c.Region != "" && c.Bucket != "" && c.AccessKeyID != "" && !c.SecretAccessKey.IsDestroyed()
+func (c S3Config) configured(ctx context.Context) bool {
+	return c.Region != "" && c.Bucket != "" && c.AccessKeyID != "" && !c.SecretAccessKey.IsDestroyed(ctx)
 }
 
 // StickersManager issues sticker-pack upload forms. When wired with S3
@@ -69,7 +69,7 @@ type ManagerConfig struct {
 // NewStickersManager constructs a manager with the configured options.
 // A nil logger defaults to slog.Default; a nil store defaults to an
 // in-memory store.
-func NewStickersManager(cfg ManagerConfig) *StickersManager {
+func NewStickersManager(ctx context.Context, cfg ManagerConfig) *StickersManager {
 	logger := cfg.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -83,7 +83,7 @@ func NewStickersManager(cfg ManagerConfig) *StickersManager {
 		store:  store,
 		clock:  func() time.Time { return time.Now().UTC() },
 	}
-	if cfg.S3.configured() {
+	if cfg.S3.configured(ctx) {
 		m.generator = &s3policy.PolicyGenerator{
 			Region:      cfg.S3.Region,
 			Bucket:      cfg.S3.Bucket,
@@ -128,7 +128,7 @@ func (m *StickersManager) GetUploadForm(ctx context.Context, accountUUID string,
 	packLocation := "stickers/" + packID
 	manifestKey := packLocation + "/manifest.proto"
 
-	manifest, err := m.makeField(now, -1, manifestKey, maxStickerManifestSizeBytes)
+	manifest, err := m.makeField(ctx, now, -1, manifestKey, maxStickerManifestSizeBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +136,7 @@ func (m *StickersManager) GetUploadForm(ctx context.Context, accountUUID string,
 	stickers := make([]StickerFormField, 0, stickerCount)
 	for i := 0; i < stickerCount; i++ {
 		stickerKey := packLocation + "/full/" + strconv.Itoa(i)
-		field, err := m.makeField(now, i, stickerKey, maxStickerSizeBytes)
+		field, err := m.makeField(ctx, now, i, stickerKey, maxStickerSizeBytes)
 		if err != nil {
 			return nil, err
 		}
@@ -171,7 +171,7 @@ func (m *StickersManager) GetPack(ctx context.Context, packID string) (*PackMeta
 // configured) or a fall-back URL-only entry (otherwise). id=-1 is the
 // magic value Java uses for the manifest slot; the JSON field is
 // serialized as-is so clients see the same number.
-func (m *StickersManager) makeField(now time.Time, id int, objectKey string, maxBytes int64) (StickerFormField, error) {
+func (m *StickersManager) makeField(ctx context.Context, now time.Time, id int, objectKey string, maxBytes int64) (StickerFormField, error) {
 	if m.generator == nil || m.signer == nil {
 		// Embedded-CDN dev path — no S3 signature; client uploads to
 		// the same Signal server's TUS-style /cdn3 route.
@@ -182,7 +182,7 @@ func (m *StickersManager) makeField(now time.Time, id int, objectKey string, max
 			Location: "/cdn3/" + objectKey,
 		}, nil
 	}
-	form, err := s3policy.FormatForm(m.generator, m.signer, now, objectKey, maxBytes)
+	form, err := s3policy.FormatForm(ctx, m.generator, m.signer, now, objectKey, maxBytes)
 	if err != nil {
 		return StickerFormField{}, err
 	}

@@ -32,7 +32,7 @@ func TestSetSharedSecret_DestroyDuringOwnershipTransfer(t *testing.T) {
 
 	for round := range ownershipRaceRounds {
 		m := NewDirectoryManager(slog.Default())
-		secret := secrets.MustNewSecureString("shared-secret")
+		secret := secrets.MustNewSecureString(t.Context(), "shared-secret")
 
 		var wg sync.WaitGroup
 		wg.Add(1)
@@ -44,7 +44,7 @@ func TestSetSharedSecret_DestroyDuringOwnershipTransfer(t *testing.T) {
 		}()
 
 		close(release)
-		_ = m.SetSharedSecret(secret)
+		_ = m.SetSharedSecret(t.Context(), secret)
 
 		creds, err := m.GetAuthToken(ctx, "acct")
 		var unavailable *SharedSecretUnavailableError
@@ -54,7 +54,7 @@ func TestSetSharedSecret_DestroyDuringOwnershipTransfer(t *testing.T) {
 		if err != nil {
 			t.Fatalf("round %d: GetAuthToken: %v", round, err)
 		}
-		if creds.Password.IsDestroyed() {
+		if creds.Password.IsDestroyed(t.Context()) {
 			t.Fatalf("round %d: GetAuthToken returned an unset password", round)
 		}
 		creds.Password.Destroy()
@@ -72,8 +72,8 @@ func TestSetSharedSecret_ClonesRatherThanValidatesCallerSecret(t *testing.T) {
 	m := NewDirectoryManager(slog.Default())
 	defer m.Destroy()
 
-	secret := secrets.MustNewSecureString("shared-secret")
-	_ = m.SetSharedSecret(secret)
+	secret := secrets.MustNewSecureString(t.Context(), "shared-secret")
+	_ = m.SetSharedSecret(t.Context(), secret)
 	secret.Destroy()
 
 	creds, err := m.GetAuthToken(context.Background(), "acct")
@@ -81,7 +81,7 @@ func TestSetSharedSecret_ClonesRatherThanValidatesCallerSecret(t *testing.T) {
 		t.Fatalf("GetAuthToken after the caller destroyed its own secret: %v", err)
 	}
 	defer creds.Password.Destroy()
-	if creds.Password.IsDestroyed() {
+	if creds.Password.IsDestroyed(t.Context()) {
 		t.Fatal("GetAuthToken returned an unset password")
 	}
 }

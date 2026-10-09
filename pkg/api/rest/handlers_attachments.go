@@ -48,7 +48,7 @@ func (s *Server) handleAttachmentUploadForm(w http.ResponseWriter, r *http.Reque
 
 	if s.tusGenerator != nil && s.tusURI != "" {
 		// External TUS server mode (Java parity).
-		creds, err := s.tusGenerator.Generate(attachmentKey)
+		creds, err := s.tusGenerator.Generate(r.Context(), attachmentKey)
 		if err != nil {
 			s.logger.Error("attachment credentials failed", "error", err.Error())
 			writeError(w, http.StatusInternalServerError, "internal server error")
@@ -58,7 +58,7 @@ func (s *Server) handleAttachmentUploadForm(w http.ResponseWriter, r *http.Reque
 		// header the client forwards, then wiped. An unavailable credential
 		// fails the request rather than emitting a header with an empty
 		// password the TUS server would reject.
-		password, err := creds.Password.Reveal()
+		password, err := creds.Password.Reveal(r.Context())
 		if err != nil {
 			creds.Destroy()
 			s.logger.Error("attachment credentials unavailable", "error", err.Error())

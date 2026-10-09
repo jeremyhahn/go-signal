@@ -30,11 +30,11 @@ const testAccountUUID = "11111111-1111-1111-1111-111111111111"
 // path build their own manager with S3Config set.
 func newTestManager(t *testing.T) *StickersManager {
 	t.Helper()
-	return NewStickersManager(ManagerConfig{Logger: testLogger()})
+	return NewStickersManager(t.Context(), ManagerConfig{Logger: testLogger()})
 }
 
 func TestNewStickersManager_DefaultsStoreToMemory(t *testing.T) {
-	m := NewStickersManager(ManagerConfig{Logger: testLogger()})
+	m := NewStickersManager(t.Context(), ManagerConfig{Logger: testLogger()})
 	if m == nil || m.store == nil {
 		t.Fatal("expected non-nil manager + store")
 	}
@@ -44,17 +44,17 @@ func TestNewStickersManager_DefaultsStoreToMemory(t *testing.T) {
 }
 
 func TestNewStickersManager_NilLoggerOK(t *testing.T) {
-	m := NewStickersManager(ManagerConfig{})
+	m := NewStickersManager(t.Context(), ManagerConfig{})
 	if m.logger == nil {
 		t.Error("nil Logger should default to slog.Default")
 	}
 }
 
 func TestNewStickersManager_S3WiredWhenConfigured(t *testing.T) {
-	m := NewStickersManager(ManagerConfig{
+	m := NewStickersManager(t.Context(), ManagerConfig{
 		Logger: testLogger(),
 		S3: S3Config{
-			Region: "us-east-1", Bucket: "b", AccessKeyID: "k", SecretAccessKey: secrets.MustNewSecureString("s"),
+			Region: "us-east-1", Bucket: "b", AccessKeyID: "k", SecretAccessKey: secrets.MustNewSecureString(t.Context(), "s"),
 		},
 	})
 	if m.generator == nil || m.signer == nil {
@@ -63,7 +63,7 @@ func TestNewStickersManager_S3WiredWhenConfigured(t *testing.T) {
 }
 
 func TestNewStickersManager_S3OmittedWhenIncomplete(t *testing.T) {
-	m := NewStickersManager(ManagerConfig{
+	m := NewStickersManager(t.Context(), ManagerConfig{
 		Logger: testLogger(),
 		S3:     S3Config{Region: "us-east-1"}, // missing other fields
 	})
@@ -181,7 +181,7 @@ func TestGetUploadForm_UniquePackIds(t *testing.T) {
 
 func TestGetUploadForm_PersistsToStore(t *testing.T) {
 	store := NewMemoryPackStore()
-	m := NewStickersManager(ManagerConfig{Logger: testLogger(), Store: store})
+	m := NewStickersManager(t.Context(), ManagerConfig{Logger: testLogger(), Store: store})
 	form, err := m.GetUploadForm(context.Background(), testAccountUUID, 2)
 	if err != nil {
 		t.Fatalf("GetUploadForm: %v", err)
@@ -200,7 +200,7 @@ func TestGetUploadForm_PersistsToStore(t *testing.T) {
 
 func TestGetUploadForm_StorePropagatesError(t *testing.T) {
 	store := &failingStore{err: errors.New("store down")}
-	m := NewStickersManager(ManagerConfig{Logger: testLogger(), Store: store})
+	m := NewStickersManager(t.Context(), ManagerConfig{Logger: testLogger(), Store: store})
 	if _, err := m.GetUploadForm(context.Background(), testAccountUUID, 1); err == nil {
 		t.Fatal("expected store error to propagate")
 	}
@@ -267,11 +267,11 @@ func TestGetUploadForm_LocationPrefix_EmbeddedCDN(t *testing.T) {
 }
 
 func TestGetUploadForm_SignedFormWhenS3Configured(t *testing.T) {
-	m := NewStickersManager(ManagerConfig{
+	m := NewStickersManager(t.Context(), ManagerConfig{
 		Logger: testLogger(),
 		S3: S3Config{
 			Region: "us-east-1", Bucket: "signal-stickers",
-			AccessKeyID: "AKID", SecretAccessKey: secrets.MustNewSecureString("secret"),
+			AccessKeyID: "AKID", SecretAccessKey: secrets.MustNewSecureString(t.Context(), "secret"),
 		},
 	})
 	m.SetClock(func() time.Time { return time.Date(2015, 8, 30, 12, 36, 0, 0, time.UTC) })
@@ -363,10 +363,10 @@ func TestGetUploadForm_S3ConfiguredSignerFailurePropagates(t *testing.T) {
 	// check but produce an empty access key when the form is built — the
 	// signer/generator detects the empty field and the manager surfaces
 	// the error rather than silently emitting an unsigned form.
-	m := NewStickersManager(ManagerConfig{
+	m := NewStickersManager(t.Context(), ManagerConfig{
 		Logger: testLogger(),
 		S3: S3Config{
-			Region: "us-east-1", Bucket: "b", AccessKeyID: "k", SecretAccessKey: secrets.MustNewSecureString("s"),
+			Region: "us-east-1", Bucket: "b", AccessKeyID: "k", SecretAccessKey: secrets.MustNewSecureString(t.Context(), "s"),
 		},
 	})
 	// Replace the generator's required field after construction to force

@@ -67,11 +67,11 @@ var _ verification.VerificationTransport = (*Transport)(nil)
 // NewTransport returns a configured Twilio Verify Transport. Fails fast when
 // AccountSID / AuthToken / ServiceSID are missing so deployments don't
 // silently fall through to a no-op.
-func NewTransport(cfg Config) (*Transport, error) {
+func NewTransport(ctx context.Context, cfg Config) (*Transport, error) {
 	if cfg.AccountSID == "" {
 		return nil, errors.New("twilio: AccountSID is required")
 	}
-	if cfg.AuthToken == nil || cfg.AuthToken.Plaintext() == "" {
+	if cfg.AuthToken == nil || cfg.AuthToken.Plaintext(ctx) == "" {
 		return nil, errors.New("twilio: AuthToken is required")
 	}
 	if cfg.ServiceSID == "" {
@@ -93,7 +93,7 @@ func NewTransport(cfg Config) (*Transport, error) {
 		client:     hc,
 		baseURL:    baseURL,
 		accountSID: cfg.AccountSID,
-		authToken:  cfg.AuthToken.Plaintext(),
+		authToken:  cfg.AuthToken.Plaintext(ctx),
 		serviceSID: cfg.ServiceSID,
 		channel:    channel,
 	}, nil

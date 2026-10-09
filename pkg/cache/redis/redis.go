@@ -41,12 +41,12 @@ type Config struct {
 
 // New returns a Client connected according to cfg. It does not perform a
 // connection test — callers should call Ping to verify.
-func New(cfg Config) (*Client, error) {
+func New(ctx context.Context, cfg Config) (*Client, error) {
 	opts, err := redisv9.ParseURL(cfg.URL)
 	if err != nil {
 		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "redis: parse URL", err)
 	}
-	if password := cfg.Password.Plaintext(); password != "" {
+	if password := cfg.Password.Plaintext(ctx); password != "" {
 		opts.Password = password
 	}
 	if cfg.DB != 0 {

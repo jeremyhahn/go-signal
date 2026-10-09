@@ -145,9 +145,9 @@ func TestTwilioE2E_MockVerifyFlow(t *testing.T) {
 	twSrv := mocks.NewTwilioMock()
 	t.Cleanup(twSrv.Close)
 
-	tr, err := twilio.NewTransport(twilio.Config{
+	tr, err := twilio.NewTransport(t.Context(), twilio.Config{
 		AccountSID: "ACtest",
-		AuthToken:  secrets.MustNewSecureString("auth-secret"),
+		AuthToken:  secrets.MustNewSecureString(t.Context(), "auth-secret"),
 		ServiceSID: "VAtest",
 		BaseURL:    twSrv.URL(),
 	})

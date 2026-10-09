@@ -87,7 +87,7 @@ func NewDirectoryManager(logger *slog.Logger) *DirectoryManager {
 // as fatal rather than proceeding: continuing would run with GetAuthToken's legacy
 // stub, issuing random credentials the peer rejects. An absent secret is not
 // an error; it selects the stub deliberately.
-func (m *DirectoryManager) SetSharedSecret(secret *secrets.SecureString) error {
+func (m *DirectoryManager) SetSharedSecret(ctx context.Context, secret *secrets.SecureString) error {
 	// Three outcomes have to stay distinct here, and only one of them may
 	// select the legacy stub:
 	//
@@ -111,7 +111,7 @@ func (m *DirectoryManager) SetSharedSecret(secret *secrets.SecureString) error {
 	//
 	// Nothing is published until both questions are answered, so an error
 	// leaves the previously installed configuration — key included — intact.
-	clone, configured, err := cloneSecret(secret)
+	clone, configured, err := cloneSecret(secret, ctx)
 	if err != nil {
 		// Nothing has been published and nothing displaced, so the currently
 		// installed configuration — including a live key — survives intact.
@@ -134,7 +134,7 @@ func (m *DirectoryManager) SetSharedSecret(secret *secrets.SecureString) error {
 		// over it. Publishing a key that cannot mint is the same fail-open in
 		// a different disguise: the mode says "authenticated" and every token
 		// it issues is unusable.
-		if err := clone.TryWithBytes(func([]byte) {}); err != nil {
+		if err := clone.TryWithBytes(ctx, func([]byte) {}); err != nil {
 			clone.Destroy()
 			return err
 		}
@@ -223,7 +223,7 @@ func (m *DirectoryManager) Destroy() {
 // Once a secret has been configured, a reveal that fails — the secret was
 // destroyed, or the enclave would not open — is a
 // SharedSecretUnavailableError, never a fallback to the stub.
-func (m *DirectoryManager) GetAuthToken(_ context.Context, accountUUID string) (*DirectoryCredentials, error) {
+func (m *DirectoryManager) GetAuthToken(ctx context.Context, accountUUID string) (*DirectoryCredentials, error) {
 	// One Load: mode and key come from the same published state, so the
 	// branch below cannot be taken against a configuration that no longer
 	// exists.
@@ -236,7 +236,7 @@ func (m *DirectoryManager) GetAuthToken(_ context.Context, accountUUID string) (
 		if err != nil {
 			return nil, err
 		}
-		password, err := secrets.NewSecureStringFromBytes(raw)
+		password, err := secrets.NewSecureStringFromBytes(ctx, raw)
 		if err != nil {
 			return nil, err
 		}
@@ -250,7 +250,7 @@ func (m *DirectoryManager) GetAuthToken(_ context.Context, accountUUID string) (
 	// which the runtime may copy and which cannot be wiped;
 	// NewSecureStringFromBytes consumes and wipes the slice instead.
 	var derived []byte
-	if !st.secret.WithBytes(func(key []byte) {
+	if !st.secret.WithBytes(ctx, func(key []byte) {
 		mac := hmac.New(sha256.New, key)
 		mac.Write([]byte(accountUUID))
 		sum := mac.Sum(nil)
@@ -260,7 +260,7 @@ func (m *DirectoryManager) GetAuthToken(_ context.Context, accountUUID string) (
 	}) {
 		return nil, &SharedSecretUnavailableError{AccountUUID: accountUUID}
 	}
-	password, err := secrets.NewSecureStringFromBytes(derived)
+	password, err := secrets.NewSecureStringFromBytes(ctx, derived)
 	if err != nil {
 		return nil, err
 	}

@@ -11,21 +11,21 @@ func TestSVRCredentials_ZeroValue(t *testing.T) {
 	if creds.Username != "" {
 		t.Errorf("expected empty username, got %q", creds.Username)
 	}
-	if creds.Password.Plaintext() != "" {
-		t.Errorf("expected empty password, got %q", creds.Password.Plaintext())
+	if creds.Password.Plaintext(t.Context()) != "" {
+		t.Errorf("expected empty password, got %q", creds.Password.Plaintext(t.Context()))
 	}
 }
 
 func TestSVRCredentials_Fields(t *testing.T) {
 	creds := SVRCredentials{
 		Username: "svr-user",
-		Password: secrets.MustNewSecureString("svr-pass"),
+		Password: secrets.MustNewSecureString(t.Context(), "svr-pass"),
 	}
 	if creds.Username != "svr-user" {
 		t.Errorf("got %q, want %q", creds.Username, "svr-user")
 	}
-	if creds.Password.Plaintext() != "svr-pass" {
-		t.Errorf("got %q, want %q", creds.Password.Plaintext(), "svr-pass")
+	if creds.Password.Plaintext(t.Context()) != "svr-pass" {
+		t.Errorf("got %q, want %q", creds.Password.Plaintext(t.Context()), "svr-pass")
 	}
 }
 

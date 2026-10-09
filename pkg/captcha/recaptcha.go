@@ -61,8 +61,8 @@ type ReCAPTCHAConfig struct {
 
 // NewReCAPTCHAVerifier returns a configured ReCAPTCHAVerifier. It returns
 // ReCAPTCHAConfigError if SecretKey is empty.
-func NewReCAPTCHAVerifier(cfg ReCAPTCHAConfig) (*ReCAPTCHAVerifier, error) {
-	if cfg.SecretKey == nil || cfg.SecretKey.IsDestroyed() {
+func NewReCAPTCHAVerifier(ctx context.Context, cfg ReCAPTCHAConfig) (*ReCAPTCHAVerifier, error) {
+	if cfg.SecretKey == nil || cfg.SecretKey.IsDestroyed(ctx) {
 		return nil, &ReCAPTCHAConfigError{Message: "secretKey is required"}
 	}
 
@@ -99,7 +99,7 @@ func (v *ReCAPTCHAVerifier) ValidSiteKeys(action Action) []string {
 // For v3 tokens, VerifyResult.Score and VerifyResult.Action are populated.
 func (v *ReCAPTCHAVerifier) Verify(ctx context.Context, token string, remoteIP string, _ string) (*VerifyResult, error) {
 	form := url.Values{}
-	form.Set("secret", v.secretKey.Plaintext())
+	form.Set("secret", v.secretKey.Plaintext(ctx))
 	form.Set("response", token)
 	if remoteIP != "" {
 		form.Set("remoteip", remoteIP)

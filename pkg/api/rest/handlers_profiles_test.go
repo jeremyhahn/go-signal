@@ -687,7 +687,7 @@ func TestHandleSetProfile_AvatarUploadNoCDN(t *testing.T) {
 // directly on a server without CDN configuration.
 func TestBuildAvatarUploadAttributes_NoCDN(t *testing.T) {
 	s := newTestServer(t)
-	_, err := s.buildAvatarUploadAttributes()
+	_, err := s.buildAvatarUploadAttributes(t.Context())
 	if err == nil {
 		t.Fatal("expected error when CDN not configured")
 	}
@@ -710,7 +710,7 @@ func newTestServerWithAvatarCDN(t *testing.T) (*Server, *accounts.Account) {
 		Bucket:    "test-bucket",
 		Region:    "us-east-1",
 		AccessKey: "AKIATESTKEY",
-		SecretKey: secrets.MustNewSecureString("TestSecretKey1234567890abcdefgh"),
+		SecretKey: secrets.MustNewSecureString(t.Context(), "TestSecretKey1234567890abcdefgh"),
 	}
 
 	acct := testAccount()
@@ -770,10 +770,10 @@ func TestBuildAvatarUploadAttributes_WithCDN(t *testing.T) {
 		Bucket:    "my-bucket",
 		Region:    "eu-west-1",
 		AccessKey: "AKIAIOSFODNN7EXAMPLE",
-		SecretKey: secrets.MustNewSecureString("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
+		SecretKey: secrets.MustNewSecureString(t.Context(), "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
 	}
 
-	attrs, err := s.buildAvatarUploadAttributes()
+	attrs, err := s.buildAvatarUploadAttributes(t.Context())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1108,14 +1108,14 @@ func TestBuildAvatarUploadAttributes_KeysAreUnique(t *testing.T) {
 		Bucket:    "my-bucket",
 		Region:    "eu-west-1",
 		AccessKey: "AKIAIOSFODNN7EXAMPLE",
-		SecretKey: secrets.MustNewSecureString("wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
+		SecretKey: secrets.MustNewSecureString(t.Context(), "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"),
 	}
 
-	first, err := s.buildAvatarUploadAttributes()
+	first, err := s.buildAvatarUploadAttributes(t.Context())
 	if err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	second, err := s.buildAvatarUploadAttributes()
+	second, err := s.buildAvatarUploadAttributes(t.Context())
 	if err != nil {
 		t.Fatalf("second: %v", err)
 	}

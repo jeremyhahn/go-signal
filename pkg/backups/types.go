@@ -258,7 +258,7 @@ type RecalculationResult struct {
 //
 // Password is a bearer credential, so it is held in protected memory from
 // issuance until a handler serialises it onto the response. Handlers read it
-// with Password.Reveal() at that single boundary — an unavailable credential
+// with Password.Reveal(ctx) at that single boundary — an unavailable credential
 // is an error, not an empty password — and Destroy the credential
 // afterwards.
 type ExternalServiceCredentials struct {

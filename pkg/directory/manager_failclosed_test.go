@@ -15,7 +15,9 @@ import (
 func failClone(t *testing.T, injected error) {
 	t.Helper()
 	original := cloneSecret
-	cloneSecret = func(*secrets.SecureString) (*secrets.SecureString, bool, error) { return nil, false, injected }
+	cloneSecret = func(*secrets.SecureString, context.Context) (*secrets.SecureString, bool, error) {
+		return nil, false, injected
+	}
 	t.Cleanup(func() { cloneSecret = original })
 }
 
@@ -38,13 +40,13 @@ func TestSetSharedSecret_CloneFailureDoesNotDowngradeToStub(t *testing.T) {
 	m := NewDirectoryManager(slog.Default())
 	defer m.Destroy()
 
-	secret := secrets.MustNewSecureString("shared-secret")
+	secret := secrets.MustNewSecureString(t.Context(), "shared-secret")
 	defer secret.Destroy()
 
 	injected := errors.New("no protected memory available")
 	failClone(t, injected)
 
-	if err := m.SetSharedSecret(secret); err == nil {
+	if err := m.SetSharedSecret(t.Context(), secret); err == nil {
 		t.Fatal("SetSharedSecret accepted a secret it could not protect")
 	}
 
@@ -61,7 +63,7 @@ func TestSetSharedSecret_CloneFailureDoesNotDowngradeToStub(t *testing.T) {
 	}
 
 	// And the caller's own secret is untouched, so a retry is possible.
-	if secret.IsDestroyed() {
+	if secret.IsDestroyed(t.Context()) {
 		t.Error("a failed SetSharedSecret destroyed the caller's secret")
 	}
 }
@@ -77,9 +79,9 @@ func TestSetSharedSecret_CloneFailurePreservesTheInstalledKey(t *testing.T) {
 	m := NewDirectoryManager(slog.Default())
 	defer m.Destroy()
 
-	installed := secrets.MustNewSecureString("first-secret")
+	installed := secrets.MustNewSecureString(t.Context(), "first-secret")
 	defer installed.Destroy()
-	if err := m.SetSharedSecret(installed); err != nil {
+	if err := m.SetSharedSecret(t.Context(), installed); err != nil {
 		t.Fatalf("SetSharedSecret: %v", err)
 	}
 
@@ -87,14 +89,14 @@ func TestSetSharedSecret_CloneFailurePreservesTheInstalledKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAuthToken: %v", err)
 	}
-	want := before.Password.Plaintext()
+	want := before.Password.Plaintext(t.Context())
 	before.Password.Destroy()
 
-	rotating := secrets.MustNewSecureString("second-secret")
+	rotating := secrets.MustNewSecureString(t.Context(), "second-secret")
 	defer rotating.Destroy()
 
 	failClone(t, errors.New("no protected memory available"))
-	if err := m.SetSharedSecret(rotating); err == nil {
+	if err := m.SetSharedSecret(t.Context(), rotating); err == nil {
 		t.Fatal("a rotation that could not be allocated reported success")
 	}
 
@@ -103,7 +105,7 @@ func TestSetSharedSecret_CloneFailurePreservesTheInstalledKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the manager stopped minting after a failed rotation: %v", err)
 	}
-	got := after.Password.Plaintext()
+	got := after.Password.Plaintext(t.Context())
 	after.Password.Destroy()
 
 	if got != want {
@@ -135,10 +137,10 @@ func TestSetSharedSecret_UnopenableSecretDoesNotDowngradeToStub(t *testing.T) {
 	defer m.Destroy()
 
 	// Configured, then wiped: IsAbsent() is false, every reveal fails.
-	secret := secrets.MustNewSecureString("shared-secret")
+	secret := secrets.MustNewSecureString(t.Context(), "shared-secret")
 	secret.Destroy()
 
-	if err := m.SetSharedSecret(secret); err == nil {
+	if err := m.SetSharedSecret(t.Context(), secret); err == nil {
 		t.Fatal("SetSharedSecret accepted a configured secret it could not open")
 	}
 
@@ -158,7 +160,7 @@ func TestSetSharedSecret_AbsentSecretStillSelectsTheStub(t *testing.T) {
 	m := NewDirectoryManager(slog.Default())
 	defer m.Destroy()
 
-	if err := m.SetSharedSecret(secrets.MustNewSecureString("")); err != nil {
+	if err := m.SetSharedSecret(t.Context(), secrets.MustNewSecureString(t.Context(), "")); err != nil {
 		t.Fatalf("an absent secret is not a failure, got: %v", err)
 	}
 

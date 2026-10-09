@@ -69,18 +69,18 @@ type HTTPClient struct {
 // checking cfg.SharedSecret and cloning it afterwards leaves a window in which
 // the caller destroys its own copy between the two, and the constructor
 // reports success holding a secret that can never sign a request.
-func NewHTTP(cfg HTTPConfig) (*HTTPClient, error) {
+func NewHTTP(ctx context.Context, cfg HTTPConfig) (*HTTPClient, error) {
 	if cfg.BaseURL == "" {
 		return nil, signalerrors.New(signalerrors.ErrInvalidArgument, "storage: BaseURL is required")
 	}
 	// An allocation failure is distinct from an absent secret; reporting it as
 	// "SharedSecret is required" would hide a protected-memory failure behind
 	// a configuration error.
-	secret, err := cloneSecret(cfg.SharedSecret)
+	secret, err := cloneSecret(cfg.SharedSecret, ctx)
 	if err != nil {
 		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "storage: protecting the shared secret", err)
 	}
-	if secret.IsDestroyed() {
+	if secret.IsDestroyed(ctx) {
 		// An unset clone holds nothing to wipe today; destroying it anyway
 		// keeps the ownership contract total on the error path.
 		secret.Destroy()
@@ -109,7 +109,7 @@ func NewHTTP(cfg HTTPConfig) (*HTTPClient, error) {
 // DeleteStoredData issues DELETE /v1/storage with HMAC Basic auth.
 // 404 is treated as success per the Java reference.
 func (c *HTTPClient) DeleteStoredData(ctx context.Context, accountUUID string) error {
-	authHeader := common.BasicAuthHeaderSecret(accountUUID, c.secret)
+	authHeader := common.BasicAuthHeaderSecret(ctx, accountUUID, c.secret)
 	if authHeader == "" {
 		return signalerrors.New(signalerrors.ErrInvalidArgument, "storage: client has been closed")
 	}

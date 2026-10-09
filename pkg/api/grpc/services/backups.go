@@ -230,7 +230,7 @@ func (s *BackupsAnonymousService) GetSvrBCredentials(
 	// Opened only to populate the response message the client is the bearer
 	// of. Reveal rather than Plaintext: an unavailable credential is an
 	// internal error, not a successful response with an empty password.
-	password, err := creds.Password.Reveal()
+	password, err := creds.Password.Reveal(ctx)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}

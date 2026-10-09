@@ -15,7 +15,7 @@ import (
 // newTestAPIToken creates a SecureString for the given token string in tests.
 // The caller is responsible for calling Destroy when done with the provider.
 func newTestAPIToken(token string) *secrets.SecureString {
-	return secrets.MustNewSecureString(token)
+	return secrets.MustNewSecureString(context.Background(), token)
 }
 
 func TestStaticTurnProvider_RetrieveCredentials(t *testing.T) {
@@ -81,7 +81,7 @@ func TestNewCloudflareTurnProvider_Success(t *testing.T) {
 	if p.endpoint != "https://example.com/api" {
 		t.Errorf("got endpoint %q", p.endpoint)
 	}
-	if p.apiToken == nil || p.apiToken.Plaintext() != "test-token" {
+	if p.apiToken == nil || p.apiToken.Plaintext(t.Context()) != "test-token" {
 		t.Errorf("got apiToken %v", p.apiToken)
 	}
 }

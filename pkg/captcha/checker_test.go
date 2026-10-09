@@ -70,7 +70,7 @@ func TestActionString(t *testing.T) {
 }
 
 func TestParseToken_HappyPath(t *testing.T) {
-	got, err := parseToken("recaptcha.SITE-KEY.registration.opaque.token.with.dots")
+	got, err := parseToken(t.Context(), "recaptcha.SITE-KEY.registration.opaque.token.with.dots")
 	if err != nil {
 		t.Fatalf("parseToken: %v", err)
 	}
@@ -84,8 +84,8 @@ func TestParseToken_HappyPath(t *testing.T) {
 		t.Errorf("Action = %q", got.Action)
 	}
 	// Dots inside the token slot are preserved.
-	if got.Token.Plaintext() != "opaque.token.with.dots" {
-		t.Errorf("Token = %q", got.Token.Plaintext())
+	if got.Token.Plaintext(t.Context()) != "opaque.token.with.dots" {
+		t.Errorf("Token = %q", got.Token.Plaintext(t.Context()))
 	}
 	if got.IsShort {
 		t.Error("IsShort should be false")
@@ -93,15 +93,15 @@ func TestParseToken_HappyPath(t *testing.T) {
 }
 
 func TestParseToken_ShortSuffix(t *testing.T) {
-	got, err := parseToken("recaptcha-short.SK.challenge.abcde")
+	got, err := parseToken(t.Context(), "recaptcha-short.SK.challenge.abcde")
 	if err != nil {
 		t.Fatalf("parseToken: %v", err)
 	}
 	if got.Provider != "recaptcha" || !got.IsShort {
 		t.Errorf("expected provider=recaptcha, IsShort=true; got %+v", got)
 	}
-	if got.Token.Plaintext() != "abcde" {
-		t.Errorf("Token = %q", got.Token.Plaintext())
+	if got.Token.Plaintext(t.Context()) != "abcde" {
+		t.Errorf("Token = %q", got.Token.Plaintext(t.Context()))
 	}
 }
 
@@ -114,7 +114,7 @@ func TestParseToken_RejectsTooFewParts(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c, func(t *testing.T) {
-			if _, err := parseToken(c); err == nil {
+			if _, err := parseToken(t.Context(), c); err == nil {
 				t.Errorf("expected error for %q", c)
 			}
 		})
@@ -122,7 +122,7 @@ func TestParseToken_RejectsTooFewParts(t *testing.T) {
 }
 
 func TestParseToken_RejectsEmptySlot(t *testing.T) {
-	_, err := parseToken("recaptcha..registration.tok")
+	_, err := parseToken(t.Context(), "recaptcha..registration.tok")
 	var inv *InvalidTokenFormatError
 	if !errors.As(err, &inv) {
 		t.Fatalf("expected *InvalidTokenFormatError, got %T: %v", err, err)
@@ -130,7 +130,7 @@ func TestParseToken_RejectsEmptySlot(t *testing.T) {
 }
 
 func TestParseToken_RejectsUnknownAction(t *testing.T) {
-	_, err := parseToken("recaptcha.sk.nope.tok")
+	_, err := parseToken(t.Context(), "recaptcha.sk.nope.tok")
 	var inv *InvalidActionError
 	if !errors.As(err, &inv) {
 		t.Fatalf("expected *InvalidActionError, got %T: %v", err, err)
@@ -377,21 +377,21 @@ func TestReCAPTCHAVerifier_ValidSiteKeys(t *testing.T) {
 // The parsed solution is a bearer value: Destroy must wipe it, and Verify
 // defers it, so it must be safe to call twice and on nil.
 func TestParsedToken_Destroy_WipesToken(t *testing.T) {
-	got, err := parseToken("recaptcha.sitekey.challenge.solution")
+	got, err := parseToken(t.Context(), "recaptcha.sitekey.challenge.solution")
 	if err != nil {
 		t.Fatalf("parseToken: %v", err)
 	}
-	if got.Token.Plaintext() != "solution" {
-		t.Fatalf("Token = %q, want solution", got.Token.Plaintext())
+	if got.Token.Plaintext(t.Context()) != "solution" {
+		t.Fatalf("Token = %q, want solution", got.Token.Plaintext(t.Context()))
 	}
 	got.Destroy()
-	if left := got.Token.Plaintext(); left != "" {
+	if left := got.Token.Plaintext(t.Context()); left != "" {
 		t.Errorf("token survived Destroy: %q", left)
 	}
 }
 
 func TestParsedToken_Destroy_IdempotentAndNilSafe(t *testing.T) {
-	got, err := parseToken("recaptcha.sitekey.challenge.solution")
+	got, err := parseToken(t.Context(), "recaptcha.sitekey.challenge.solution")
 	if err != nil {
 		t.Fatalf("parseToken: %v", err)
 	}

@@ -11,6 +11,7 @@
 package s3
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -135,9 +136,9 @@ type PolicySigner struct {
 // Sign computes the SigV4 signature of the base64-encoded policy for the
 // given date. Returns lowercase hex per AWS spec. Mirrors Java's
 // PolicySigner.getSignature.
-func (s *PolicySigner) Sign(now time.Time, encodedPolicy string) (string, error) {
+func (s *PolicySigner) Sign(ctx context.Context, now time.Time, encodedPolicy string) (string, error) {
 	// One open: the plaintext is read once and used only for the key chain.
-	secret := s.SecretAccessKey.Plaintext()
+	secret := s.SecretAccessKey.Plaintext(ctx)
 	if secret == "" {
 		return "", errors.New("s3: PolicySigner.SecretAccessKey is required")
 	}
@@ -176,13 +177,13 @@ func hmacSHA256(key, data []byte) []byte {
 // FormatForm builds a PolicyForm from a generator + signer in one call.
 // Provided as a convenience for the sticker controller which always pairs
 // the two; tests can still call Generate + Sign independently.
-func FormatForm(gen *PolicyGenerator, signer *PolicySigner, now time.Time, objectKey string, maxSizeBytes int64) (*PolicyForm, error) {
+func FormatForm(ctx context.Context, gen *PolicyGenerator, signer *PolicySigner, now time.Time, objectKey string, maxSizeBytes int64) (*PolicyForm, error) {
 	policy, credential, err := gen.Generate(now, objectKey, maxSizeBytes)
 	if err != nil {
 		return nil, err
 	}
 	encoded := EncodePolicy(policy)
-	signature, err := signer.Sign(now, encoded)
+	signature, err := signer.Sign(ctx, now, encoded)
 	if err != nil {
 		return nil, err
 	}

@@ -27,7 +27,7 @@ import (
 // destroyedSecret returns a SecureString whose protected memory has already
 // been wiped, modelling a config value destroyed during shutdown.
 func destroyedSecret() *secrets.SecureString {
-	s := secrets.MustNewSecureString("s")
+	s := secrets.MustNewSecureString(context.Background(), "s")
 	s.Destroy()
 	return s
 }
@@ -40,7 +40,7 @@ func TestAvatarCDNConfig_Enabled(t *testing.T) {
 	}{
 		{
 			name:     "all fields set",
-			cfg:      AvatarCDNConfig{Bucket: "b", Region: "r", AccessKey: "a", SecretKey: secrets.MustNewSecureString("s")},
+			cfg:      AvatarCDNConfig{Bucket: "b", Region: "r", AccessKey: "a", SecretKey: secrets.MustNewSecureString(t.Context(), "s")},
 			expected: true,
 		},
 		{
@@ -50,17 +50,17 @@ func TestAvatarCDNConfig_Enabled(t *testing.T) {
 		},
 		{
 			name:     "missing bucket",
-			cfg:      AvatarCDNConfig{Region: "r", AccessKey: "a", SecretKey: secrets.MustNewSecureString("s")},
+			cfg:      AvatarCDNConfig{Region: "r", AccessKey: "a", SecretKey: secrets.MustNewSecureString(t.Context(), "s")},
 			expected: false,
 		},
 		{
 			name:     "missing region",
-			cfg:      AvatarCDNConfig{Bucket: "b", AccessKey: "a", SecretKey: secrets.MustNewSecureString("s")},
+			cfg:      AvatarCDNConfig{Bucket: "b", AccessKey: "a", SecretKey: secrets.MustNewSecureString(t.Context(), "s")},
 			expected: false,
 		},
 		{
 			name:     "missing access key",
-			cfg:      AvatarCDNConfig{Bucket: "b", Region: "r", SecretKey: secrets.MustNewSecureString("s")},
+			cfg:      AvatarCDNConfig{Bucket: "b", Region: "r", SecretKey: secrets.MustNewSecureString(t.Context(), "s")},
 			expected: false,
 		},
 		{
@@ -79,7 +79,7 @@ func TestAvatarCDNConfig_Enabled(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := tc.cfg.Enabled()
+			got := tc.cfg.Enabled(t.Context())
 			if got != tc.expected {
 				t.Errorf("Enabled() = %v, want %v (cfg=%+v)", got, tc.expected, tc.cfg)
 			}

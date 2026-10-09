@@ -10,16 +10,16 @@ import (
 )
 
 func TestNewHTTP_RejectsUnsetAndDestroyedSharedSecrets(t *testing.T) {
-	destroyed := secrets.MustNewSecureString("k")
+	destroyed := secrets.MustNewSecureString(t.Context(), "k")
 	destroyed.Destroy()
 
 	for name, secret := range map[string]*secrets.SecureString{
 		"nil":       nil,
-		"unset":     secrets.MustNewSecureString(""),
+		"unset":     secrets.MustNewSecureString(t.Context(), ""),
 		"destroyed": destroyed,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := NewHTTP(HTTPConfig{BaseURL: "https://example", SharedSecret: secret}); err == nil {
+			if _, err := NewHTTP(t.Context(), HTTPConfig{BaseURL: "https://example", SharedSecret: secret}); err == nil {
 				t.Error("expected NewHTTP to reject the shared secret")
 			}
 		})
@@ -30,10 +30,10 @@ func TestNewHTTP_RejectsUnsetAndDestroyedSharedSecrets(t *testing.T) {
 // not reach back into the caller's secret, which the process config wipes
 // separately.
 func TestNewHTTP_ClonesTheSharedSecret(t *testing.T) {
-	src := secrets.MustNewSecureString("shared-secret")
+	src := secrets.MustNewSecureString(t.Context(), "shared-secret")
 	defer src.Destroy()
 
-	c, err := NewHTTP(HTTPConfig{BaseURL: "https://example", SharedSecret: src})
+	c, err := NewHTTP(t.Context(), HTTPConfig{BaseURL: "https://example", SharedSecret: src})
 	if err != nil {
 		t.Fatalf("NewHTTP: %v", err)
 	}
@@ -41,10 +41,10 @@ func TestNewHTTP_ClonesTheSharedSecret(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	if src.IsDestroyed() {
+	if src.IsDestroyed(t.Context()) {
 		t.Error("Close wiped the caller's secret")
 	}
-	if got := src.Plaintext(); got != "shared-secret" {
+	if got := src.Plaintext(t.Context()); got != "shared-secret" {
 		t.Errorf("caller's secret = %q, want %q", got, "shared-secret")
 	}
 }
@@ -57,7 +57,7 @@ func TestClose_WipesTheSecretAndSubsequentCallsFailClosed(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewHTTP(HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString("shared-secret")})
+	c, err := NewHTTP(t.Context(), HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString(t.Context(), "shared-secret")})
 	if err != nil {
 		t.Fatalf("NewHTTP: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestClose_WipesTheSecretAndSubsequentCallsFailClosed(t *testing.T) {
 }
 
 func TestClose_IsIdempotent(t *testing.T) {
-	c, err := NewHTTP(HTTPConfig{BaseURL: "https://example", SharedSecret: secrets.MustNewSecureString("s")})
+	c, err := NewHTTP(t.Context(), HTTPConfig{BaseURL: "https://example", SharedSecret: secrets.MustNewSecureString(t.Context(), "s")})
 	if err != nil {
 		t.Fatalf("NewHTTP: %v", err)
 	}

@@ -170,7 +170,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 		}},
 		Logger: slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	})
-	certificatesMgr := certificates.NewCertificatesManager(secrets.MustNewSecureString("test-signing-key"), slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	certificatesMgr := certificates.NewCertificatesManager(secrets.MustNewSecureString(t.Context(), "test-signing-key"), slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	keysMgr := keys.NewKeysManager(keyStore)
 	messagesMgr := messages.NewMessagesManager(messageStore)
 	profilesMgr := profiles.NewProfilesManager(profileStore)
@@ -178,7 +178,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	stickersMgr := stickers.NewStickersManager(stickers.ManagerConfig{Logger: logger})
+	stickersMgr := stickers.NewStickersManager(t.Context(), stickers.ManagerConfig{Logger: logger})
 	directoryMgr := directory.NewDirectoryManager(logger)
 	secureStorageMgr := securestorage.NewSecureStorageManager(logger)
 	svrMgr := securevaluerecovery.NewSVRManager(logger)

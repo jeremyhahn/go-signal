@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-signal/pkg/backups"
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 // X-Signal-ZK-Auth headers carry the ZK presentation + signature for the
@@ -638,10 +639,32 @@ func (s *Server) handleGetCDNReadAuth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ReadAuthResponse{Headers: headers})
 }
 
-// ExternalServiceCredentialsResponse is the body of GET /v1/archives/auth/svrb.
+// ExternalServiceCredentialsResponse is the Signal-compatible
+// `{"username":…,"password":…}` body of every external-service auth
+// endpoint: GET /v1/archives/auth/svrb, /v2/directory/auth, /v1/storage/auth
+// and the SVR auth routes.
 type ExternalServiceCredentialsResponse struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+}
+
+// writeExternalServiceCredentials writes an issued external-service credential
+// to the client that is its intended bearer, the one place it leaves
+// protected memory. The password is opened under the request's context.
+// Reveal rather than Plaintext: a credential that cannot be read back fails
+// the request instead of handing the client an empty password it would treat
+// as usable. kind names the credential in the log line.
+func (s *Server) writeExternalServiceCredentials(w http.ResponseWriter, r *http.Request, kind, username string, password *secrets.SecureString) {
+	plaintext, err := password.Reveal(r.Context())
+	if err != nil {
+		s.logger.Error(kind+" credential unavailable", "error", err.Error())
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	writeJSON(w, http.StatusOK, ExternalServiceCredentialsResponse{
+		Username: username,
+		Password: plaintext,
+	})
 }
 
 // handleGetSVRBAuth is GET /v1/archives/auth/svrb.
@@ -655,21 +678,8 @@ func (s *Server) handleGetSVRBAuth(w http.ResponseWriter, r *http.Request) {
 		writeBackupError(w, err)
 		return
 	}
-	// The credential leaves protected memory only here, to be written to
-	// the client that is its intended bearer. Reveal rather than Plaintext:
-	// a credential that cannot be read back is a failure, not an empty
-	// password the client would treat as usable.
 	defer creds.Destroy()
-	password, err := creds.Password.Reveal()
-	if err != nil {
-		s.logger.Error("svrb credential unavailable", "error", err.Error())
-		writeError(w, http.StatusInternalServerError, "internal server error")
-		return
-	}
-	writeJSON(w, http.StatusOK, ExternalServiceCredentialsResponse{
-		Username: creds.Username,
-		Password: password,
-	})
+	s.writeExternalServiceCredentials(w, r, "svrb", creds.Username, creds.Password)
 }
 
 // --- helpers ----------------------------------------------------------------

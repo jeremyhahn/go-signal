@@ -74,7 +74,7 @@ func (h *WebUIHandler) readJSON(r *http.Request, v interface{}) error {
 // --- Account ---
 
 func (h *WebUIHandler) handleIsRegistered(w http.ResponseWriter, r *http.Request) {
-	creds, err := h.client.Config().Store.GetCredentials()
+	creds, err := h.client.Config().Store.GetCredentials(r.Context())
 	registered := err == nil && creds != nil && creds.UUID != ""
 	h.writeJSON(w, registered)
 }
@@ -281,7 +281,7 @@ func (h *WebUIHandler) relayCall(w http.ResponseWriter, r *http.Request,
 	}
 
 	// Get sender UUID from stored credentials.
-	creds, err := h.client.Config().Store.GetCredentials()
+	creds, err := h.client.Config().Store.GetCredentials(r.Context())
 	if err != nil || creds == nil {
 		h.writeError(w, http.StatusUnauthorized, "not authenticated")
 		return

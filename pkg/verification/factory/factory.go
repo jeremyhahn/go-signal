@@ -7,6 +7,7 @@
 package factory
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
@@ -24,12 +25,12 @@ import (
 //
 // The stub is rejected by the production config gate
 // (config.validateProduction), so reaching it implies development mode.
-func Build(vc config.VerificationConfig, logger *slog.Logger) (verification.VerificationTransport, error) {
+func Build(ctx context.Context, vc config.VerificationConfig, logger *slog.Logger) (verification.VerificationTransport, error) {
 	switch vc.Transport {
 	case "", "stub":
 		return verification.NewStubTransport(logger), nil
 	case "twilio":
-		return twilio.NewTransport(twilio.Config{
+		return twilio.NewTransport(ctx, twilio.Config{
 			AccountSID: vc.Twilio.AccountSID,
 			AuthToken:  vc.Twilio.AuthToken,
 			ServiceSID: vc.Twilio.VerifyServiceSID,

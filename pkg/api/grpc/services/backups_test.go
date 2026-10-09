@@ -2002,10 +2002,10 @@ func TestBackupsAnonymous_DeleteAll_MissingPresentation(t *testing.T) {
 // a real generator must.
 type fixtureSVRBGenerator struct{}
 
-func (fixtureSVRBGenerator) GenerateFor(_ context.Context, svrbID string) (*backups.ExternalServiceCredentials, error) {
+func (fixtureSVRBGenerator) GenerateFor(ctx context.Context, svrbID string) (*backups.ExternalServiceCredentials, error) {
 	return &backups.ExternalServiceCredentials{
 		Username: svrbID,
-		Password: secrets.MustNewSecureString("svrb-secret"),
+		Password: secrets.MustNewSecureString(ctx, "svrb-secret"),
 	}, nil
 }
 
@@ -2040,10 +2040,10 @@ func TestBackupsAnonymousService_GetSvrBCredentials_SuccessCarriesPlaintextPassw
 // into a success carrying an empty password.
 type wipedSVRBGenerator struct{}
 
-func (wipedSVRBGenerator) GenerateFor(_ context.Context, svrbID string) (*backups.ExternalServiceCredentials, error) {
+func (wipedSVRBGenerator) GenerateFor(ctx context.Context, svrbID string) (*backups.ExternalServiceCredentials, error) {
 	creds := &backups.ExternalServiceCredentials{
 		Username: svrbID,
-		Password: secrets.MustNewSecureString("svrb-secret"),
+		Password: secrets.MustNewSecureString(ctx, "svrb-secret"),
 	}
 	creds.Destroy()
 	return creds, nil

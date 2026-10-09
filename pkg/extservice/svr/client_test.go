@@ -60,9 +60,9 @@ func TestHTTPClient_RemoveData_HappyPath(t *testing.T) {
 	srv := newSVRStub(t, "test-secret", http.StatusNoContent)
 	t.Cleanup(srv.Close)
 
-	c, err := NewHTTP(HTTPConfig{
+	c, err := NewHTTP(t.Context(), HTTPConfig{
 		BaseURL:      srv.URL,
-		SharedSecret: secrets.MustNewSecureString("test-secret"),
+		SharedSecret: secrets.MustNewSecureString(t.Context(), "test-secret"),
 		Timeout:      2 * time.Second,
 	})
 	if err != nil {
@@ -78,7 +78,7 @@ func TestHTTPClient_RemoveData_HappyPath(t *testing.T) {
 func TestHTTPClient_RemoveData_TreatsNotFoundAsSuccess(t *testing.T) {
 	srv := newSVRStub(t, "test-secret", http.StatusNotFound)
 	t.Cleanup(srv.Close)
-	c, _ := NewHTTP(HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString("test-secret")})
+	c, _ := NewHTTP(t.Context(), HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString(t.Context(), "test-secret")})
 	t.Cleanup(func() { _ = c.Close() })
 	if err := c.RemoveData(context.Background(), "alice"); err != nil {
 		t.Errorf("404 should be treated as success; got %v", err)
@@ -88,7 +88,7 @@ func TestHTTPClient_RemoveData_TreatsNotFoundAsSuccess(t *testing.T) {
 func TestHTTPClient_RemoveData_5xxReturnsTypedError(t *testing.T) {
 	srv := newSVRStub(t, "test-secret", http.StatusInternalServerError)
 	t.Cleanup(srv.Close)
-	c, _ := NewHTTP(HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString("test-secret")})
+	c, _ := NewHTTP(t.Context(), HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString(t.Context(), "test-secret")})
 	t.Cleanup(func() { _ = c.Close() })
 	err := c.RemoveData(context.Background(), "alice")
 	var e *Error
@@ -103,7 +103,7 @@ func TestHTTPClient_RemoveData_5xxReturnsTypedError(t *testing.T) {
 func TestHTTPClient_RemoveData_AuthRequired(t *testing.T) {
 	srv := newSVRStub(t, "right-secret", http.StatusNoContent)
 	t.Cleanup(srv.Close)
-	c, _ := NewHTTP(HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString("wrong-secret")})
+	c, _ := NewHTTP(t.Context(), HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString(t.Context(), "wrong-secret")})
 	t.Cleanup(func() { _ = c.Close() })
 	err := c.RemoveData(context.Background(), "alice")
 	if err == nil {
@@ -112,10 +112,10 @@ func TestHTTPClient_RemoveData_AuthRequired(t *testing.T) {
 }
 
 func TestNewHTTP_Validation(t *testing.T) {
-	if _, err := NewHTTP(HTTPConfig{}); err == nil {
+	if _, err := NewHTTP(t.Context(), HTTPConfig{}); err == nil {
 		t.Error("expected error on empty config")
 	}
-	if _, err := NewHTTP(HTTPConfig{BaseURL: "https://x"}); err == nil {
+	if _, err := NewHTTP(t.Context(), HTTPConfig{BaseURL: "https://x"}); err == nil {
 		t.Error("expected error on missing SharedSecret")
 	}
 }

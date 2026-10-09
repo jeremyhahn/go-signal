@@ -19,7 +19,7 @@ func TestGetAuth_WireFormUnchangedByProtectedSecret(t *testing.T) {
 	const secret, acct = "storage-shared-secret", "b9d0d4e2-0000-4000-8000-000000000001"
 
 	m := NewSecureStorageManager(testLogger())
-	_ = m.SetSharedSecret(secrets.MustNewSecureString(secret))
+	_ = m.SetSharedSecret(t.Context(), secrets.MustNewSecureString(t.Context(), secret))
 	defer m.Destroy()
 
 	creds, err := m.GetAuth(context.Background(), acct)
@@ -34,8 +34,8 @@ func TestGetAuth_WireFormUnchangedByProtectedSecret(t *testing.T) {
 	if creds.Username != acct {
 		t.Errorf("username = %q, want %q", creds.Username, acct)
 	}
-	if creds.Password.Plaintext() != want {
-		t.Errorf("password = %q, want %q", creds.Password.Plaintext(), want)
+	if creds.Password.Plaintext(t.Context()) != want {
+		t.Errorf("password = %q, want %q", creds.Password.Plaintext(t.Context()), want)
 	}
 }
 
@@ -43,28 +43,28 @@ func TestGetAuth_WireFormUnchangedByProtectedSecret(t *testing.T) {
 // closes: a rotation used to leave the superseded key resident.
 func TestSetSharedSecret_WipesTheSecretItReplaces(t *testing.T) {
 	m := NewSecureStorageManager(testLogger())
-	_ = m.SetSharedSecret(secrets.MustNewSecureString("first"))
+	_ = m.SetSharedSecret(t.Context(), secrets.MustNewSecureString(t.Context(), "first"))
 	superseded := m.state.Load().secret
 
-	_ = m.SetSharedSecret(secrets.MustNewSecureString("second"))
+	_ = m.SetSharedSecret(t.Context(), secrets.MustNewSecureString(t.Context(), "second"))
 	defer m.Destroy()
 
-	if !superseded.IsDestroyed() {
+	if !superseded.IsDestroyed(t.Context()) {
 		t.Error("the superseded secret is still resident in protected memory")
 	}
-	if got := m.state.Load().secret.Plaintext(); got != "second" {
+	if got := m.state.Load().secret.Plaintext(t.Context()); got != "second" {
 		t.Errorf("sharedSecret = %q, want %q", got, "second")
 	}
 }
 
 func TestSetSharedSecret_UnsetSecretWipesTheSecretItReplaces(t *testing.T) {
 	m := NewSecureStorageManager(testLogger())
-	_ = m.SetSharedSecret(secrets.MustNewSecureString("first"))
+	_ = m.SetSharedSecret(t.Context(), secrets.MustNewSecureString(t.Context(), "first"))
 	superseded := m.state.Load().secret
 
-	_ = m.SetSharedSecret(secrets.MustNewSecureString(""))
+	_ = m.SetSharedSecret(t.Context(), secrets.MustNewSecureString(t.Context(), ""))
 
-	if !superseded.IsDestroyed() {
+	if !superseded.IsDestroyed(t.Context()) {
 		t.Error("the superseded secret is still resident in protected memory")
 	}
 	if m.state.Load().secret != nil {
@@ -76,17 +76,17 @@ func TestSetSharedSecret_UnsetSecretWipesTheSecretItReplaces(t *testing.T) {
 // signald passes cfg.StorageService.SharedSecret, wiped separately by
 // cfg.Destroy.
 func TestSetSharedSecret_ClonesTheCallersSecret(t *testing.T) {
-	src := secrets.MustNewSecureString("storage-shared-secret")
+	src := secrets.MustNewSecureString(t.Context(), "storage-shared-secret")
 	defer src.Destroy()
 
 	m := NewSecureStorageManager(testLogger())
-	_ = m.SetSharedSecret(src)
+	_ = m.SetSharedSecret(t.Context(), src)
 	m.Destroy()
 
-	if src.IsDestroyed() {
+	if src.IsDestroyed(t.Context()) {
 		t.Error("Destroy wiped the caller's secret")
 	}
-	if got := src.Plaintext(); got != "storage-shared-secret" {
+	if got := src.Plaintext(t.Context()); got != "storage-shared-secret" {
 		t.Errorf("caller's secret = %q, want %q", got, "storage-shared-secret")
 	}
 }
@@ -98,7 +98,7 @@ func TestSetSharedSecret_ClonesTheCallersSecret(t *testing.T) {
 // loss of the key as a successful credential grant.
 func TestDestroy_MakesCredentialIssuanceFailClosed(t *testing.T) {
 	m := NewSecureStorageManager(testLogger())
-	_ = m.SetSharedSecret(secrets.MustNewSecureString("storage-shared-secret"))
+	_ = m.SetSharedSecret(t.Context(), secrets.MustNewSecureString(t.Context(), "storage-shared-secret"))
 	m.Destroy()
 
 	creds, err := m.GetAuth(context.Background(), "acct")
@@ -129,8 +129,8 @@ func TestGetAuth_StubModeSurvivesDestroy(t *testing.T) {
 		t.Fatalf("GetAuth: %v", err)
 	}
 	// 36 == random UUID; 64 == HMAC-SHA256 hex.
-	if len(creds.Password.Plaintext()) != 36 {
-		t.Errorf("password len = %d, want 36 (random UUID stub): %q", len(creds.Password.Plaintext()), creds.Password.Plaintext())
+	if len(creds.Password.Plaintext(t.Context())) != 36 {
+		t.Errorf("password len = %d, want 36 (random UUID stub): %q", len(creds.Password.Plaintext(t.Context())), creds.Password.Plaintext(t.Context()))
 	}
 }
 
@@ -139,15 +139,15 @@ func TestGetAuth_StubModeSurvivesDestroy(t *testing.T) {
 // not the loss of a key.
 func TestSetSharedSecret_UnsetSecretReturnsToStubMode(t *testing.T) {
 	m := NewSecureStorageManager(testLogger())
-	_ = m.SetSharedSecret(secrets.MustNewSecureString("storage-shared-secret"))
-	_ = m.SetSharedSecret(secrets.MustNewSecureString(""))
+	_ = m.SetSharedSecret(t.Context(), secrets.MustNewSecureString(t.Context(), "storage-shared-secret"))
+	_ = m.SetSharedSecret(t.Context(), secrets.MustNewSecureString(t.Context(), ""))
 
 	creds, err := m.GetAuth(context.Background(), "acct")
 	if err != nil {
 		t.Fatalf("GetAuth: %v", err)
 	}
-	if len(creds.Password.Plaintext()) != 36 {
-		t.Errorf("password len = %d, want 36 (random UUID stub): %q", len(creds.Password.Plaintext()), creds.Password.Plaintext())
+	if len(creds.Password.Plaintext(t.Context())) != 36 {
+		t.Errorf("password len = %d, want 36 (random UUID stub): %q", len(creds.Password.Plaintext(t.Context())), creds.Password.Plaintext(t.Context()))
 	}
 }
 
@@ -157,7 +157,7 @@ func TestDestroy_IsIdempotentAndNilSafe(t *testing.T) {
 
 	m := NewSecureStorageManager(testLogger())
 	m.Destroy() // no secret was ever set
-	_ = m.SetSharedSecret(secrets.MustNewSecureString("s"))
+	_ = m.SetSharedSecret(t.Context(), secrets.MustNewSecureString(t.Context(), "s"))
 	m.Destroy()
 	m.Destroy()
 }

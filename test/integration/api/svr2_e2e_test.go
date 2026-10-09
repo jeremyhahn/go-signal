@@ -321,9 +321,9 @@ func TestSVR2E2E_AdminDeleteViaHTTPClient(t *testing.T) {
 		t.Fatalf("seed count = %d", n)
 	}
 
-	cli, err := svr.NewHTTP(svr.HTTPConfig{
+	cli, err := svr.NewHTTP(t.Context(), svr.HTTPConfig{
 		BaseURL:      adminURL,
-		SharedSecret: secrets.MustNewSecureString(sharedSecret),
+		SharedSecret: secrets.MustNewSecureString(t.Context(), sharedSecret),
 	})
 	if err != nil {
 		t.Fatalf("NewHTTP: %v", err)

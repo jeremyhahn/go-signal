@@ -46,7 +46,7 @@ func TestHandleAttachmentUploadForm_Success(t *testing.T) {
 
 func TestHandleAttachmentUploadForm_ExternalTUS_AttachesBasicAuth(t *testing.T) {
 	s, _ := newTestServerWithAccount(t)
-	gen, err := external.NewGenerator(external.GeneratorConfig{Key: secrets.MustNewSecureString("tus-secret")})
+	gen, err := external.NewGenerator(t.Context(), external.GeneratorConfig{Key: secrets.MustNewSecureString(t.Context(), "tus-secret")})
 	if err != nil {
 		t.Fatalf("external.NewGenerator: %v", err)
 	}

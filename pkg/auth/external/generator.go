@@ -16,6 +16,7 @@ package external
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -32,7 +33,7 @@ import (
 //
 // Password is a bearer credential for an external service, so it is held in
 // protected memory between issuance and the point where a handler puts it on
-// the wire. Callers read it with Password.Reveal() at that boundary — an
+// the wire. Callers read it with Password.Reveal(ctx) at that boundary — an
 // unavailable credential must fail the request rather than travel as an empty
 // password — and Destroy the credential once the response is written.
 type Credentials struct {
@@ -81,7 +82,7 @@ type Generator struct {
 // startup could return a Generator that reported success and can never sign.
 // Validating the key this Generator actually kept makes the constructor's
 // verdict true of that key.
-func NewGenerator(cfg GeneratorConfig) (*Generator, error) {
+func NewGenerator(ctx context.Context, cfg GeneratorConfig) (*Generator, error) {
 	// Presence and the copy come from ONE snapshot, as in the directory and
 	// securestorage managers. Reading IsAbsent() and then cloning are two
 	// separate reveals: a key installed between them reports absent beside a
@@ -92,7 +93,7 @@ func NewGenerator(cfg GeneratorConfig) (*Generator, error) {
 	// A clone that failed to allocate is NOT "no key configured": reporting
 	// it as the latter would let memory pressure turn a configured generator
 	// into a missing one. The two outcomes get different errors.
-	key, configured, err := cfg.Key.CloneWithPresence()
+	key, configured, err := cfg.Key.CloneWithPresence(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +110,7 @@ func NewGenerator(cfg GeneratorConfig) (*Generator, error) {
 	// deciding whether to fall back to an unauthenticated mode can tell them
 	// apart. An empty clone lands here too, which is correct: the source was
 	// configured, so this is unusable rather than missing.
-	if err := key.TryWithBytes(func([]byte) {}); err != nil {
+	if err := key.TryWithBytes(ctx, func([]byte) {}); err != nil {
 		key.Destroy()
 		return nil, &UnusableKeyError{Cause: err}
 	}
@@ -137,7 +138,7 @@ func (g *Generator) Destroy() {
 // ExternalServiceCredentialsGenerator.generate when configured with
 // prependUsername=cfg.PrependUsername, truncateSignature=false,
 // shouldDeriveUsername=false, usernameIsTimestamp=false.
-func (g *Generator) Generate(identity string) (*Credentials, error) {
+func (g *Generator) Generate(ctx context.Context, identity string) (*Credentials, error) {
 	if identity == "" {
 		return nil, errors.New("external: identity is required")
 	}
@@ -155,7 +156,7 @@ func (g *Generator) Generate(identity string) (*Credentials, error) {
 	dataToSign = append(dataToSign, ts...)
 	defer wipe(dataToSign)
 
-	sig, ok := g.hmac(dataToSign)
+	sig, ok := g.hmac(ctx, dataToSign)
 	if !ok {
 		return nil, errors.New("external: generator has been destroyed")
 	}
@@ -174,7 +175,7 @@ func (g *Generator) Generate(identity string) (*Credentials, error) {
 	password = append(password, sig...)
 
 	// NewSecureStringFromBytes consumes and wipes password.
-	sealed, err := secrets.NewSecureStringFromBytes(password)
+	sealed, err := secrets.NewSecureStringFromBytes(ctx, password)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +195,7 @@ func wipe(b []byte) {
 // older than maxAge. Returns the embedded timestamp on success so the
 // caller can apply additional age policy. The HMAC comparison is constant-
 // time. Mirrors Java validateAndGetTimestamp + isCredentialExpired.
-func (g *Generator) Validate(creds *Credentials, maxAge time.Duration) (time.Time, error) {
+func (g *Generator) Validate(ctx context.Context, creds *Credentials, maxAge time.Duration) (time.Time, error) {
 	if creds == nil {
 		return time.Time{}, errors.New("external: nil credentials")
 	}
@@ -206,7 +207,7 @@ func (g *Generator) Validate(creds *Credentials, maxAge time.Duration) (time.Tim
 		tsDigits []byte
 		verr     error
 	)
-	revealed := creds.Password.WithBytes(func(password []byte) {
+	revealed := creds.Password.WithBytes(ctx, func(password []byte) {
 		parts := bytes.Split(password, []byte{':'})
 		var tsBytes, sig []byte
 		switch {
@@ -229,7 +230,7 @@ func (g *Generator) Validate(creds *Credentials, maxAge time.Duration) (time.Tim
 		signed = append(signed, tsBytes...)
 		defer wipe(signed)
 
-		expected, ok := g.hmac(signed)
+		expected, ok := g.hmac(ctx, signed)
 		if !ok {
 			verr = errors.New("external: generator has been destroyed")
 			return
@@ -269,9 +270,9 @@ func (g *Generator) Validate(creds *Credentials, maxAge time.Duration) (time.Tim
 // destroyed, and both callers turn that into an error: signing with — or
 // comparing against — an empty key would produce a credential an attacker can
 // forge, so this fails closed rather than degrading.
-func (g *Generator) hmac(data []byte) ([]byte, bool) {
+func (g *Generator) hmac(ctx context.Context, data []byte) ([]byte, bool) {
 	var sum []byte
-	ok := g.cfg.Key.WithBytes(func(key []byte) {
+	ok := g.cfg.Key.WithBytes(ctx, func(key []byte) {
 		mac := hmac.New(sha256.New, key)
 		mac.Write(data)
 		raw := mac.Sum(nil)

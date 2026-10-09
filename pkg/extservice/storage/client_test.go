@@ -59,9 +59,9 @@ func newStub(t *testing.T, secret string, status int) *httptest.Server {
 func TestHTTPClient_HappyPath(t *testing.T) {
 	srv := newStub(t, "secret-1", http.StatusNoContent)
 	t.Cleanup(srv.Close)
-	c, err := NewHTTP(HTTPConfig{
+	c, err := NewHTTP(t.Context(), HTTPConfig{
 		BaseURL:      srv.URL,
-		SharedSecret: secrets.MustNewSecureString("secret-1"),
+		SharedSecret: secrets.MustNewSecureString(t.Context(), "secret-1"),
 		Timeout:      2 * time.Second,
 	})
 	if err != nil {
@@ -76,7 +76,7 @@ func TestHTTPClient_HappyPath(t *testing.T) {
 func TestHTTPClient_404IsSuccess(t *testing.T) {
 	srv := newStub(t, "s", http.StatusNotFound)
 	t.Cleanup(srv.Close)
-	c, _ := NewHTTP(HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString("s")})
+	c, _ := NewHTTP(t.Context(), HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString(t.Context(), "s")})
 	t.Cleanup(func() { _ = c.Close() })
 	if err := c.DeleteStoredData(context.Background(), "alice"); err != nil {
 		t.Errorf("404 should be success; got %v", err)
@@ -86,7 +86,7 @@ func TestHTTPClient_404IsSuccess(t *testing.T) {
 func TestHTTPClient_5xxReturnsTypedError(t *testing.T) {
 	srv := newStub(t, "s", http.StatusInternalServerError)
 	t.Cleanup(srv.Close)
-	c, _ := NewHTTP(HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString("s")})
+	c, _ := NewHTTP(t.Context(), HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString(t.Context(), "s")})
 	t.Cleanup(func() { _ = c.Close() })
 	err := c.DeleteStoredData(context.Background(), "alice")
 	var e *Error
@@ -101,7 +101,7 @@ func TestHTTPClient_5xxReturnsTypedError(t *testing.T) {
 func TestHTTPClient_AuthMismatch(t *testing.T) {
 	srv := newStub(t, "right", http.StatusNoContent)
 	t.Cleanup(srv.Close)
-	c, _ := NewHTTP(HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString("wrong")})
+	c, _ := NewHTTP(t.Context(), HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString(t.Context(), "wrong")})
 	t.Cleanup(func() { _ = c.Close() })
 	err := c.DeleteStoredData(context.Background(), "alice")
 	if err == nil {
@@ -110,10 +110,10 @@ func TestHTTPClient_AuthMismatch(t *testing.T) {
 }
 
 func TestNewHTTP_Validation(t *testing.T) {
-	if _, err := NewHTTP(HTTPConfig{}); err == nil {
+	if _, err := NewHTTP(t.Context(), HTTPConfig{}); err == nil {
 		t.Error("expected error on empty config")
 	}
-	if _, err := NewHTTP(HTTPConfig{BaseURL: "https://x"}); err == nil {
+	if _, err := NewHTTP(t.Context(), HTTPConfig{BaseURL: "https://x"}); err == nil {
 		t.Error("expected error on missing SharedSecret")
 	}
 }

@@ -15,7 +15,7 @@ import (
 func TestNewTransport(t *testing.T) {
 	t.Parallel()
 
-	password := secrets.MustNewSecureString("pass")
+	password := secrets.MustNewSecureString(t.Context(), "pass")
 	defer password.Destroy()
 
 	config := TransportConfig{

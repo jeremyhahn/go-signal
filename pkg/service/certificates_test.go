@@ -18,7 +18,7 @@ func TestNewCertificateService_InterfaceSatisfaction(t *testing.T) {
 // newTestCertificateService builds a CertificateService with a deterministic
 // 32-byte signing key suitable for unit tests.
 func newTestCertificateService() CertificateService {
-	signingKey := secrets.MustNewSecureString("01234567890123456789012345678901")
+	signingKey := secrets.MustNewSecureString(context.Background(), "01234567890123456789012345678901")
 	mgr := certificates.NewCertificatesManager(signingKey, slog.Default())
 	return NewCertificateService(mgr)
 }
@@ -144,7 +144,7 @@ func TestCertificateService_GetGroupCredentials_RangeTooLarge(t *testing.T) {
 // TestNewCertificateService_Roundtrip verifies NewCertificateService returns
 // a usable implementation without panicking.
 func TestNewCertificateService_Roundtrip(t *testing.T) {
-	signingKey := secrets.MustNewSecureString("abcdefghijklmnopqrstuvwxyz012345")
+	signingKey := secrets.MustNewSecureString(t.Context(), "abcdefghijklmnopqrstuvwxyz012345")
 	mgr := certificates.NewCertificatesManager(signingKey, slog.Default())
 	svc := NewCertificateService(mgr)
 

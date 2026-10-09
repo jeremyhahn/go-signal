@@ -24,11 +24,10 @@ func (s *Server) handleGetDirectoryAuth(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// The credential is marshalled into the response body (writeJSON opens
-	// the secret for exactly that), then wiped — its protected copy does not
+	// Written to the response, then wiped — its protected copy does not
 	// outlive the request.
 	defer creds.Destroy()
-	writeJSON(w, http.StatusOK, creds)
+	s.writeExternalServiceCredentials(w, r, "directory", creds.Username, creds.Password)
 }
 
 // handleDirectoryLookup handles PUT /v1/directory/lookup and returns UUIDs

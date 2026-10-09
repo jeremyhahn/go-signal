@@ -41,8 +41,8 @@ func TestSetSharedSecret_ConcurrentRotationsNeverStrandHMACModeWithoutAKey(t *te
 	for round := range rotationRaceRounds {
 		m := NewSecureStorageManager(slog.Default())
 
-		configured := secrets.MustNewSecureString("shared-secret")
-		stub := secrets.MustNewSecureString("")
+		configured := secrets.MustNewSecureString(t.Context(), "shared-secret")
+		stub := secrets.MustNewSecureString(t.Context(), "")
 
 		var wg sync.WaitGroup
 		start := make(chan struct{})
@@ -51,7 +51,7 @@ func TestSetSharedSecret_ConcurrentRotationsNeverStrandHMACModeWithoutAKey(t *te
 			go func() {
 				defer wg.Done()
 				<-start
-				_ = m.SetSharedSecret(s)
+				_ = m.SetSharedSecret(t.Context(), s)
 			}()
 		}
 		close(start)
@@ -68,7 +68,7 @@ func TestSetSharedSecret_ConcurrentRotationsNeverStrandHMACModeWithoutAKey(t *te
 		if err != nil {
 			t.Fatalf("round %d: GetAuth: %v", round, err)
 		}
-		_ = creds.Password.Plaintext()
+		_ = creds.Password.Plaintext(t.Context())
 
 		configured.Destroy()
 		stub.Destroy()
@@ -88,8 +88,8 @@ func TestSetSharedSecret_ConcurrentRotationsNeverSplitModeFromKey(t *testing.T) 
 	for round := range rotationRaceRounds {
 		m := NewSecureStorageManager(slog.Default())
 
-		configured := secrets.MustNewSecureString("shared-secret")
-		stub := secrets.MustNewSecureString("")
+		configured := secrets.MustNewSecureString(t.Context(), "shared-secret")
+		stub := secrets.MustNewSecureString(t.Context(), "")
 
 		var wg sync.WaitGroup
 		start := make(chan struct{})
@@ -98,7 +98,7 @@ func TestSetSharedSecret_ConcurrentRotationsNeverSplitModeFromKey(t *testing.T) 
 			go func() {
 				defer wg.Done()
 				<-start
-				_ = m.SetSharedSecret(s)
+				_ = m.SetSharedSecret(t.Context(), s)
 			}()
 		}
 		close(start)
@@ -134,15 +134,15 @@ func TestSetSharedSecret_ConcurrentRotationsNeverSplitModeFromKey(t *testing.T) 
 func TestDestroy_ConcurrentWithRotationConsistentState(t *testing.T) {
 	for round := range rotationRaceRounds {
 		m := NewSecureStorageManager(slog.Default())
-		first := secrets.MustNewSecureString("first")
-		_ = m.SetSharedSecret(first)
+		first := secrets.MustNewSecureString(t.Context(), "first")
+		_ = m.SetSharedSecret(t.Context(), first)
 
-		rotating := secrets.MustNewSecureString("second")
+		rotating := secrets.MustNewSecureString(t.Context(), "second")
 
 		var wg sync.WaitGroup
 		start := make(chan struct{})
 		wg.Add(2)
-		go func() { defer wg.Done(); <-start; m.SetSharedSecret(rotating) }()
+		go func() { defer wg.Done(); <-start; m.SetSharedSecret(t.Context(), rotating) }()
 		go func() { defer wg.Done(); <-start; m.Destroy() }()
 		close(start)
 		wg.Wait()

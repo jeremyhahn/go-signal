@@ -12,7 +12,7 @@ func testLogger() *slog.Logger { return slog.New(slog.DiscardHandler) }
 
 func TestBuild_Stub(t *testing.T) {
 	for _, transport := range []string{"", "stub"} {
-		tr, err := Build(config.VerificationConfig{Transport: transport}, testLogger())
+		tr, err := Build(t.Context(), config.VerificationConfig{Transport: transport}, testLogger())
 		if err != nil {
 			t.Fatalf("transport %q: unexpected error: %v", transport, err)
 		}
@@ -23,11 +23,11 @@ func TestBuild_Stub(t *testing.T) {
 }
 
 func TestBuild_TwilioSuccess(t *testing.T) {
-	tr, err := Build(config.VerificationConfig{
+	tr, err := Build(t.Context(), config.VerificationConfig{
 		Transport: "twilio",
 		Twilio: config.TwilioConfig{
 			AccountSID:       "AC123",
-			AuthToken:        secrets.MustNewSecureString("token"),
+			AuthToken:        secrets.MustNewSecureString(t.Context(), "token"),
 			VerifyServiceSID: "VA123",
 			Channel:          "sms",
 		},
@@ -43,14 +43,14 @@ func TestBuild_TwilioSuccess(t *testing.T) {
 func TestBuild_TwilioMissingCredentials(t *testing.T) {
 	// NewTransport fails fast when required fields are missing, so Build must
 	// surface that error rather than returning a non-functional transport.
-	_, err := Build(config.VerificationConfig{Transport: "twilio"}, testLogger())
+	_, err := Build(t.Context(), config.VerificationConfig{Transport: "twilio"}, testLogger())
 	if err == nil {
 		t.Fatal("expected error for twilio transport with missing credentials")
 	}
 }
 
 func TestBuild_UnsupportedTransport(t *testing.T) {
-	_, err := Build(config.VerificationConfig{Transport: "carrier-pigeon"}, testLogger())
+	_, err := Build(t.Context(), config.VerificationConfig{Transport: "carrier-pigeon"}, testLogger())
 	if err == nil {
 		t.Fatal("expected error for unsupported transport")
 	}

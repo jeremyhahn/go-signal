@@ -850,7 +850,7 @@ func (w *CertificateRotationWorker) Run(ctx context.Context) error {
 		}
 	}
 
-	if err := w.certsMgr.SetEd25519SigningKey(priv, keyID); err != nil {
+	if err := w.certsMgr.SetEd25519SigningKey(ctx, priv, keyID); err != nil {
 		return signalerrors.Wrap(signalerrors.ErrInternal, "generate-certificate: install signing key", err)
 	}
 

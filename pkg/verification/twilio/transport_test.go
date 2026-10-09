@@ -57,9 +57,9 @@ func (f *fakeTwilio) Close() { f.server.Close() }
 
 func newTestTransport(t *testing.T, f *fakeTwilio) *Transport {
 	t.Helper()
-	tr, err := NewTransport(Config{
+	tr, err := NewTransport(t.Context(), Config{
 		AccountSID: "ACtest",
-		AuthToken:  secrets.MustNewSecureString("auth-secret"),
+		AuthToken:  secrets.MustNewSecureString(t.Context(), "auth-secret"),
 		ServiceSID: "VAservice",
 		BaseURL:    f.server.URL,
 	})
@@ -74,14 +74,14 @@ func TestNewTransport_ValidatesRequiredFields(t *testing.T) {
 		name string
 		cfg  Config
 	}{
-		{"no AccountSID", Config{AuthToken: secrets.MustNewSecureString("x"), ServiceSID: "s"}},
+		{"no AccountSID", Config{AuthToken: secrets.MustNewSecureString(t.Context(), "x"), ServiceSID: "s"}},
 		{"no AuthToken", Config{AccountSID: "a", ServiceSID: "s"}},
-		{"empty AuthToken", Config{AccountSID: "a", AuthToken: secrets.MustNewSecureString(""), ServiceSID: "s"}},
-		{"no ServiceSID", Config{AccountSID: "a", AuthToken: secrets.MustNewSecureString("x")}},
+		{"empty AuthToken", Config{AccountSID: "a", AuthToken: secrets.MustNewSecureString(t.Context(), ""), ServiceSID: "s"}},
+		{"no ServiceSID", Config{AccountSID: "a", AuthToken: secrets.MustNewSecureString(t.Context(), "x")}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if _, err := NewTransport(c.cfg); err == nil {
+			if _, err := NewTransport(t.Context(), c.cfg); err == nil {
 				t.Fatal("expected error")
 			}
 		})
@@ -89,8 +89,8 @@ func TestNewTransport_ValidatesRequiredFields(t *testing.T) {
 }
 
 func TestNewTransport_DefaultsChannelAndBaseURL(t *testing.T) {
-	tr, err := NewTransport(Config{
-		AccountSID: "a", AuthToken: secrets.MustNewSecureString("x"), ServiceSID: "s",
+	tr, err := NewTransport(t.Context(), Config{
+		AccountSID: "a", AuthToken: secrets.MustNewSecureString(t.Context(), "x"), ServiceSID: "s",
 	})
 	if err != nil {
 		t.Fatalf("NewTransport: %v", err)
@@ -104,7 +104,7 @@ func TestNewTransport_DefaultsChannelAndBaseURL(t *testing.T) {
 }
 
 func TestTransport_Name(t *testing.T) {
-	tr, _ := NewTransport(Config{AccountSID: "a", AuthToken: secrets.MustNewSecureString("x"), ServiceSID: "s"})
+	tr, _ := NewTransport(t.Context(), Config{AccountSID: "a", AuthToken: secrets.MustNewSecureString(t.Context(), "x"), ServiceSID: "s"})
 	if got := tr.Name(); got != "twilio" {
 		t.Errorf("Name = %q, want twilio", got)
 	}
@@ -137,8 +137,8 @@ func TestSendCode_HappyPath(t *testing.T) {
 func TestSendCode_NonSMSChannel(t *testing.T) {
 	f := newFakeTwilio()
 	defer f.Close()
-	tr, _ := NewTransport(Config{
-		AccountSID: "ACtest", AuthToken: secrets.MustNewSecureString("x"),
+	tr, _ := NewTransport(t.Context(), Config{
+		AccountSID: "ACtest", AuthToken: secrets.MustNewSecureString(t.Context(), "x"),
 		ServiceSID: "VAservice", BaseURL: f.server.URL, Channel: "whatsapp",
 	})
 	if err := tr.SendCode(context.Background(), "+1555", ""); err != nil {
@@ -197,8 +197,8 @@ func TestSendCode_UnparsableErrorFallsBackToBody(t *testing.T) {
 }
 
 func TestSendCode_TransportErrorWrapped(t *testing.T) {
-	tr, _ := NewTransport(Config{
-		AccountSID: "a", AuthToken: secrets.MustNewSecureString("x"),
+	tr, _ := NewTransport(t.Context(), Config{
+		AccountSID: "a", AuthToken: secrets.MustNewSecureString(t.Context(), "x"),
 		ServiceSID: "s", BaseURL: "http://127.0.0.1:1",
 	})
 	err := tr.SendCode(context.Background(), "+1", "")
@@ -256,8 +256,8 @@ func TestVerify_NotFoundReturnsFalse(t *testing.T) {
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
-	tr, _ := NewTransport(Config{
-		AccountSID: "a", AuthToken: secrets.MustNewSecureString("x"),
+	tr, _ := NewTransport(t.Context(), Config{
+		AccountSID: "a", AuthToken: secrets.MustNewSecureString(t.Context(), "x"),
 		ServiceSID: "s", BaseURL: srv.URL,
 	})
 	ok, err := tr.Verify(context.Background(), "+1", "999")
@@ -279,8 +279,8 @@ func TestVerify_APIErrorReturnsError(t *testing.T) {
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
-	tr, _ := NewTransport(Config{
-		AccountSID: "a", AuthToken: secrets.MustNewSecureString("x"),
+	tr, _ := NewTransport(t.Context(), Config{
+		AccountSID: "a", AuthToken: secrets.MustNewSecureString(t.Context(), "x"),
 		ServiceSID: "s", BaseURL: srv.URL,
 	})
 	_, err := tr.Verify(context.Background(), "+1", "1")
