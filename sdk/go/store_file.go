@@ -102,6 +102,23 @@ func (s *FileStore) SaveCredentials(ctx context.Context, creds *Credentials) err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Open the password before touching either file: a configured password that
+	// will not open must abort the save, not leave new identity fields beside the
+	// previous account's token. The copy is wiped once both files are written.
+	var token []byte
+	if creds.Password != nil && !creds.Password.IsAbsent() {
+		if err := creds.Password.TryWithBytes(ctx, func(pw []byte) {
+			token = append([]byte(nil), pw...)
+		}); err != nil {
+			return signalerrors.Wrap(signalerrors.ErrUnavailable, "signal: open password to save credentials", err)
+		}
+		defer func() {
+			for i := range token {
+				token[i] = 0
+			}
+		}()
+	}
+
 	// Write non-sensitive fields to credentials.json.
 	disk := credentialsOnDisk{
 		Number:   creds.Number,
@@ -114,20 +131,9 @@ func (s *FileStore) SaveCredentials(ctx context.Context, creds *Credentials) err
 	}
 
 	// Write password to a separate file with strict permissions.
-	// The password is extracted from SecureString, written, and the
-	// intermediate buffer is zeroed.
-	if creds.Password != nil {
-		pw := creds.Password.Bytes(ctx)
-		if pw != nil {
-			if err := os.WriteFile(s.path(".auth_token"), pw, 0600); err != nil {
-				for i := range pw {
-					pw[i] = 0
-				}
-				return err
-			}
-			for i := range pw {
-				pw[i] = 0
-			}
+	if token != nil {
+		if err := os.WriteFile(s.path(".auth_token"), token, 0600); err != nil {
+			return err
 		}
 	}
 
