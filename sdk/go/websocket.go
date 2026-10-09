@@ -3,7 +3,6 @@ package signal
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -44,17 +43,11 @@ func (c *Client) ConnectWebSocketSession(ctx context.Context, handler func(msg R
 
 	// Build TLS config with custom CA if needed.
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
-	if c.config.CACert != nil && !c.config.CACert.IsDestroyed(ctx) {
-		caBytes := c.config.CACert.Bytes(ctx)
-		if caBytes != nil {
-			pool := x509.NewCertPool()
-			pool.AppendCertsFromPEM(caBytes)
-			tlsConfig.RootCAs = pool
-			for i := range caBytes {
-				caBytes[i] = 0
-			}
-		}
+	pool, err := rootCAs(ctx, c.config.CACert)
+	if err != nil {
+		return nil, err
 	}
+	tlsConfig.RootCAs = pool
 
 	httpClient := &http.Client{
 		Transport: &http.Transport{TLSClientConfig: tlsConfig},

@@ -39,6 +39,28 @@ type Client struct {
 
 // NewClient creates a new Signal client with the given configuration. ctx
 // bounds reading the protected CA certificate and loading saved credentials.
+// rootCAs builds the trust pool for a configured CA certificate. A CA that was
+// never configured yields a nil pool, meaning the system roots; that is the only
+// case that may. A configured CA that cannot be opened or holds no certificate
+// is an error: falling back to the system roots would verify the server against
+// a trust anchor the caller did not choose.
+func rootCAs(ctx context.Context, ca *secrets.SecureString) (*x509.CertPool, error) {
+	if ca == nil || ca.IsAbsent() {
+		return nil, nil
+	}
+	pool := x509.NewCertPool()
+	parsed := false
+	if err := ca.TryWithBytes(ctx, func(pem []byte) {
+		parsed = pool.AppendCertsFromPEM(pem)
+	}); err != nil {
+		return nil, signalerrors.Wrap(signalerrors.ErrUnavailable, "signal: open CA certificate", err)
+	}
+	if !parsed {
+		return nil, signalerrors.New(signalerrors.ErrInvalidArgument, "signal: failed to parse CA certificate")
+	}
+	return pool, nil
+}
+
 func NewClient(ctx context.Context, cfg ClientConfig) (*Client, error) {
 	if cfg.ServerURL == "" {
 		return nil, signalerrors.New(signalerrors.ErrInvalidArgument, "signal: ServerURL is required")
@@ -54,22 +76,11 @@ func NewClient(ctx context.Context, cfg ClientConfig) (*Client, error) {
 	tlsConfig := &tls.Config{
 		MinVersion: tls.VersionTLS12,
 	}
-	if cfg.CACert != nil && !cfg.CACert.IsDestroyed(ctx) {
-		caBytes := cfg.CACert.Bytes(ctx)
-		if caBytes != nil {
-			pool := x509.NewCertPool()
-			if !pool.AppendCertsFromPEM(caBytes) {
-				for i := range caBytes {
-					caBytes[i] = 0
-				}
-				return nil, signalerrors.New(signalerrors.ErrInvalidArgument, "signal: failed to parse CA certificate")
-			}
-			tlsConfig.RootCAs = pool
-			for i := range caBytes {
-				caBytes[i] = 0
-			}
-		}
+	pool, err := rootCAs(ctx, cfg.CACert)
+	if err != nil {
+		return nil, err
 	}
+	tlsConfig.RootCAs = pool
 
 	httpClient := &http.Client{
 		Timeout: 30 * time.Second,
