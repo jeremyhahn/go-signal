@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-qrdb/sdk/go/secure"
+
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
