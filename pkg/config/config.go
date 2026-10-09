@@ -1,15 +1,42 @@
 // Package config provides configuration loading and validation for the Signal server.
+//
+// # Precedence
+//
+// Every bind address resolves through four layers, highest first:
+//
+//	flag > environment > config file > defaults
+//
+// LoadWithFlags fills the defaults layer (defaults.go), decodes the YAML
+// file over it, overlays the environment through viper, and finally
+// applies each flag the operator actually set (pflag's Changed), so a
+// flag's zero value never masks a lower layer.
+//
+// # Environment variable names
+//
+// Env names are derived mechanically from the YAML key path: the prefix
+// SIGNAL_, then the key upper-cased with each "." replaced by "_". The
+// camelCase of a key is not split, so keyTransparency.grpcListen is
+// SIGNAL_KEYTRANSPARENCY_GRPCLISTEN and health.listen is
+// SIGNAL_HEALTH_LISTEN. An empty variable is treated as unset.
+//
+// # Flag names
+//
+// Flag names are the key path in kebab case, with "." and each camelCase
+// boundary becoming "-": keyTransparency.grpcListen is
+// --key-transparency-grpc-listen.
 package config
 
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
 
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
@@ -48,6 +75,7 @@ type Config struct {
 	CDSI              CDSIConfig              `yaml:"cdsi"`
 	StorageService    StorageServiceConfig    `yaml:"storageService"`
 	KeyTransparency   KeyTransparencyConfig   `yaml:"keyTransparency"`
+	Health            HealthConfig            `yaml:"health"`
 }
 
 // KeyTransparencyConfig configures the standalone key-transparency
@@ -57,7 +85,7 @@ type Config struct {
 type KeyTransparencyConfig struct {
 	// GRPCListen is the host:port the binary binds the
 	// KeyTransparencyQueryService gRPC listener to. Defaults to
-	// 0.0.0.0:8098.
+	// DefaultKeyTransparencyGRPCListen.
 	GRPCListen string `yaml:"grpcListen"`
 
 	// RemoteAddr is the gRPC endpoint signald calls for KT lookups.
@@ -78,7 +106,7 @@ type KeyTransparencyConfig struct {
 // account deletion.
 type StorageServiceConfig struct {
 	// HTTPListen is the host:port the binary binds to. Defaults to
-	// 0.0.0.0:8096 when empty.
+	// DefaultStorageServiceHTTPListen.
 	HTTPListen string `yaml:"httpListen"`
 
 	// SharedSecret is the HMAC secret signald and storage-service
@@ -105,7 +133,7 @@ type StorageServiceConfig struct {
 // /v2/directory/auth HMAC credential issuance.
 type CDSIConfig struct {
 	// WSListen is the host:port the cdsi binary binds the client-
-	// facing WebSocket listener to. Defaults to 0.0.0.0:8094.
+	// facing WebSocket listener to. Defaults to DefaultCDSIWSListen.
 	WSListen string `yaml:"wsListen"`
 
 	// Attestation is the attester flavour for the WebSocket Noise
@@ -139,12 +167,12 @@ type CDSIConfig struct {
 type SVR2Config struct {
 	// HTTPListen is the host:port the binary binds the admin HTTP
 	// listener to (handles DELETE /v1/delete). Defaults to
-	// 0.0.0.0:8091 when empty.
+	// DefaultSVR2HTTPListen.
 	HTTPListen string `yaml:"httpListen"`
 
 	// WSListen is the host:port the binary binds the
 	// client-facing WebSocket listener to (Noise NKhfs over
-	// WebSocket). Defaults to 0.0.0.0:8092 when empty.
+	// WebSocket). Defaults to DefaultSVR2WSListen.
 	WSListen string `yaml:"wsListen"`
 
 	// Attestation selects the attestation flavour:
@@ -240,6 +268,16 @@ type FrontendConfig struct {
 
 // ServerConfig holds HTTP/gRPC server settings.
 type ServerConfig struct {
+	// HTTPListen and GRPCListen are the host:port signald binds its REST and
+	// gRPC listeners to. Empty disables the listener. When empty after the
+	// file, environment and flag layers, the legacy Host/HTTPPort/GRPCPort
+	// keys are folded in (see resolveServerListeners), so Load always
+	// returns the resolved address here.
+	HTTPListen string `yaml:"httpListen"`
+	GRPCListen string `yaml:"grpcListen"`
+
+	// Host, HTTPPort and GRPCPort are the legacy form of the listen
+	// addresses above.
 	Host           string   `yaml:"host"`
 	HTTPPort       int      `yaml:"httpPort"`
 	GRPCPort       int      `yaml:"grpcPort"`
@@ -539,6 +577,14 @@ var destroyConfig = (*Config).Destroy
 // as it is decoded and then sealed here under ctx, before Validate reads any
 // of them.
 func Load(ctx context.Context, path string) (*Config, error) {
+	return LoadWithFlags(ctx, path, nil)
+}
+
+// LoadWithFlags is Load with the flag layer on top: after defaults, file
+// and environment are resolved, each address flag registered on flags (see
+// AddAddressFlags) that the operator set overrides its key. A nil flags
+// applies no flag layer.
+func LoadWithFlags(ctx context.Context, path string, flags *pflag.FlagSet) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, &ConfigLoadError{Path: path, Cause: err}
@@ -552,6 +598,7 @@ func Load(ctx context.Context, path string) (*Config, error) {
 	}()
 
 	config := &Config{}
+	applyDefaults(config)
 	// Guarded by the success flag rather than placed on each error path, so a
 	// future early return cannot forget it.
 	loaded := false
@@ -564,6 +611,8 @@ func Load(ctx context.Context, path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, config); err != nil {
 		return nil, &ConfigParseError{Path: path, Cause: err}
 	}
+	applyEnv(config)
+	applyFlags(config, flags)
 
 	for _, ss := range config.secureStrings() {
 		if err := ss.Seal(ctx); err != nil {
@@ -571,6 +620,9 @@ func Load(ctx context.Context, path string) (*Config, error) {
 		}
 	}
 
+	if err := validateAddresses(config); err != nil {
+		return nil, err
+	}
 	if err := config.Validate(ctx); err != nil {
 		return nil, err
 	}
@@ -627,8 +679,20 @@ func (c *Config) secureStrings() []*secrets.SecureString {
 
 // Validate checks the configuration for required fields and valid values.
 func (c *Config) Validate(ctx context.Context) error {
-	if c.Server.HTTPPort == 0 && c.Server.GRPCPort == 0 {
-		return &ConfigValidationError{Field: "server", Message: "at least one of httpPort or grpcPort must be set"}
+	resolveServerListeners(c)
+	if c.Server.HTTPListen == "" && c.Server.GRPCListen == "" {
+		return &ConfigValidationError{Field: "server", Message: "at least one of httpListen or grpcListen must be set"}
+	}
+	for _, d := range []struct{ key, addr string }{
+		{string(KeyServerHTTPListen), c.Server.HTTPListen},
+		{string(KeyServerGRPCListen), c.Server.GRPCListen},
+	} {
+		if d.addr == "" {
+			continue
+		}
+		if _, _, err := net.SplitHostPort(d.addr); err != nil {
+			return &ConfigValidationError{Field: d.key, Message: "listen address must be host:port"}
+		}
 	}
 	if c.Storage.Backend == "" {
 		return &ConfigValidationError{Field: "storage.backend", Message: "storage backend is required"}

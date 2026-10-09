@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-signal/pkg/backups"
-	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 // X-Signal-ZK-Auth headers carry the ZK presentation + signature for the
@@ -639,34 +638,6 @@ func (s *Server) handleGetCDNReadAuth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ReadAuthResponse{Headers: headers})
 }
 
-// ExternalServiceCredentialsResponse is the Signal-compatible
-// `{"username":…,"password":…}` body of every external-service auth
-// endpoint: GET /v1/archives/auth/svrb, /v2/directory/auth, /v1/storage/auth
-// and the SVR auth routes.
-type ExternalServiceCredentialsResponse struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-}
-
-// writeExternalServiceCredentials writes an issued external-service credential
-// to the client that is its intended bearer, the one place it leaves
-// protected memory. The password is opened under the request's context.
-// Reveal rather than Plaintext: a credential that cannot be read back fails
-// the request instead of handing the client an empty password it would treat
-// as usable. kind names the credential in the log line.
-func (s *Server) writeExternalServiceCredentials(w http.ResponseWriter, r *http.Request, kind, username string, password *secrets.SecureString) {
-	plaintext, err := password.Reveal(r.Context())
-	if err != nil {
-		s.logger.Error(kind+" credential unavailable", "error", err.Error())
-		writeError(w, http.StatusInternalServerError, "internal server error")
-		return
-	}
-	writeJSON(w, http.StatusOK, ExternalServiceCredentialsResponse{
-		Username: username,
-		Password: plaintext,
-	})
-}
-
 // handleGetSVRBAuth is GET /v1/archives/auth/svrb.
 func (s *Server) handleGetSVRBAuth(w http.ResponseWriter, r *http.Request) {
 	user := s.zkAuthenticate(w, r)
@@ -678,8 +649,18 @@ func (s *Server) handleGetSVRBAuth(w http.ResponseWriter, r *http.Request) {
 		writeBackupError(w, err)
 		return
 	}
+	// The credential is written straight from protected memory into the
+	// response buffer: ExternalServiceCredentials implements
+	// secrets.JSONAppender, so writeJSON builds and wipes the only buffer the
+	// plaintext ever occupies. Revealing it into a response struct — what this
+	// handler did before — left the password in a Go string that cannot be
+	// wiped and that the runtime is free to copy.
+	//
+	// An unavailable credential still fails the response rather than emitting
+	// an empty password the client would treat as usable: AppendJSONString
+	// errors, and writeJSON turns that into a 500.
 	defer creds.Destroy()
-	s.writeExternalServiceCredentials(w, r, "svrb", creds.Username, creds.Password)
+	writeJSONContext(r.Context(), w, http.StatusOK, *creds)
 }
 
 // --- helpers ----------------------------------------------------------------

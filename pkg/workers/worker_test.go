@@ -128,8 +128,11 @@ func TestScheduler_RunOnce_WorkerError_Propagated(t *testing.T) {
 func TestScheduler_Cron_FiresWorkerOnInterval(t *testing.T) {
 	t.Parallel()
 	w := &testWorker{
-		name:     "cron",
-		schedule: Schedule("@every 100ms"),
+		name: "cron",
+		// robfig/cron's ConstantDelaySchedule rounds any interval below
+		// one second up to one second, so "@every 100ms" fires once per
+		// second, not ten times. Use the real granularity explicitly.
+		schedule: Schedule("@every 1s"),
 		runCh:    make(chan int64, 4),
 	}
 	s := NewScheduler(quietConfig())
@@ -142,8 +145,9 @@ func TestScheduler_Cron_FiresWorkerOnInterval(t *testing.T) {
 	}
 	defer s.Stop()
 
-	// Wait for at least two runs or fail the test.
-	deadline := time.After(2 * time.Second)
+	// Two runs land at ~1s and ~2s after Start; allow the two periods
+	// plus scheduling slack so a loaded host cannot race the second fire.
+	deadline := time.After(2*time.Second + 2*time.Second)
 	for got := 0; got < 2; {
 		select {
 		case <-w.runCh:

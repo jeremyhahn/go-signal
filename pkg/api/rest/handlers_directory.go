@@ -27,7 +27,7 @@ func (s *Server) handleGetDirectoryAuth(w http.ResponseWriter, r *http.Request) 
 	// Written to the response, then wiped — its protected copy does not
 	// outlive the request.
 	defer creds.Destroy()
-	s.writeExternalServiceCredentials(w, r, "directory", creds.Username, creds.Password)
+	writeJSONContext(r.Context(), w, http.StatusOK, *creds)
 }
 
 // handleDirectoryLookup handles PUT /v1/directory/lookup and returns UUIDs

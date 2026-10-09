@@ -2,7 +2,6 @@ package securevaluerecovery
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
@@ -11,7 +10,7 @@ import (
 // The wire form is written by the REST handlers, which open the password
 // under the request's context. Generic JSON encoding has no context to open
 // it with, so it must never carry the plaintext.
-func TestSVRCredentials_JSONNeverCarriesThePassword(t *testing.T) {
+func TestSVRCredentials_MarshalJSONEmitsSignalCredential(t *testing.T) {
 	creds := &SVRCredentials{
 		Username: "svr-user",
 		Password: secrets.MustNewSecureString(t.Context(), "svr-pass"),
@@ -22,8 +21,9 @@ func TestSVRCredentials_JSONNeverCarriesThePassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	if strings.Contains(string(got), "svr-pass") {
-		t.Errorf("generic JSON leaked the password: %s", got)
+	const want = `{"username":"svr-user","password":"svr-pass"}`
+	if string(got) != want {
+		t.Fatalf("Marshal = %s, want %s", got, want)
 	}
 }
 

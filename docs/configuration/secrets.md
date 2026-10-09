@@ -1,308 +1,91 @@
 # Secrets Management
 
-The server resolves sensitive configuration values at startup so that secrets never need to appear as plaintext in YAML files. Three resolution mechanisms are supported, each suited to a different deployment environment.
+> **Status: REFERENCE** · Last verified: 2026-10-09
+> As-built description of the go-signal `pkg/config/secrets` package and how configuration secrets are held.
 
 Source: `pkg/config/secrets/`
 
-## Resolution Mechanisms
+## What the daemon does today
 
-### KMS URI (`kms://`)
+Secret-bearing config fields are typed `*secrets.SecureString` (for example `storage.postgres.password`, `cache.redis.password`, `turn.cloudflare.apiToken`, `zkConfig.serverSecret`). `SecureString.UnmarshalYAML` (`pkg/config/secrets/secure.go`) seals the YAML text into protected memory as it is decoded, and `Config.Destroy` (`pkg/config/config.go`) wipes every such field at shutdown.
 
-For production deployments. A `kms://` URI references a secret stored in an external key management system. You must register a `SecretResolver` implementation for the `kms` scheme before config processing runs.
+The value is taken **literally**. Nothing under `cmd/` or in `config.Load` constructs a `ResolverRegistry` or calls `ConfigProcessor.Process`, so in the daemon a `kms://...`, `${VAR}`, or `auto` value is used as the secret text itself. Inject secrets by writing them into the file the daemon reads (for example a mounted secret file); do not rely on `${VAR}` expansion in the YAML.
 
-```yaml
-storage:
-  postgres:
-    password: "kms://secrets/db-password"
-```
+The resolution framework below is a library with tests. Embedding applications can wire it in before they use the config.
 
-The URI format is `kms://<path>` where the path is opaque to the framework and interpreted by the registered resolver. This lets you plug in AWS KMS, HashiCorp Vault, GCP Secret Manager, or any other backend by implementing a single interface.
-
-### Environment Variables (`${VAR}`)
-
-For container and CI/CD deployments. Wrapping a field value in `${...}` tells the processor to read the named environment variable.
-
-```yaml
-cdn:
-  accessKey: "${AWS_ACCESS_KEY_ID}"
-  secretKey: "${AWS_SECRET_ACCESS_KEY}"
-```
-
-The entire field value must be a single `${VAR}` reference. Inline interpolation (e.g., `prefix-${VAR}-suffix`) is not supported. If the referenced variable is not set in the process environment, resolution fails with an `EnvVarNotSetError`.
-
-### Auto-Generation (sentinel values)
-
-For development and testing. The following sentinel values trigger automatic generation of a cryptographically random 32-byte hex string (64 characters) via `crypto/rand`:
-
-- `"auto"`
-- `"changeme"`
-- `"placeholder"`
-
-```yaml
-turn:
-  secret: "auto"
-zkConfig:
-  serverSecret: "changeme"
-```
-
-Generated values are cached in memory for the lifetime of the process. The same sentinel in different fields produces different secrets, but reprocessing the same field returns the same value. These secrets are **not persisted** anywhere. Every process restart generates new values.
-
-This mechanism exists so you can run a development server without creating real secrets. Do not use sentinel values in production.
-
----
-
-## Resolution Pipeline
-
-The `ConfigProcessor` resolves secrets by walking the `Config` struct using reflection.
-
-1. For each exported string field in the struct tree, the processor checks the `ResolverRegistry` for a resolver whose scheme matches the field value.
-2. If a match is found, the resolver's `Resolve` method is called and the field is replaced in place.
-3. If no scheme matches, the field is left unchanged.
-4. The walk is recursive through nested structs and pointer fields. Nil pointers are skipped.
-
-```go
-registry := secrets.NewResolverRegistry()
-registry.Register(myKMSResolver)
-
-processor := secrets.NewConfigProcessor(registry)
-err := processor.Process(ctx, &config)
-```
-
-The processor requires a pointer to a struct. Passing anything else returns a `ProcessingError`.
-
----
-
-## Interfaces
+## Resolution framework
 
 ### SecretResolver
 
-Any secret backend implements this two-method interface:
-
 ```go
 type SecretResolver interface {
-    // Scheme returns the URI scheme this resolver handles (e.g., "kms", "env").
+    // Scheme returns the URI scheme this resolver handles.
     Scheme() string
 
-    // Resolve resolves the given URI to its plaintext value.
-    Resolve(ctx context.Context, uri string) (string, error)
+    // Resolve resolves the given URI to its plaintext value in a SecureString.
+    // The caller owns the result and must call Destroy.
+    Resolve(ctx context.Context, uri string) (*SecureString, error)
 }
 ```
 
 ### ResolverRegistry
 
-A map-based dispatcher keyed by URI scheme. Resolvers are registered at startup and looked up during config processing.
-
-```go
-type ResolverRegistry struct {
-    resolvers map[string]SecretResolver
-}
-```
-
-Key methods:
+A map keyed by URI scheme (`pkg/config/secrets/resolver.go`).
 
 | Method | Description |
 |---|---|
 | `NewResolverRegistry()` | Creates an empty registry |
-| `Register(resolver)` | Adds a resolver by its scheme; replaces if already registered |
-| `Resolve(ctx, value)` | Parses the scheme from the value and delegates to the matching resolver |
-| `HasResolver(scheme)` | Reports whether a resolver is registered for the given scheme |
+| `Register(resolver)` | Adds a resolver under `resolver.Scheme()`; replaces an existing one |
+| `Resolve(ctx, value)` | Empty value: an empty optional `SecureString`. Value with `scheme://` and a registered resolver: that resolver's result, wrapped in `*ResolutionError` on failure. Unregistered scheme: `*ResolverNotFoundError`. Value without `://`: wrapped unchanged in a `SecureString` |
+| `HasResolver(scheme)` | Reports whether a resolver is registered for the scheme |
 
-If `Resolve` is called with a value containing a `://` scheme that has no registered resolver, it returns a `ResolverNotFoundError`. Values without a `://` separator pass through unchanged.
+A `kms://<path>` value therefore resolves only if the application registers a resolver whose `Scheme()` is `kms`. The package ships no KMS resolver.
 
----
+### ConfigProcessor
 
-## Built-in Resolvers
+`NewConfigProcessor(registry).Process(ctx, &cfg)` walks a struct by reflection (`processor.go`):
+
+1. Every settable exported `string` and `*SecureString` field that is non-empty is passed to `registry.Resolve`.
+2. If the result differs, the field is replaced in place (a `*SecureString` field gets the new `SecureString`, and the old one is destroyed).
+3. Nested structs and non-nil pointers are walked; nil pointers are skipped.
+4. A failure is returned as `*ProcessingError` naming the field path.
+
+`cfg` must be a pointer to a struct; anything else returns a `*ProcessingError`.
+
+Only `scheme://` values reach a resolver. The processor does not detect `${VAR}` or sentinel values.
+
+### CachingResolver
+
+`NewCachingResolver(r, ttl)` (`caching.go`) wraps a resolver with a TTL cache so that `kms://` secrets pick up rotations; `Invalidate(uri)` drops one entry.
+
+## Built-in resolvers
 
 ### EnvResolver
 
-Handles `${VAR}` references. Uses `os.LookupEnv` to read the variable. Returns `EnvVarNotSetError` if the variable is not present in the environment.
-
-```go
-resolver := secrets.NewEnvResolver()
-// resolver.Scheme() returns "env"
-```
-
-The `EnvResolver` is invoked for values matching the `${...}` pattern rather than the `env://` URI scheme. The `ConfigProcessor` detects the `${...}` syntax and routes to this resolver directly.
+`NewEnvResolver()` resolves a value of the form `${VAR}` (surrounding whitespace is trimmed) from the process environment with `os.LookupEnv`. An unset variable returns `*EnvVarNotSetError`; an exported empty variable is accepted. `IsEnvVar(value)` reports whether a value has that form. `Scheme()` returns `"env"`, but registering it under that scheme does not make `${VAR}` values reach it, because the registry only dispatches `scheme://` values. Call `Resolve` directly.
 
 ### AutoGenResolver
 
-Handles sentinel values (`"auto"`, `"changeme"`, `"placeholder"`). Generates random secrets using `crypto/rand` and caches them in a `map[string]string` protected by `sync.RWMutex` with double-checked locking.
+`NewAutoGenResolver(byteLength)` replaces the sentinels `"auto"`, `"changeme"` and `"placeholder"` (`IsSentinel`) with a `crypto/rand` hex string of `2 × byteLength` characters (a `byteLength` of zero or less becomes 32, so 64 characters). The value is cached per sentinel for the life of the resolver, so repeated calls return the same secret and different sentinels differ. Nothing is persisted. `Scheme()` returns `"autogen"`; as with `EnvResolver`, call `Resolve` directly. Do not use sentinels in production.
 
-```go
-resolver := secrets.NewAutoGenResolver(32) // 32 bytes = 64 hex chars
-// resolver.Scheme() returns "autogen"
-```
+## Error types
 
-The byte length parameter controls the size of the generated secret. If zero or negative, it defaults to 32.
-
----
-
-## Error Types
-
-All errors are typed structs in `pkg/config/secrets/errors.go`.
+Typed errors in `pkg/config/secrets/errors.go`:
 
 | Error Type | When | Fields |
 |---|---|---|
 | `ResolverNotFoundError` | A URI scheme has no registered resolver | `Scheme` |
 | `ResolutionError` | A resolver returned an error | `URI`, `Cause` |
-| `ProcessingError` | Failure during struct walking/resolution | `Field`, `Cause` |
+| `ProcessingError` | Failure while walking the struct | `Field`, `Cause` |
 | `InvalidURIError` | A URI is malformed | `URI`, `Message` |
 | `EnvVarNotSetError` | A referenced environment variable is not set | `VarName` |
+| `EmptySecretError` | `NewSecureString` was given an empty value | none |
+| `UnavailableSecretError` | A secret could not be read back from protected memory: unset, destroyed, or the enclave would not open | `Cause` |
+| `SealError` | The protected-memory allocation could not be obtained | `Cause` |
+| `AbsentSecretError` | A secret was never configured (distinct from one that is no longer readable) | none |
 
-`ResolutionError` and `ProcessingError` implement `Unwrap()` for use with `errors.As` and `errors.Is`.
+`ResolutionError`, `ProcessingError`, `UnavailableSecretError` and `SealError` implement `Unwrap()`.
 
----
+## Production
 
-## Environment-Specific Examples
-
-### Development
-
-Memory backend, auto-generated secrets, stub verification. No external dependencies required.
-
-```yaml
-server:
-  httpPort: 8080
-
-storage:
-  backend: "memory"
-
-cache:
-  backend: "memory"
-
-verification:
-  transport: "stub"
-
-turn:
-  secret: "auto"
-
-zkConfig:
-  serverSecret: "auto"
-
-payments:
-  stripe:
-    apiKey: "placeholder"
-    webhookSecret: "placeholder"
-```
-
-### Production with KMS
-
-All secrets resolved through an external key management system. Requires a registered `kms` resolver.
-
-```yaml
-server:
-  httpPort: 8080
-  grpcPort: 9090
-  tlsCertFile: /etc/signal/tls/cert.pem
-  tlsKeyFile: /etc/signal/tls/key.pem
-
-storage:
-  backend: "postgres"
-  postgres:
-    host: "db.internal"
-    port: 5432
-    database: "signal"
-    user: "signal"
-    password: "kms://secrets/db-password"
-    sslMode: "verify-full"
-
-cache:
-  backend: "redis"
-  redis:
-    url: "redis://cache.internal:6379"
-    password: "kms://secrets/redis-password"
-
-turn:
-  secret: "kms://secrets/turn-secret"
-
-zkConfig:
-  enabled: true
-  serverSecret: "kms://secrets/zk-server-secret"
-
-push:
-  apn:
-    privateKey: "kms://secrets/apn-private-key"
-  fcm:
-    credentials: "kms://secrets/fcm-credentials"
-
-payments:
-  stripe:
-    apiKey: "kms://secrets/stripe-api-key"
-    webhookSecret: "kms://secrets/stripe-webhook"
-
-verification:
-  transport: "smtp"
-  smtp:
-    host: "smtp.internal"
-    port: 587
-    password: "kms://secrets/smtp-password"
-    fromAddress: "verify@example.com"
-    useTLS: true
-```
-
-### Production with Environment Variables
-
-All secrets injected via environment variables. Common in Kubernetes or Docker Compose deployments.
-
-```yaml
-server:
-  httpPort: 8080
-  grpcPort: 9090
-  tlsCertFile: /etc/signal/tls/cert.pem
-  tlsKeyFile: /etc/signal/tls/key.pem
-
-storage:
-  backend: "postgres"
-  postgres:
-    host: "${POSTGRES_HOST}"
-    port: 5432
-    database: "signal"
-    user: "${POSTGRES_USER}"
-    password: "${POSTGRES_PASSWORD}"
-    sslMode: "verify-full"
-
-cache:
-  backend: "redis"
-  redis:
-    url: "${REDIS_URL}"
-    password: "${REDIS_PASSWORD}"
-
-turn:
-  secret: "${TURN_SECRET}"
-
-zkConfig:
-  enabled: true
-  serverSecret: "${ZK_SERVER_SECRET}"
-
-cdn:
-  bucket: "signal-attachments"
-  region: "us-east-1"
-  accessKey: "${AWS_ACCESS_KEY_ID}"
-  secretKey: "${AWS_SECRET_ACCESS_KEY}"
-
-verification:
-  transport: "smtp"
-  smtp:
-    host: "${SMTP_HOST}"
-    port: 587
-    password: "${SMTP_PASSWORD}"
-    fromAddress: "verify@example.com"
-    useTLS: true
-```
-
-Set the variables before starting the server:
-
-```bash
-export POSTGRES_HOST=db.internal
-export POSTGRES_USER=signal
-export POSTGRES_PASSWORD=hunter2
-export REDIS_URL=redis://cache.internal:6379
-export REDIS_PASSWORD=redispass
-export TURN_SECRET=$(openssl rand -hex 32)
-export ZK_SERVER_SECRET=$(openssl rand -hex 32)
-export SMTP_HOST=smtp.internal
-export SMTP_PASSWORD=smtppass
-export AWS_ACCESS_KEY_ID=AKIA...
-export AWS_SECRET_ACCESS_KEY=...
-
-signald start --config /etc/signal/config.yaml
-```
+`mode: production` makes `config.Load` refuse to start with development secrets. Among other checks, `callingZkConfig.serverSecret` must not be the well-known development value, `cdn.accessKey` and `cdn.secretKey` must not be the development placeholders, and `zkConfig` must be enabled with a non-empty `serverSecret` (`validateProduction`, `pkg/config/config.go`). See [reference.md](reference.md).

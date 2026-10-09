@@ -1,5 +1,8 @@
 # SMTP SMS Gateway
 
+> **Status: REFERENCE** · Last verified: 2026-10-09
+> The SMTP email-to-SMS transport: carrier map, address format, configuration and error handling.
+
 The SMTP transport delivers verification codes by sending emails through carrier SMS gateways. Most US carriers operate email-to-SMS gateways that accept messages at addresses like `15551234567@vtext.com` and deliver them as text messages to the phone.
 
 **Package**: `pkg/verification/smtp/`
@@ -10,13 +13,15 @@ The SMTP transport delivers verification codes by sending emails through carrier
 go build -tags smtp ./...
 ```
 
+The transport is not wired into `pkg/verification/factory`: `verification.transport: smtp` is accepted by the config type but `factory.Build` rejects it as unsupported. Construct it directly with `smtp.NewTransport(smtp.TransportConfig{...})` and pass it to `core.NewService`.
+
 ## How It Works
 
 ```
 go-signal -> SMTP server -> carrier email gateway -> phone (SMS)
 ```
 
-The transport connects to an SMTP server using `smtp.PlainAuth`, composes a minimal email with the verification code in the body, and sends it to an address derived from the phone number and carrier gateway domain.
+The transport connects to an SMTP server (`Host:Port`) using `smtp.PlainAuth`, composes a minimal email with the verification code in the body, and sends it to an address derived from the phone number and carrier gateway domain.
 
 ## Supported Carriers
 
@@ -48,28 +53,15 @@ type TransportConfig struct {
     Host            string            // SMTP server hostname
     Port            int               // SMTP server port
     Username        string            // SMTP authentication username
-    Password        string            // SMTP authentication password
+    Password        *secrets.SecureString // SMTP authentication password
     FromAddress     string            // sender email address
-    UseTLS          bool              // whether to use STARTTLS
+    UseTLS          bool              // declared; SendCode does not read it
     CarrierGateways map[string]string // override default carrier gateways
     DefaultCarrier  string            // fallback carrier when none specified
 }
 ```
 
-Example YAML configuration:
-
-```yaml
-verification:
-  transport: smtp
-  smtp:
-    host: smtp.example.com
-    port: 587
-    username: signal@example.com
-    password: kms://secrets/smtp-password
-    fromAddress: verify@example.com
-    useTls: true
-    defaultCarrier: verizon
-```
+The matching YAML block is `verification.smtp` (`pkg/config/config_verification.go`, `SMTPConfig`), with keys `host`, `port`, `username`, `password` (a `kms://` secret reference), `fromAddress`, `useTLS`, `defaultCarrier` and `carrierGateways`. The config type is parsed, but nothing in the factory consumes it.
 
 ## Carrier Resolution
 
@@ -120,5 +112,5 @@ The `TransportError` implements `Unwrap()` so callers can inspect the root cause
 - **US carriers only.** The built-in gateway map covers major US carriers. International carriers require custom `CarrierGateways` entries, and many international carriers do not support email-to-SMS at all.
 - **Delivery not guaranteed.** Gateway availability varies. Some carriers throttle or block messages from unknown senders.
 - **Rate limiting.** Carriers may silently drop messages if too many are sent in a short window. The transport does not implement client-side rate limiting.
-- **PlainAuth over TLS.** The transport uses `smtp.PlainAuth`, which sends credentials in cleartext. The `UseTLS` flag should be enabled in production to ensure the SMTP connection is encrypted via STARTTLS before authentication occurs.
+- **PlainAuth.** The transport authenticates with `smtp.PlainAuth` through `smtp.SendMail`. The standard library upgrades the connection with STARTTLS when the server offers it and refuses to send PlainAuth credentials over an unencrypted connection to a non-local host. The `UseTLS` field is not consulted.
 - **No delivery confirmation.** SMTP gateways do not provide delivery receipts. A successful `SendMail` call means the SMTP server accepted the message, not that the phone received it.

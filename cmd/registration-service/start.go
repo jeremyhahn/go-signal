@@ -25,9 +25,6 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/verification/factory"
 )
 
-// defaultGRPCListen is used when cfg.Verification.GRPCListen is empty.
-const defaultGRPCListen = "0.0.0.0:8090"
-
 var startCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the registration-service gRPC server",
@@ -64,9 +61,6 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	defer coreSvc.Shutdown()
 
 	addr := cfg.Verification.GRPCListen
-	if addr == "" {
-		addr = defaultGRPCListen
-	}
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		return signalerrors.Wrap(signalerrors.ErrUnavailable, "listen "+addr, err)
@@ -77,7 +71,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	probes := health.New()
 	metricsReg := metrics.NewRegistry("registration-service")
 	go func() {
-		if err := health.RunSidecar(ctx, probes, metricsReg, ""); err != nil {
+		if err := health.RunSidecar(ctx, probes, metricsReg, cfg.Health.Listen); err != nil {
 			logger.Error("health sidecar", slog.Any("error", err))
 		}
 	}()

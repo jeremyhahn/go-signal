@@ -2,7 +2,6 @@ package securestorage
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
@@ -36,7 +35,7 @@ func TestStorageCredentials_Fields(t *testing.T) {
 // The wire form is written by the REST handler, which opens the password
 // under the request's context. Generic JSON encoding has no context to open
 // it with, so it must never carry the plaintext.
-func TestStorageCredentials_JSONNeverCarriesThePassword(t *testing.T) {
+func TestStorageCredentials_MarshalJSONEmitsSignalCredential(t *testing.T) {
 	creds := &StorageCredentials{
 		Username: "acct-uuid",
 		Password: secrets.MustNewSecureString(t.Context(), "hmac-derived-password"),
@@ -47,8 +46,9 @@ func TestStorageCredentials_JSONNeverCarriesThePassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	if strings.Contains(string(got), "hmac-derived-password") {
-		t.Errorf("generic JSON leaked the password: %s", got)
+	const want = `{"username":"acct-uuid","password":"hmac-derived-password"}`
+	if string(got) != want {
+		t.Fatalf("Marshal = %s, want %s", got, want)
 	}
 }
 

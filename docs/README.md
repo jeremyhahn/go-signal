@@ -1,25 +1,28 @@
 # go-signal documentation
 
-This directory holds the living documentation for go-signal. Every architectural change ships with the docs that explain it. A new engineer should be able to onboard from these files without reading the source.
+> **Status: REFERENCE** · Last verified: 2026-10-09
+> Index of the documentation tree and how it is maintained.
+
+This directory holds the documentation for go-signal. Every document opens with a status banner and a `Last verified:` date, following the handbook documentation convention.
 
 ## Reading order
 
-1. [architecture/overview.md](architecture/overview.md) — three-layer architecture, how requests flow end-to-end.
-2. [architecture/topology.md](architecture/topology.md) — the six-binary deployment model and how services talk to each other.
-3. [architecture/package-map.md](architecture/package-map.md) — where each capability lives in the source tree.
-4. [architecture/decisions/](architecture/decisions/) — ADRs for every non-obvious design decision.
-5. [api/](api/) — REST, gRPC, and WebSocket interface documentation.
-6. [protocol/](protocol/) — Signal-protocol-level details: PNI, PQ keys, ZK credentials, message delivery.
-7. [storage/](storage/) — KV layout per backend, Redis key conventions.
-8. [workers/](workers/) — background workers and their schedules.
-9. [auth/](auth/) — authentication and FIDO2.
-10. [verification/](verification/) — phone/email verification transports.
-11. [messaging/](messaging/) — message envelope, sealed sender, multi-recipient delivery.
-12. [configuration/](configuration/) — YAML config reference and secret URI resolution.
-13. [deployment/](deployment/) — building, Docker, runbooks, observability.
-14. [services/](services/) — one document per external service binary (signald, registration, svr2, cdsi, storage-service, key-transparency).
-15. [migrations/](migrations/) — operator guides for migrating between versions or from Java Signal-Server.
-16. [contributing/](contributing/) — development setup, testing, project conventions.
+1. [architecture/overview.md](architecture/overview.md): the layered architecture and how requests flow end to end.
+2. [architecture/topology.md](architecture/topology.md): the six-binary deployment model and how the services talk to each other.
+3. [architecture/package-map.md](architecture/package-map.md): where each capability lives in the source tree.
+4. [architecture/decisions/](architecture/decisions/): ADRs for the non-obvious design decisions.
+5. [api/](api/): REST, gRPC and WebSocket interfaces.
+6. [protocol/](protocol/): protocol-level details (PNI).
+7. [storage/](storage/): the `KVClient` contract, store interfaces per backend, qrdb and Postgres schemas, Redis keys.
+8. [workers/](workers/): background workers, their schedules and leader election.
+9. [auth/](auth/): authentication and FIDO2.
+10. [verification/](verification/): phone-number verification and its transports.
+11. [messaging/](messaging/): message envelope and delivery.
+12. [configuration/](configuration/): YAML config reference and secret URI resolution.
+13. [deployment/](deployment/): building, Docker, testing and production readiness.
+14. [services/](services/): index of the service binaries.
+15. [migrations/](migrations/): pointer to the schema-migration docs.
+16. [contributing/](contributing/): development setup.
 
 ## How the tree is organized
 
@@ -27,19 +30,11 @@ Each top-level subdirectory owns a concern. A change that spans concerns gets a 
 
 ## Generated documentation
 
-Some docs are generated from source, not hand-written. `make docs` regenerates them; CI enforces no drift. Generated files:
-
-- `api/rest.md` — from route registrations in `pkg/api/rest/`.
-- `api/grpc.md` — from `.proto` files via `protoc-gen-doc`.
-- `configuration/reference.md` — from tagged Go structs in `pkg/config/`.
-- `storage/schema-*.md` — from table/keyspace registry code.
-
-Hand-written Mermaid sequence diagrams under `architecture/sequence-diagrams/` are source-committed as `.mmd` files so they can be re-rendered.
+No documentation is generated from source today. The `make docs` targets (`docs-rest`, `docs-grpc`, `docs-config`, `docs-storage`, `docs-workers`) are placeholders that print a message, so every file here is hand-maintained.
 
 ## Editing conventions
 
-- Prose goes through the `humanizer` skill before landing.
 - Every architectural change adds or updates one ADR.
-- Every new package, endpoint, worker, config key, or Redis/DB key gets a doc entry in the same PR.
+- Every new package, endpoint, worker, config key, or Redis/DB key gets a doc entry in the same change.
 - Update `../CHANGELOG.md` with every user-visible change.
 - Update `../CLAUDE.md` when the agent-facing architecture surface changes.

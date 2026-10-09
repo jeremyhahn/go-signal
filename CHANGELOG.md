@@ -8,6 +8,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- `make release-alpha` adopts the handbook template v2 (#59): explicit `VERSION=vX.Y.Z-alpha`, signed annotated tag through `agent-git.sh`, pushes only the release commit and that tag, fails closed, and refuses a version with no CHANGELOG section. The Makefile build variable `VERSION` is renamed `BUILD_VERSION`.
+
 - CI tool pins moved to upstream latest, in step with the ci-runner image (#88): golangci-lint v2.13.2 → v2.14.0, govulncheck v1.7.0 → v1.8.0, protoc-gen-go v1.36.11 → v1.36.12, Go 1.26.x → 1.27.1 (`go.mod`, workflows, Dockerfiles). gosec stays at v2.29.0, already the latest. The indirect `github.com/cockroachdb/swiss` moves to v0.0.0-20260820225851-333444432258, the first revision that builds on Go 1.27.
 
 ## [0.2.0-alpha] - 2026-08-19

@@ -2,7 +2,6 @@ package directory
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
@@ -34,7 +33,7 @@ func TestDirectoryCredentials_Fields(t *testing.T) {
 // The wire form is written by the REST handler, which opens the password
 // under the request's context. Generic JSON encoding has no context to open
 // it with, so it must never carry the plaintext.
-func TestDirectoryCredentials_JSONNeverCarriesThePassword(t *testing.T) {
+func TestDirectoryCredentials_MarshalJSONEmitsSignalCredential(t *testing.T) {
 	creds := &DirectoryCredentials{
 		Username: "alice",
 		Password: secrets.MustNewSecureString(t.Context(), "secret-pw"),
@@ -45,8 +44,9 @@ func TestDirectoryCredentials_JSONNeverCarriesThePassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	if strings.Contains(string(got), "secret-pw") {
-		t.Errorf("generic JSON leaked the password: %s", got)
+	const want = `{"username":"alice","password":"secret-pw"}`
+	if string(got) != want {
+		t.Fatalf("Marshal = %s, want %s", got, want)
 	}
 }
 

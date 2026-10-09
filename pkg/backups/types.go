@@ -7,6 +7,8 @@
 package backups
 
 import (
+	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/jeremyhahn/go-libsignal/pkg/zkgroup"
@@ -264,6 +266,55 @@ type RecalculationResult struct {
 type ExternalServiceCredentials struct {
 	Username string
 	Password *secrets.SecureString
+}
+
+// Compile-time proof that this credential serialises through the owned-buffer
+// path. Without it, writeJSON silently falls back to json.Marshal, which
+// abandons an unwiped copy of the password — a regression that no test can
+// observe, because the wire bytes are identical either way. Breaking the build
+// is the only reliable guard.
+var _ secrets.JSONAppender = ExternalServiceCredentials{}
+
+// AppendJSON implements secrets.JSONAppender, emitting the credential in the
+// `{"username":…,"password":…}` shape into a buffer the CALLER owns and wipes.
+//
+// The handler used to build this body by revealing the password into a Go
+// string and filling a response struct, which left the plaintext in memory
+// that cannot be wiped. The wire form is unchanged, byte for byte; only the
+// memory it is assembled in has changed.
+func (c ExternalServiceCredentials) AppendJSON(ctx context.Context, dst []byte) ([]byte, error) {
+	user, err := json.Marshal(c.Username)
+	if err != nil {
+		return dst, err
+	}
+	// Grow once for the whole fixed part: a reallocation partway would abandon
+	// an array that, once the password is appended, holds plaintext nothing
+	// can reach to wipe.
+	dst = secrets.Grow(dst, len(`{"username":`)+len(user)+len(`,"password":`))
+	dst = append(dst, `{"username":`...)
+	dst = append(dst, user...)
+	dst = append(dst, `,"password":`...)
+
+	// Reveal semantics are preserved: an unavailable credential fails the
+	// response rather than handing the client an empty password it would
+	// treat as usable. writeJSON turns this into a 500.
+	dst, err = c.Password.AppendJSONString(ctx, dst)
+	if err != nil {
+		return dst, err
+	}
+	dst = secrets.Grow(dst, 1)
+	return append(dst, '}'), nil
+}
+
+// MarshalJSON implements encoding/json.Marshaler for wire compatibility.
+//
+// WARNING: the returned buffer holds the plaintext password and encoding/json
+// drops it unwiped after copying — a property of the Marshaler contract, not
+// of this implementation. Production responses use AppendJSON via writeJSON.
+// This exists so a value nested in another struct still marshals to the right
+// wire form instead of falling back to SecureString's redacting default.
+func (c ExternalServiceCredentials) MarshalJSON() ([]byte, error) {
+	return c.AppendJSON(context.Background(), nil)
 }
 
 // Destroy wipes the protected password. Safe on nil and idempotent.

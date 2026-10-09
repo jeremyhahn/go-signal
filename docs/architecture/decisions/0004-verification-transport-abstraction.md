@@ -1,45 +1,42 @@
 # ADR-0004: Pluggable verification transport abstraction
 
+> **Status: REFERENCE** · Last verified: 2026-10-09
+> Decision record, corrected to the as-built transport wiring.
+
 - **Status**: accepted
 - **Date**: 2026-04-22
 - **Author**: go-signal team
 
 ## Context
 
-Phone-number verification is the first step of account registration. Java Signal-Server delegates this to an internal `registration-service` which invokes Twilio Verify. In practice, operators of a Go Signal port may want:
-
-- The real Twilio Verify integration for production parity.
-- AWS SES email verification for email-first registration.
-- SMTP for local development and self-hosted deployments without external dependencies.
-- Other transports (e.g., internal SMS gateways) under their own control.
-
-Locking the server to Twilio would exclude self-hosted deployments. Locking it to SMTP would exclude production-grade phone verification.
+Phone-number verification is the first step of registration. The Java Signal-Server delegates it to a `registration-service` that calls Twilio Verify. Operators of a Go port may want Twilio for production parity, email delivery, SMTP for self-hosted deployments, or their own gateway. Locking to any one of them excludes the others.
 
 ## Decision
 
-Verification is abstracted behind a `pkg/verification.Transport` interface. Three implementations ship with the project:
+Code delivery is abstracted behind the `pkg/verification.VerificationTransport` interface (`SendCode` and `Name`). The packages are:
 
-- `pkg/verification/smtp/` — SMTP email transport (existing, polish only).
-- `pkg/verification/twilio/` — Twilio Verify REST API for SMS and voice.
-- `pkg/verification/ses/` — AWS SES for email.
+- `pkg/verification/twilio/` — Twilio Verify
+- `pkg/verification/ses/` — AWS SES email
+- `pkg/verification/smtp/` — SMTP email (compiled with build tag `smtp`)
 
-The active transport is chosen per channel in YAML config (`verification.sms.transport`, `verification.voice.transport`, `verification.email.transport`).
+The factory (`pkg/verification/factory`) wires `stub` (the default when the key is empty) and `twilio`. The `ses` and `smtp` packages are not selectable through the factory.
 
-In Phase 3 this logic lives inside `signald`. In Phase 4 it moves into its own `registration-service` binary — the interface stays the same, the binary boundary moves.
+The transport is chosen by the single config key `verification.transport`.
+
+The verification engine runs in process in signald (`pkg/registration/core`), or in the `registration-service` binary when `verification.remoteAddr` is set. The transport interface is the same in both.
 
 ## Alternatives considered
 
-- **Embed Twilio directly** — Matches Java exactly. Rejected: excludes self-hosted deployments.
-- **SMTP-only** — Keep what's present. Rejected: incompatible with real Signal clients that expect SMS.
-- **Separate registration-service now** — Rejected for Phase 3 to avoid building inter-service plumbing before the single-binary version is exercised; deferred to Phase 4 once patterns are proven.
+- **Embed Twilio directly** — rejected: excludes self-hosted deployments.
+- **SMTP only** — rejected: incompatible with clients that expect SMS.
+- **Separate registration-service only** — rejected: the in-process engine keeps single-binary deployments working.
 
 ## Consequences
 
-- New transport implementations drop in behind the interface without touching upstream verification logic.
-- Testing requires mockable transports; the interface is narrow enough that fakes are easy to write.
-- The transport abstraction must remain stable across the Phase 3 → Phase 4 boundary so extracting `registration-service` doesn't force a refactor.
+- A new transport drops in behind the interface; it must also be added to the factory to be selectable.
+- The interface is narrow, so test fakes are small.
 
 ## References
 
-- Plan: `/home/jhahn/.claude/plans/fluttering-kindling-flask.md`, Phases 3.2 and 4.1.
-- Existing: `pkg/verification/smtp/` and `pkg/verification/` interfaces.
+- [../../verification/](../../verification/)
+- [0002-external-services-as-separate-binaries.md](0002-external-services-as-separate-binaries.md)

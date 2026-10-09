@@ -1,10 +1,11 @@
 # Workers
 
-Background workers that run on a schedule or continuously, porting Java Signal-Server's Dropwizard commands to Go.
+> **Status: REFERENCE** · Last verified: 2026-10-09
+> Index of the background-worker docs for `pkg/workers`.
 
-Populated in Phase 1.4 of the port plan.
+Background workers run on a schedule or continuously inside signald, mirroring Java Signal-Server's Dropwizard commands.
 
-| Document                              | Covers                                                       |
-|---------------------------------------|--------------------------------------------------------------|
-| [catalog.md](catalog.md) *(Phase 1.4)* | Complete list of workers: name, schedule, inputs, outputs.  |
-| [scheduling.md](scheduling.md) *(Phase 1.4)* | In-process cron + leader-election model for multi-instance deployments. |
+| Document | Covers |
+|---|---|
+| [catalog.md](catalog.md) | Every registered worker: name, schedule, behavior. |
+| [scheduling.md](scheduling.md) | In-process cron, continuous loops and cache-lease leader election for multi-instance deployments. |

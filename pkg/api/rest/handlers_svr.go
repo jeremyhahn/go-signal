@@ -37,7 +37,7 @@ func (s *Server) handleGetSVRAuth(w http.ResponseWriter, r *http.Request, name s
 	// Written to the response, then wiped — its protected copy does not
 	// outlive the request.
 	defer creds.Destroy()
-	s.writeExternalServiceCredentials(w, r, "svr", creds.Username, creds.Password)
+	writeJSONContext(r.Context(), w, http.StatusOK, *creds)
 }
 
 // handleCheckSVRBackupAuth handles POST /v2/backup/auth/check and validates

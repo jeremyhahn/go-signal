@@ -1,24 +1,29 @@
 # WebSocket Protocol
 
-The go-signal server exposes two WebSocket endpoints for real-time communication:
+> **Status: REFERENCE** · Last verified: 2026-10-09
+> As-built description of the go-signal WebSocket endpoints (`pkg/api/websocket`, `pkg/websocket`).
 
-- `GET /v1/websocket/` - Authenticated messaging sessions
-- `GET /v1/websocket/provisioning` - Device provisioning sessions
+The server exposes WebSocket endpoints on the REST listener (`pkg/api/rest/server.go`):
 
-Both endpoints use the `coder/websocket` library (`github.com/coder/websocket`) for the WebSocket upgrade and connection management.
+- `GET /v1/websocket/` - messaging sessions. With credentials the session is authenticated; without them it is an unauthenticated session that only serves WebSocket-wrapped HTTP requests (for example remote config).
+- `GET /v1/websocket/provisioning` (and `/v1/websocket/provisioning/`) - device provisioning sessions.
+
+`handleWebSocket` (`pkg/api/rest/handlers_websocket.go`) picks the authenticated handler when the request has a Basic header or a `login` query parameter, otherwise the unauthenticated one. If no WebSocket handler is configured it returns `503`.
+
+The upgrade uses `github.com/coder/websocket`. When `server.allowedOrigins` is non-empty only those origins are accepted; otherwise the library's same-origin check applies.
 
 ## Frame Format
 
-The server supports two frame formats, detected automatically from the first message received on the connection:
+Two frame formats are supported, detected from the first inbound frame:
 
-- **JSON (text frames)** - Used by Go test clients and debugging tools
-- **Protobuf (binary frames)** - Used by signal-cli and the official Signal apps
+- **JSON (text frames)** - test clients and debugging tools.
+- **Protobuf (binary frames)** - signal-cli and the official apps.
 
-The format is locked for the session lifetime after the first message arrives. Binary WebSocket messages select protobuf; text messages select JSON.
+The format is set once, by the first frame (`Session.setFormat`), and stays for the session. The provisioning handler forces protobuf before it sends anything. The maximum inbound frame is 256 KB (`maxFrameSize`).
 
 ## Message Structure
 
-Every WebSocket frame carries a single `WebSocketMessage`, which wraps either a request or a response:
+Every frame carries one `WebSocketMessage`, wrapping a request or a response. JSON form:
 
 ```json
 {
@@ -48,25 +53,27 @@ Every WebSocket frame carries a single `WebSocketMessage`, which wraps either a 
 }
 ```
 
-The `id` field correlates responses to their originating requests. Both the client and server can initiate requests. Body payloads are base64-encoded in both directions.
+`id` correlates a response with its request. Either side can send requests. Bodies are base64 in the JSON form.
 
 ## Authenticated Sessions
 
-When a client connects to `/v1/websocket/`, authentication happens during the upgrade. Credentials can be provided via:
+`HandleAuthenticated` takes credentials from either:
 
-1. **HTTP Basic Auth header** - Standard `Authorization: Basic base64(uuid.deviceId:password)` header
-2. **Query parameters** - `?login=uuid.deviceId&password=auth-token`
+1. **HTTP Basic header** - `Authorization: Basic base64(uuid[.deviceId]:password)`
+2. **Query parameters** - `?login=uuid[.deviceId]&password=auth-token`
 
-After a successful upgrade, the server:
+A missing credential returns `401 missing credentials`. The `.deviceId` suffix is stripped and ignored: the password is always verified against the account's **primary** device (`AuthTokenHash.Verify`), and the session is registered as the primary device (`accounts.PrimaryDeviceID`). A linked device therefore cannot hold its own authenticated WebSocket with its own token. This differs from the REST and gRPC middleware, which verify the addressed device. An unknown account performs a dummy hash verification to equalise timing.
 
-1. Starts the write pump goroutine for outbound messages
-2. Registers the session with the `SessionManager`
-3. Flushes all pending messages to the client as `PUT /api/v1/message` requests
-4. Enters the read pump loop to process incoming frames
+After the upgrade the server:
+
+1. Starts the write pump.
+2. Registers the session with the `SessionManager`.
+3. Sends every pending message for the device as a `PUT /api/v1/message` request.
+4. Runs the read pump until the connection closes.
 
 ### Server-to-Client Message Delivery
 
-When a new message arrives for a connected client, the server sends a request frame:
+Each message is a request whose body is the base64 of the envelope's **protobuf** wire form (`messages.MarshalEnvelope`), not JSON. The pending-message flush numbers requests from 1.
 
 ```json
 {
@@ -75,29 +82,23 @@ When a new message arrives for a connected client, the server sends a request fr
     "id": 42,
     "verb": "PUT",
     "path": "/api/v1/message",
-    "body": "base64-encoded-envelope-json"
+    "body": "base64-of-protobuf-envelope"
   }
 }
 ```
 
-The client acknowledges receipt by sending a response with the matching `id`:
-
-```json
-{
-  "type": "response",
-  "response": {
-    "id": 42,
-    "status": 200,
-    "message": "OK"
-  }
-}
-```
+The client acknowledges with a response carrying the same `id`. The server logs the acknowledgement at debug level and takes no other action on it.
 
 ### Client-to-Server Requests
 
-Clients can issue any REST API call through the WebSocket by sending a request frame. The server routes these through the HTTP handler chain, meaning the same handler code processes both REST and WebSocket requests. This mirrors the Java Signal-Server's `WebSocketResourceProvider` pattern.
+Any request other than the two built-ins below is forwarded to the REST handler chain, as in Java's `WebSocketResourceProvider`. The server builds an in-memory HTTP request from the frame:
 
-For example, to send a typing indicator:
+- the body is base64-decoded (`400` on bad encoding);
+- the frame's headers are copied; `Content-Type: application/json` is added when a body is present and none is set;
+- Basic credentials are set from the session's UUID and sealed password (no device suffix), so the REST auth middleware authenticates it as the primary device;
+- the response status, headers (first value of each) and base64 body come back in a response frame.
+
+With no HTTP handler configured the reply is `404`.
 
 ```json
 {
@@ -114,28 +115,26 @@ For example, to send a typing indicator:
 }
 ```
 
-The server sets Basic Auth credentials on the internal HTTP request using the session's stored UUID and auth token, so auth middleware passes without the client needing to re-authenticate.
-
 ### Built-in Request Handlers
 
-Two paths are handled directly without routing through the HTTP handler:
-
 | Verb | Path | Purpose |
-|------|------|---------|
-| GET | `/api/v1/keepalive` | Client keepalive ping |
+|---|---|---|
+| GET | `/api/v1/keepalive` | Client keepalive |
 | PUT | `/api/v1/message` | Message acknowledgment |
 
-Both return a `200 OK` response frame.
+Both reply `200 OK` directly.
+
+## Unauthenticated Sessions
+
+`HandleUnauthenticated` upgrades without credentials. The session gets a random UUID and device ID 0, no stored password, and handles the same built-ins and HTTP-wrapped requests. Because it has no credentials, routed requests carry no Basic header.
 
 ## Provisioning Sessions
 
-The provisioning WebSocket at `/v1/websocket/provisioning` does not require authentication. It is used during the device-linking flow.
+`/v1/websocket/provisioning` needs no authentication. After the upgrade the server:
 
-After the connection upgrades, the server:
-
-1. Generates a unique provisioning address (UUID)
-2. Registers a temporary session (device ID 0) with the `SessionManager`
-3. Sends the provisioning address to the client as a request:
+1. Generates a provisioning address: 16 random bytes, base64url without padding.
+2. Registers a session under that address with device ID 0.
+3. Forces protobuf framing and sends the address as a request:
 
 ```json
 {
@@ -144,30 +143,30 @@ After the connection upgrades, the server:
     "id": 1,
     "verb": "PUT",
     "path": "/v1/address",
-    "body": "base64-of-{\"uuid\":\"provisioning-address-uuid\"}"
+    "body": "base64-of-protobuf-ProvisioningAddress",
+    "headers": {"X-Signal-Timestamp": "1760000000000"}
   }
 }
 ```
 
-The primary device then calls `PUT /v1/provisioning/{destination}` (a REST endpoint) to send the provisioning message to the waiting secondary device. The `SessionManager` delivers this to the provisioning session over the WebSocket.
+The body is a protobuf `ProvisioningAddress` (`pkg/websocket/wsproto`). `X-Signal-Timestamp` is the current time in milliseconds.
+
+The primary device then calls `PUT /v1/provisioning/{destination}` (REST, authenticated) and the `SessionManager` delivers the message to the waiting socket. Responses the client sends on this socket are only logged.
 
 ## Session Management
 
-The `SessionManager` (in `pkg/websocket/`) tracks all active sessions by account UUID and device ID. It provides:
+`SessionManager` (`pkg/websocket/manager.go`) tracks sessions by account UUID and device ID:
 
-- **Register/Unregister** - Called on connect/disconnect to maintain the active session map
-- **Message delivery** - Routes messages to the correct session's send channel
-- **Session lookup** - Find sessions by UUID for provisioning message delivery
+- `Register` / `Unregister` - on connect and disconnect.
+- `DeliverMessage`, `NotifyMessageAvailable` - route a message to the live session's send channel; `NotifyMessageAvailable` also publishes a wake-up through the cache (`NewSessionManagerWithCache`) for cross-instance delivery.
+- `GetSession`, `HasActiveSession` - lookup.
+- `CloseAll` - shutdown.
 
-Sessions are automatically unregistered when the read pump exits (connection close, error, or server shutdown).
+A session unregisters when its read pump exits (close, error, shutdown).
 
 ## Keepalive
 
-The server sends periodic pings every 30 seconds to detect dead connections. If no pong response arrives within 10 seconds, the connection is considered dead and closed.
-
-The write pump handles ping/pong at the WebSocket protocol level. Clients can also send application-level keepalive requests to `GET /api/v1/keepalive`, which the server responds to with a `200 OK` frame.
-
-The write timeout for individual messages is 10 seconds. The send buffer holds up to 256 outbound messages per session.
+The write pump pings every 30 seconds (`pingInterval`). A ping with no pong within 10 seconds (`pongTimeout`) ends the write pump, which closes the session. Clients may also send `GET /api/v1/keepalive`. Each outbound write has a 10 second timeout (`writeTimeout`), and the send buffer holds 256 messages per session (`sendBufferSize`).
 
 ## Connection Lifecycle
 

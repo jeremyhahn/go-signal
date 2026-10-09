@@ -12,6 +12,10 @@ var (
 	cfg     *config.Config
 )
 
+// addressKeys are the listen addresses cdsi binds, each settable by flag,
+// environment and config file.
+var addressKeys = []config.AddressKey{config.KeyCDSIWSListen}
+
 var rootCmd = &cobra.Command{
 	Use:   "cdsi",
 	Short: "Signal Contact Discovery v2 service",
@@ -23,7 +27,7 @@ var rootCmd = &cobra.Command{
 		if cmd.Name() == "version" {
 			return nil
 		}
-		loaded, err := config.Load(cmd.Context(), cfgPath)
+		loaded, err := config.LoadWithFlags(cmd.Context(), cfgPath, cmd.Flags())
 		if err != nil {
 			return signalerrors.Wrap(signalerrors.ErrInternal, "loading configuration", err)
 		}
@@ -35,6 +39,7 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
+	config.AddAddressFlags(rootCmd.PersistentFlags(), addressKeys...)
 	rootCmd.PersistentFlags().StringVar(&cfgPath, "config",
 		"configs/cdsi.yml",
 		"path to configuration file")

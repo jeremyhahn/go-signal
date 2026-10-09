@@ -12,6 +12,10 @@ var (
 	cfg     *config.Config
 )
 
+// addressKeys are the listen addresses storage-service binds, each
+// settable by flag, environment and config file.
+var addressKeys = []config.AddressKey{config.KeyStorageServiceHTTPListen}
+
 var rootCmd = &cobra.Command{
 	Use:   "storage-service",
 	Short: "Signal user-manifest storage service",
@@ -22,7 +26,7 @@ var rootCmd = &cobra.Command{
 		if cmd.Name() == "version" {
 			return nil
 		}
-		loaded, err := config.Load(cmd.Context(), cfgPath)
+		loaded, err := config.LoadWithFlags(cmd.Context(), cfgPath, cmd.Flags())
 		if err != nil {
 			return signalerrors.Wrap(signalerrors.ErrInternal, "loading configuration", err)
 		}
@@ -34,6 +38,7 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
+	config.AddAddressFlags(rootCmd.PersistentFlags(), addressKeys...)
 	rootCmd.PersistentFlags().StringVar(&cfgPath, "config",
 		"configs/storage-service.yml",
 		"path to configuration file")

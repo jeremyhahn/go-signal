@@ -2,7 +2,9 @@ package health
 
 import (
 	"context"
+	"errors"
 	"net"
+	"net/http"
 	"testing"
 	"time"
 )
@@ -47,18 +49,44 @@ func TestRunSidecar_InvalidAddr(t *testing.T) {
 	}
 }
 
-// TestRunSidecar_DefaultAddr verifies that the default listen address is used
-// when listenAddr is empty. We cannot actually bind 0.0.0.0:8099 in the test
-// environment, so we just verify the function returns an error (bind failure)
-// rather than hanging. This exercises the empty-string branch.
-func TestRunSidecar_DefaultAddr(t *testing.T) {
-	p := New()
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
+// TestRunSidecar_EmptyAddr verifies that RunSidecar refuses an empty
+// address instead of binding a hardcoded fallback: the address must come
+// from the health.listen config key.
+func TestRunSidecar_EmptyAddr(t *testing.T) {
+	err := RunSidecar(context.Background(), New(), nil, "")
+	if !errors.Is(err, ErrNoListenAddr) {
+		t.Fatalf("RunSidecar(\"\"): got %v, want ErrNoListenAddr", err)
+	}
+}
 
-	// If the port is available it will bind fine and the context cancel will
-	// close it (err == nil). If it's already in use, ListenAndServe returns
-	// an error. Either outcome is acceptable — the test just confirms the
-	// function returns without panicking.
-	_ = RunSidecar(ctx, p, nil, "")
+// TestRunSidecar_BindsConfiguredAddr verifies the sidecar serves on the
+// exact address it is given.
+func TestRunSidecar_BindsConfiguredAddr(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("could not find free port: %v", err)
+	}
+	addr := lis.Addr().String()
+	lis.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- RunSidecar(ctx, New(), nil, addr) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		resp, getErr := http.Get("http://" + addr + "/healthz")
+		if getErr == nil {
+			resp.Body.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("sidecar never served on %s: %v", addr, getErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("RunSidecar: %v", err)
+	}
 }

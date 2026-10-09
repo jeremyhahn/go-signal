@@ -1,12 +1,24 @@
 # REST API Reference
 
-The go-signal REST API is served over HTTP/2 using Go's standard `net/http` package with Go 1.22+ pattern matching. All endpoints accept and return JSON with `Content-Type: application/json`.
+> **Status: REFERENCE** · Last verified: 2026-10-09
+> As-built description of the go-signal REST routes registered in `pkg/api/rest/server.go` and `server_fido2.go`.
+
+The go-signal REST API is served over HTTP/2 using Go's standard `net/http` package with Go 1.22+ pattern matching. Endpoints accept and return JSON with `Content-Type: application/json`, except the CDN, static-resource and secure-storage routes, which carry binary or protobuf bodies.
 
 The server applies a global `jsonMiddleware` that sets the Content-Type header on every response, and a `loggingMiddleware` that records method, path, status code, and duration for each request.
 
 ## Authentication
 
-Endpoints marked **(auth)** require HTTP Basic Authentication. The credential format after base64 decoding is:
+Routes carry one of these auth marks in the tables below:
+
+| Mark | Meaning |
+|------|---------|
+| Yes | HTTP Basic authentication (`authMiddleware`) |
+| No | No credentials |
+| Basic or UAK | `optionalAuthMiddleware`: Basic auth, or an `Unidentified-Access-Key` header (sealed sender) checked against the destination account |
+| ZK | No Signal session; the handler validates the backup `X-Signal-ZK-Auth` headers itself |
+
+The Basic credential format after base64 decoding is:
 
 ```
 uuid.deviceId:password
@@ -18,11 +30,15 @@ or simply:
 uuid:password
 ```
 
-The auth middleware extracts the UUID and device ID, looks up the account, and verifies the password against the **addressed device's** stored token hash (HKDF-SHA256, constant-time) — not always the primary device. A credential of the form `uuid:password` targets the primary device. On failure, a `401 Unauthorized` response is returned with `WWW-Authenticate: Basic realm="signal"`. See [../auth/authentication.md](../auth/authentication.md) for the full model, including the timing-equalisation and sealed-sender (`Unidentified-Access-Key`) paths.
+The auth middleware extracts the UUID and device ID, looks up the account, and verifies the password against the **addressed device's** stored token hash (HKDF-SHA256, constant-time) — not always the primary device. A credential of the form `uuid:password` targets the primary device. On failure, a `401 Unauthorized` response is returned with `WWW-Authenticate: Basic realm="signal"`. See [../auth/authentication.md](../auth/authentication.md) for the full model, including the timing-equalisation and sealed-sender paths.
+
+## Rate limiting
+
+When a rate-limit registry is configured, registration, verification, message, pre-key, profile, attachment, username, account-check, device and call-link routes are wrapped in per-route limiters keyed by client IP (`ipKey`, trusted-proxy aware) or by account UUID (`uuidKey`). Without a registry the routes run unwrapped.
 
 ## Error Responses
 
-All errors are returned as JSON objects with an `error` field:
+Errors are JSON objects with an `error` field:
 
 ```json
 {
@@ -37,7 +53,10 @@ Common HTTP status codes:
 | 400 | Bad request / malformed JSON |
 | 401 | Missing or invalid credentials |
 | 404 | Resource not found |
-| 409 | Conflict (e.g. stale device list) |
+| 409 | Conflict. On message send, a `MismatchedDevicesResponse` (`missingDevices`, `extraDevices`) |
+| 410 | On message send, a `StaleDevicesResponse` (`staleDevices`) |
+| 423 | Registration blocked by a registration lock: `{"timeRemaining": <seconds>}` |
+| 428 | Spam challenge required on message send: `{"token": ..., "options": "captcha"\|"push"}` |
 | 500 | Internal server error |
 
 ---
@@ -51,6 +70,7 @@ Account creation follows a two-phase flow: create a verification session, verify
 | POST | `/v1/registration` | No | Create account |
 | POST | `/v1/verification/session` | No | Create verification session |
 | GET | `/v1/verification/session/{id}` | No | Get session status |
+| PATCH | `/v1/verification/session/{id}` | No | Update session (captcha solution) |
 | POST | `/v1/verification/session/{id}/code` | No | Request verification code |
 | PUT | `/v1/verification/session/{id}/code` | No | Submit verification code |
 
@@ -78,6 +98,10 @@ Create a new verification session for a phone number.
 }
 ```
 
+### PATCH /v1/verification/session/{id}
+
+Body `{"captcha": "provider.sitekey.action.token"}`. Returns the session in the same shape.
+
 ### PUT /v1/verification/session/{id}/code
 
 Submit the verification code received via SMS or voice.
@@ -90,31 +114,24 @@ Submit the verification code received via SMS or voice.
 }
 ```
 
-**Response (200):**
-
-```json
-{
-  "id": "abc123",
-  "allowedToRequestCode": true,
-  "verified": true,
-  "requestedInformation": []
-}
-```
+**Response (200):** the session, with `verified: true` on success.
 
 ### POST /v1/registration
 
-Register a new account after phone number verification.
+Register a new account after phone number verification. The phone number comes from the Basic `Authorization` header. Exactly one of `sessionId` (a verified, unexpired session for that number) or `recoveryPassword` (base64) must be supplied. `captcha` is optional unless the request trips the fraud heuristics. A blocked registration lock returns `423`.
 
 **Request:**
 
 ```json
 {
+  "sessionId": "verification-session-id",
   "accountAttributes": {
     "fetchesMessages": true,
     "registrationId": 12345,
     "pniRegistrationId": 67890,
     "name": "encrypted-device-name",
     "unidentifiedAccessKey": "base64-key",
+    "registrationLock": "optional-pin",
     "capabilities": {
       "storage": true,
       "transfer": true
@@ -159,7 +176,7 @@ Register a new account after phone number verification.
 
 ## Accounts
 
-Core account management endpoints for the authenticated user.
+Core account management endpoints.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
@@ -169,12 +186,10 @@ Core account management endpoints for the authenticated user.
 | DELETE | `/v1/accounts/me` | Yes | Delete account |
 | PUT | `/v1/accounts/gcm/` | Yes | Register GCM push token |
 | DELETE | `/v1/accounts/gcm/` | Yes | Unregister GCM push token |
-| PUT | `/v1/accounts/apn/` | Yes | Register APN push token |
-| DELETE | `/v1/accounts/apn/` | Yes | Unregister APN push token |
+| PUT | `/v1/accounts/apn/` | Yes | Register APN push tokens |
+| DELETE | `/v1/accounts/apn/` | Yes | Unregister APN push tokens |
 
 ### GET /v1/accounts/whoami (auth)
-
-Returns the authenticated account's identifiers.
 
 **Response (200):**
 
@@ -188,10 +203,6 @@ Returns the authenticated account's identifiers.
 
 ### PUT /v1/accounts/gcm/ (auth)
 
-Register a GCM push token.
-
-**Request:**
-
 ```json
 {
   "gcmRegistrationId": "fcm-device-token"
@@ -199,10 +210,6 @@ Register a GCM push token.
 ```
 
 ### PUT /v1/accounts/apn/ (auth)
-
-Register APN push tokens.
-
-**Request:**
 
 ```json
 {
@@ -219,11 +226,9 @@ Check whether an account exists. Returns `200 OK` if found, `404 Not Found` othe
 
 ## Accounts V2
 
-Enhanced account operations including phone number changes and privacy settings.
-
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| PUT | `/v2/accounts/number` | Yes | Change phone number |
+| PUT | `/v2/accounts/number` (and `/v2/accounts/number/`) | Yes | Change phone number |
 | PUT | `/v1/accounts/registration_lock` | Yes | Set registration lock |
 | DELETE | `/v1/accounts/registration_lock` | Yes | Remove registration lock |
 | PUT | `/v2/accounts/phone_number_discoverability` | Yes | Set phone number discoverability |
@@ -247,6 +252,7 @@ Supplying both is a `400`; supplying neither is a `403`. This prevents an authen
   "number": "+14155559876",
   "sessionId": "verification-session-id",
   "recoveryPassword": "base64-recovery-password",
+  "reglock": "optional-registration-lock",
   "pniIdentityKey": "base64-new-pni-key",
   "deviceMessages": [],
   "devicePniSignedPrekeys": {},
@@ -266,6 +272,8 @@ Supplying both is a `400`; supplying neither is a `403`. This prevents an authen
 }
 ```
 
+`usernameHash` and `usernameLinkHandle` are added when the account has them.
+
 | Status | Meaning |
 |--------|---------|
 | 400 | `sessionId` and `recoveryPassword` both supplied, or invalid encoding |
@@ -274,10 +282,6 @@ Supplying both is a `400`; supplying neither is a `403`. This prevents an authen
 
 ### PUT /v1/accounts/registration_lock (auth)
 
-Set a registration lock (SRP-derived value) on the account.
-
-**Request:**
-
 ```json
 {
   "registrationLock": "base64-registration-lock"
@@ -285,10 +289,6 @@ Set a registration lock (SRP-derived value) on the account.
 ```
 
 ### PUT /v2/accounts/phone_number_discoverability (auth)
-
-Control whether the account can be found by phone number.
-
-**Request:**
 
 ```json
 {
@@ -316,8 +316,6 @@ Username hash and username link management. Usernames are stored as hashes, not 
 
 Reserve one of a set of candidate username hashes.
 
-**Request:**
-
 ```json
 {
   "usernameHashes": ["base64-hash-1", "base64-hash-2"]
@@ -328,98 +326,74 @@ Reserve one of a set of candidate username hashes.
 
 ```json
 {
-  "usernameHash": "base64-hash-1"
-}
-```
-
-### PUT /v1/accounts/username_hash/confirm (auth)
-
-Confirm a previously reserved username hash.
-
-**Request:**
-
-```json
-{
   "usernameHash": "base64-hash-1",
   "reservationToken": "reservation-token"
 }
 ```
 
-### GET /v1/accounts/username_hash/{usernameHash}
+### PUT /v1/accounts/username_hash/confirm (auth)
 
-Lookup the account UUID for a given username hash.
-
-**Response (200):**
+Confirm a reserved hash. `zkProof` (base64) proves knowledge of the nickname and discriminator behind the hash; the server verifies it before binding the hash.
 
 ```json
 {
-  "uuid": "account-uuid"
+  "usernameHash": "base64-hash-1",
+  "reservationToken": "reservation-token",
+  "zkProof": "base64-proof"
 }
 ```
+
+**Response (200):** `{"usernameHash": "base64-hash-1"}`
+
+### GET /v1/accounts/username_hash/{usernameHash}
+
+**Response (200):** `{"uuid": "account-uuid"}`
 
 ### PUT /v1/accounts/username_link (auth)
 
-Create or update a username link (encrypted value for sharing).
-
-**Request:**
+Create or update a username link. `keepLinkHandle: true` re-uses the existing handle when one exists.
 
 ```json
 {
-  "usernameLinkEncryptedValue": "base64-encrypted-value"
+  "usernameLinkEncryptedValue": "base64-encrypted-value",
+  "keepLinkHandle": false
 }
 ```
 
-**Response (200):**
-
-```json
-{
-  "usernameLinkHandle": "link-handle-uuid"
-}
-```
+**Response (200):** `{"usernameLinkHandle": "link-handle-uuid"}`
 
 ### GET /v1/accounts/username_link/{uuid}
 
-Resolve a username link handle to its encrypted value.
-
-**Response (200):**
-
-```json
-{
-  "usernameLinkEncryptedValue": "base64-encrypted-value"
-}
-```
+Resolve a link handle. **Response (200):** `{"usernameLinkEncryptedValue": "base64-encrypted-value"}`
 
 ---
 
 ## Keys
 
-Pre-key management for the Signal Protocol. Clients upload one-time pre-keys, signed pre-keys, and post-quantum last-resort pre-keys. Other clients fetch key bundles to establish sessions.
+Pre-key management for the Signal Protocol.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/v2/keys` | Yes | Get pre-key count |
 | PUT | `/v2/keys` | Yes | Upload pre-keys |
-| GET | `/v2/keys/{identifier}/{device_id}` | No | Get pre-key bundle |
+| GET | `/v2/keys/{identifier}/{device_id}` | Basic or UAK | Get pre-key bundle |
 | POST | `/v2/keys/check` | Yes | Check key status |
 
 ### GET /v2/keys (auth)
 
-Returns the count of remaining one-time pre-keys for the authenticated device.
-
-**Response (200):**
+Count of remaining one-time pre-keys for the authenticated device.
 
 ```json
 {
   "count": 47,
-  "pqCount": 100
+  "pqCount": 100,
+  "hasLastResort": true
 }
 ```
 
 ### PUT /v2/keys (auth)
 
 Upload pre-keys for the authenticated device.
-
-**Request:**
 
 ```json
 {
@@ -453,9 +427,7 @@ Upload pre-keys for the authenticated device.
 
 ### GET /v2/keys/{identifier}/{device_id}
 
-Fetch the pre-key bundle for a specific device. The `device_id` can be `*` to request keys for all devices.
-
-**Response (200):**
+Fetch the pre-key bundle for a device; `device_id` can be `*` for all devices. The caller must present Basic credentials or an `Unidentified-Access-Key` for the target account, otherwise `401`.
 
 ```json
 {
@@ -483,11 +455,11 @@ Fetch the pre-key bundle for a specific device. The `device_id` can be `*` to re
 }
 ```
 
+`preKey` and `pqPreKey` are omitted when none is available.
+
 ### POST /v2/keys/check (auth)
 
-Check whether submitted identity keys match the server's records. Returns any mismatches.
-
-**Request:**
+Check submitted identity keys against the server's records. Returns the mismatches.
 
 ```json
 {
@@ -500,13 +472,7 @@ Check whether submitted identity keys match the server's records. Returns any mi
 }
 ```
 
-**Response (200):**
-
-```json
-{
-  "identityKeyFingerprints": []
-}
-```
+**Response (200):** `{"identityKeyFingerprints": []}`, each entry shaped like a request item.
 
 ---
 
@@ -516,17 +482,15 @@ Send and receive encrypted messages. Messages are stored until the recipient ret
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| PUT | `/v1/messages/{destination}` | Yes | Send to single recipient |
-| PUT | `/v1/messages/multi_recipient` | Yes | Send to multiple recipients |
+| PUT | `/v1/messages/{destination}` | Basic or UAK | Send to single recipient |
+| PUT | `/v1/messages/multi_recipient` | Basic or UAK | Send to multiple recipients |
 | GET | `/v1/messages` | Yes | Fetch pending messages |
 | DELETE | `/v1/messages/uuid/{guid}` | Yes | Delete message |
 | POST | `/v1/messages/report/{source}/{messageGuid}` | Yes | Report spam |
 
-### PUT /v1/messages/{destination} (auth)
+### PUT /v1/messages/{destination}
 
-Send one or more messages to a destination account. Each message targets a specific device.
-
-**Request:**
+Send one or more messages to a destination account, one per device. The `timestamp` belongs to the batch and becomes the delivered envelope's timestamp; messages carry no timestamp of their own. `registrationId` is the sender's last-known registration id for the device and drives the stale-device check (`410`). A wrong device set returns `409`.
 
 ```json
 {
@@ -535,7 +499,7 @@ Send one or more messages to a destination account. Each message targets a speci
       "type": 1,
       "destinationDeviceId": 1,
       "content": "base64-encrypted-content",
-      "timestamp": 1700000000000
+      "registrationId": 12345
     }
   ],
   "timestamp": 1700000000000,
@@ -544,19 +508,9 @@ Send one or more messages to a destination account. Each message targets a speci
 }
 ```
 
-**Response (200):**
+**Response (200):** `{"needsSync": true}`
 
-```json
-{
-  "needsSync": true
-}
-```
-
-### PUT /v1/messages/multi_recipient (auth)
-
-Send a single message payload to multiple recipients at once.
-
-**Request:**
+### PUT /v1/messages/multi_recipient
 
 ```json
 {
@@ -577,21 +531,9 @@ Send a single message payload to multiple recipients at once.
 }
 ```
 
-**Response (200):**
-
-```json
-{
-  "uuids404": []
-}
-```
-
-If some recipients are not found, their UUIDs appear in the `uuids404` array.
+**Response (200):** `{"uuids404": []}`. Recipients that were not found are listed there.
 
 ### GET /v1/messages (auth)
-
-Fetch pending messages for the authenticated device.
-
-**Response (200):**
 
 ```json
 {
@@ -611,43 +553,33 @@ Fetch pending messages for the authenticated device.
 }
 ```
 
+`source` and `sourceDevice` are omitted for sealed-sender messages.
+
 ### DELETE /v1/messages/uuid/{guid} (auth)
 
-Delete a specific message by its server-assigned GUID.
-
-**Response:** `204 No Content`
+Delete a message by its server-assigned GUID. **Response:** `204 No Content`
 
 ### POST /v1/messages/report/{source}/{messageGuid} (auth)
 
-Report a message as spam. Accepts an optional body:
-
-```json
-{
-  "token": "report-token"
-}
-```
-
-**Response:** `200 OK`
+Report a message as spam. Optional body `{"token": "report-token"}`. **Response:** `200 OK`
 
 ---
 
 ## Profiles
 
-Profile retrieval and updates. Profiles contain encrypted name, about text, emoji, avatar, and payment address fields.
+Profile retrieval and updates.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| PUT | `/v1/profile` | Yes | Set profile |
-| GET | `/v1/profile/{identifier}` | No | Get latest profile |
-| GET | `/v1/profile/{identifier}/{version}` | No | Get versioned profile |
-| GET | `/v1/profile/{identifier}/{version}/{credentialRequest}` | No | Get profile with credential |
+| PUT | `/v1/profile` (and `/v1/profile/`) | Yes | Set profile |
+| GET | `/v1/profile/{identifier}` | Basic or UAK | Get latest profile |
+| GET | `/v1/profile/{identifier}/{version}` | Basic or UAK | Get versioned profile |
+| GET | `/v1/profile/{identifier}/{version}/{credentialRequest}` | Basic or UAK | Get profile with credential |
 | POST | `/v1/profile/identity_check/batch` | Yes | Batch identity check |
 
+The three GET routes reject a request that carries neither credential with `401`.
+
 ### PUT /v1/profile (auth)
-
-Update the authenticated account's profile.
-
-**Request:**
 
 ```json
 {
@@ -672,9 +604,7 @@ Each encrypted field is decoded from base64 and must match one of its allowed ex
 | `paymentAddress` | 582 |
 | `commitment` | 97 (zkgroup `ProfileKeyCommitment`) |
 
-When `avatar` is `true` and `sameAvatar` is `false`, the response includes real AWS SigV4 S3 POST-policy upload attributes signed with the configured CDN credentials:
-
-**Response (200):**
+When `avatar` is `true` and `sameAvatar` is `false`, the response carries AWS SigV4 S3 POST-policy upload attributes signed with the configured CDN credentials:
 
 ```json
 {
@@ -688,13 +618,11 @@ When `avatar` is `true` and `sameAvatar` is `false`, the response includes real 
 }
 ```
 
-If an avatar upload is requested but no CDN credentials are configured, the endpoint fails closed with `503 Service Unavailable` rather than returning a non-functional placeholder signature. When no avatar upload is needed, the response is `200 OK` with an empty JSON object.
+If an avatar upload is requested but no CDN credentials are configured, the endpoint fails closed with `503`. When no avatar upload is needed, the response is `200 OK` with an empty JSON object.
 
 ### GET /v1/profile/{identifier}
 
-Get the latest profile for an account. The `identifier` is a UUID.
-
-**Response (200):**
+The `identifier` is an account service identifier.
 
 ```json
 {
@@ -714,9 +642,11 @@ Get the latest profile for an account. The `identifier` is a UUID.
 }
 ```
 
+`name`, `about`, `aboutEmoji`, `avatar` and `paymentAddress` are omitted when empty.
+
 ### GET /v1/profile/{identifier}/{version}/{credentialRequest}
 
-Same as the versioned profile, but also returns an `ExpiringProfileKeyCredential`. The `credentialRequest` path parameter is a hex-encoded zkgroup `ProfileKeyCredentialRequest`. The server deserializes it, loads the stored profile-key commitment for that version, and issues a real credential via go-libsignal's zkgroup. Issuance fails closed: a request whose zero-knowledge proof does not match the stored commitment is rejected with `400`, never a usable-but-wrong credential. The credential expires at a UTC day boundary seven days out (matching the Java server's `EXPIRING_PROFILE_KEY_CREDENTIAL_EXPIRATION`).
+Same as the versioned profile, plus a `credential` field holding an `ExpiringProfileKeyCredential`. The `credentialRequest` path parameter is a hex-encoded zkgroup `ProfileKeyCredentialRequest`. The server loads the stored profile-key commitment for that version and issues the credential via go-libsignal's zkgroup. Issuance fails closed: a request whose proof does not match the stored commitment is rejected with `400`. The credential expires at a UTC day boundary seven days out.
 
 | Status | Meaning |
 |--------|---------|
@@ -724,10 +654,6 @@ Same as the versioned profile, but also returns an `ExpiringProfileKeyCredential
 | 404 | Account or profile version not found, or no stored commitment |
 
 ### POST /v1/profile/identity_check/batch (auth)
-
-Check identity key fingerprints for a batch of accounts.
-
-**Request:**
 
 ```json
 {
@@ -740,40 +666,21 @@ Check identity key fingerprints for a batch of accounts.
 }
 ```
 
-**Response (200):**
-
-```json
-{
-  "elements": [
-    {
-      "uuid": "account-uuid",
-      "identityKey": "base64-identity-key"
-    }
-  ]
-}
-```
-
-Only accounts whose identity key does not match the submitted fingerprint are returned.
+**Response (200):** `{"elements": [{"uuid": ..., "identityKey": ...}]}`, listing only the accounts whose identity key does not match the submitted fingerprint.
 
 ---
 
 ## Devices
 
-Device management for multi-device support.
-
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/v1/devices` | Yes | List linked devices |
+| GET | `/v1/devices` (and `/v1/devices/`) | Yes | List linked devices |
 | DELETE | `/v1/devices/{device_id}` | Yes | Remove device |
 | GET | `/v1/devices/provisioning/code` | Yes | Get provisioning code |
 | PUT | `/v1/devices/link` | Yes | Link new device |
 | PUT | `/v1/devices/capabilities` | Yes | Set device capabilities |
 
 ### GET /v1/devices (auth)
-
-List all devices linked to the authenticated account.
-
-**Response (200):**
 
 ```json
 {
@@ -789,10 +696,6 @@ List all devices linked to the authenticated account.
 ```
 
 ### PUT /v1/devices/link (auth)
-
-Link a new device to the account.
-
-**Request:**
 
 ```json
 {
@@ -829,10 +732,6 @@ Link a new device to the account.
 
 ### PUT /v1/devices/capabilities (auth)
 
-Update the current device's capability flags.
-
-**Request:**
-
 ```json
 {
   "capabilities": {
@@ -850,13 +749,9 @@ Send provisioning messages to devices waiting on the provisioning WebSocket.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| PUT | `/v1/provisioning/{destination}` | No | Send provisioning message |
+| PUT | `/v1/provisioning/{destination}` | Yes | Send provisioning message |
 
-### PUT /v1/provisioning/{destination}
-
-Send a provisioning message to the device identified by `destination` (the provisioning address assigned during WebSocket connection).
-
-**Request:**
+`destination` is the provisioning address the waiting socket received on connect.
 
 ```json
 {
@@ -872,29 +767,23 @@ WebSocket upgrade endpoints. See [websocket.md](websocket.md) for protocol detai
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/v1/websocket/` | No* | WebSocket connection |
-| GET | `/v1/websocket/provisioning` | No | Provisioning WebSocket |
+| GET | `/v1/websocket/` | Handshake | Messaging WebSocket |
+| GET | `/v1/websocket/provisioning` (and `/v1/websocket/provisioning/`) | No | Provisioning WebSocket |
 
-*Authentication is performed during the WebSocket handshake via Basic Auth header or query parameters (`login` and `password`).
+The messaging socket authenticates during the handshake via a Basic header or the `login` and `password` query parameters; without either it is an unauthenticated session. Both routes are rate-limited by IP with the verification limiter.
 
 ---
 
 ## Keepalive
-
-Health check endpoints used by load balancers and clients.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/v1/keepalive` | No | Health check |
 | GET | `/v1/keepalive/provisioning` | No | Provisioning health check |
 
-Both return `200 OK` with an empty JSON object.
-
 ---
 
 ## Configuration
-
-Server and remote configuration.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
@@ -903,19 +792,13 @@ Server and remote configuration.
 
 ### GET /v2/config (auth)
 
-Returns the list of remote configuration flags for the authenticated account.
-
-**Response (200):**
+A single map of fully-qualified flag names to their rendered per-account values:
 
 ```json
 {
-  "config": [
-    {
-      "name": "android.someFeature",
-      "enabled": true,
-      "value": "1"
-    }
-  ]
+  "config": {
+    "android.someFeature": "1"
+  }
 }
 ```
 
@@ -923,18 +806,12 @@ Returns the list of remote configuration flags for the authenticated account.
 
 ## Certificates
 
-Delivery certificates for sealed-sender messaging and group credentials.
-
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/v1/certificate/delivery` | Yes | Get delivery certificate |
 | GET | `/v1/certificate/auth/group` | Yes | Get group credentials |
 
 ### GET /v1/certificate/delivery (auth)
-
-Returns a signed delivery certificate used for sealed-sender messaging.
-
-**Response (200):**
 
 ```json
 {
@@ -947,8 +824,6 @@ Returns a signed delivery certificate used for sealed-sender messaging.
 
 ## Challenge
 
-Anti-abuse challenge/response endpoints.
-
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | PUT | `/v1/challenge` | Yes | Submit challenge response |
@@ -958,20 +833,13 @@ Anti-abuse challenge/response endpoints.
 
 ## Attachments and CDN
 
-File upload endpoints for message attachments.
-
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/v4/attachments/form/upload` | Yes | Get upload form |
-| PUT/POST/PATCH/HEAD | `/cdn/{rest...}` | No | CDN upload operations |
-| PUT/POST/PATCH/HEAD | `/cdn2/{rest...}` | No | CDN2 upload operations |
-| PUT/POST/PATCH/HEAD | `/cdn3/{rest...}` | No | CDN3 upload operations |
+| PUT/POST/PATCH/HEAD | `/cdn/{rest...}`, `/cdn2/{rest...}`, `/cdn3/{rest...}` | No | CDN upload operations |
+| GET | `/cdn/{rest...}`, `/cdn2/{rest...}`, `/cdn3/{rest...}` | No | CDN download |
 
 ### GET /v4/attachments/form/upload (auth)
-
-Returns a pre-signed upload form for uploading an attachment to the CDN.
-
-**Response (200):**
 
 ```json
 {
@@ -984,72 +852,67 @@ Returns a pre-signed upload form for uploading an attachment to the CDN.
 }
 ```
 
-The CDN proxy routes (`/cdn/`, `/cdn2/`, `/cdn3/`) accept PUT, POST, PATCH, and HEAD requests and forward them to the configured CDN backend.
+When an external TUS server is wired (`SetAttachmentTus`), the form points at it; otherwise it falls back to the embedded `/cdn3` path. The `/cdn*` routes are served by the embedded attachment store and rate-limited by IP.
+
+---
+
+## Static Resources
+
+When `staticResourcesDir` is configured: `GET /resources/{path...}` and `GET /updates/{path...}` (no auth) serve emoji, dictionaries and release notes. Neither route is registered otherwise.
 
 ---
 
 ## Stickers
 
-Sticker pack upload management.
-
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/v1/sticker/pack/form/{count}` | Yes | Get sticker pack upload form |
-
-The `{count}` path parameter specifies the number of stickers in the pack.
 
 ---
 
 ## Directory
 
-Contact discovery service integration.
-
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/v2/directory/auth` | Yes | Get directory auth token |
-| PUT | `/v1/directory/lookup` | No | Directory lookup |
+| PUT | `/v1/directory/lookup` | No | Directory lookup (service credentials from `/v2/directory/auth`; rate-limited by IP) |
 
 ---
 
 ## Secure Storage
 
-Encrypted storage service for syncing contacts, groups, and settings across devices. The embedded storage-service is enabled by default in monolithic deployments (when `storageService.remoteUrl` is empty); when an external `storage-service` binary is configured, clients are pointed at it instead and these in-process routes return a `204` stub. The wire protocol is protobuf (`pkg/securestorage/proto/storage.proto`, generated into `pkg/securestorage/storagepb`) and is validated wire-compatible with `libsignal-service-java`.
+Encrypted storage for syncing contacts, groups, and settings across devices. When the embedded storage service is not enabled (`secureStorage` nil or disabled, for example when `storageService.remoteUrl` points at an external binary), every storage route replies `204 No Content` without reading credentials. The wire protocol is protobuf (`pkg/securestorage/proto/storage.proto`, generated into `pkg/securestorage/storagepb`).
 
-All storage routes require authentication.
+When enabled, all storage routes require Basic authentication.
 
 | Method | Path | Auth | Operation |
 |--------|------|------|-----------|
 | GET | `/v1/storage/auth` | Yes | Get storage auth token (HMAC credential) |
 | GET | `/storage/manifest` | Yes | Fetch the current `StorageManifest` |
-| GET | `/storage/manifest/version/{version}` | Yes | Conditional fetch: returns the manifest only if newer than `{version}`, else `204` |
+| GET | `/storage/manifest/version/{version}` | Yes | Conditional fetch: the manifest only if newer than `{version}`, else `204` |
 | PUT | `/storage/manifest` | Yes | Apply a `WriteOperation` |
 | PUT | `/storage/read` | Yes | Resolve a `ReadOperation` into `StorageItems` |
 
-Request and response bodies are serialized protobuf, not JSON. The routes also accept the `/storage/v1/storage/...` prefix variants and a catch-all (`/storage/{rest...}`) so that the path shapes used by different clients (signal-cli rewrites against a `/storage` base URL) all resolve. A single handler dispatches by method and path: a `GET` whose path contains `manifest` fetches the manifest, a `PUT` ending in `/read` resolves a read, and any other `PUT` applies a write.
+Request and response bodies are serialized protobuf, not JSON. The server also registers the `/storage/v1/storage/manifest` and `/storage/v1/storage/manifest/version/{version}` variants and the catch-alls `GET /storage/{rest...}` and `PUT /storage/{rest...}`, because signal-cli appends paths to a rewritten `/storage` base URL. One handler dispatches by method and path: a `GET` whose path contains `manifest` fetches the manifest, a `PUT` ending in `/read` resolves a read, any other `PUT` applies a write, and anything else is `204`.
 
-A write that loses the optimistic-concurrency race returns `409 Conflict` with the current `StorageManifest` so the client can rebase and retry. Manifest versions are monotonic.
+A write that loses the optimistic-concurrency race returns `409 Conflict` with the current `StorageManifest`.
 
 ---
 
 ## SVR (Secure Value Recovery)
 
-Secure Value Recovery manages encrypted backup credentials.
+signald only issues and checks SVR credentials. The SVR2 enclave WebSocket is served by `cmd/svr2`, which clients connect to directly; signald registers no `/svr2/` route.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET/PUT | `/svr2/{rest...}` | No | SVR2 WebSocket (enclave communication) |
 | GET | `/v2/backup/auth` | Yes | Get SVR backup auth |
 | GET | `/v2/svr/auth` | Yes | Get SVR auth |
 | POST | `/v2/backup/auth/check` | Yes | Check SVR backup auth |
 | POST | `/v2/svr/auth/check` | Yes | Check SVR auth |
 
-The `/svr2/` routes are catch-all paths that upgrade to WebSocket connections for communicating with SVR2 enclaves. Clients may use various subpaths (`/v1/{mrenclave}`, `/{enclaveId}`, etc.).
-
 ---
 
 ## Payments
-
-Payment service integration.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
@@ -1060,30 +923,29 @@ Payment service integration.
 
 ## Calling
 
-Voice/video calling support.
-
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/v2/calling/relays` | Yes | Get TURN relay credentials |
-| POST | `/v1/call-link/create-auth` | Yes | Get call link auth |
+| POST | `/v1/call-link/create-auth` | Yes | Get call link auth (rate-limited by account) |
+| PUT | `/v1/call_quality_survey` | No | Submit a call quality survey |
+| POST | `/v1/call/offer` | Yes | Relay a 1:1 call offer |
+| POST | `/v1/call/answer` | Yes | Relay a call answer |
+| POST | `/v1/call/ice` | Yes | Relay ICE candidates |
+| POST | `/v1/call/hangup` | Yes | Relay a hangup |
 
 ---
 
 ## Key Transparency
 
-Key transparency log for verifying identity key consistency.
-
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/v1/key-transparency/search` | No | Search key transparency |
-| POST | `/v1/key-transparency/monitor` | No | Monitor key transparency |
+| POST | `/v1/key-transparency/search` | Yes | Search key transparency |
+| POST | `/v1/key-transparency/monitor` | Yes | Monitor key transparency |
 | GET | `/v1/key-transparency/distinguished` | No | Get distinguished key |
 
 ---
 
 ## Subscriptions
-
-Subscription and recurring payment management.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
@@ -1096,8 +958,6 @@ Subscription and recurring payment management.
 
 ## Donations
 
-One-time donation receipt redemption.
-
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | POST | `/v1/donation/redeem-receipt` | Yes | Redeem donation receipt |
@@ -1106,15 +966,26 @@ One-time donation receipt redemption.
 
 ## Archives / Backup
 
-Message backup and restore.
+Message backup and restore. Two authentication models coexist.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/v1/archives/auth` | Yes | Get backup auth |
-| GET | `/v1/archives/upload/form` | Yes | Get backup upload form |
 | PUT | `/v1/archives/backupid` | Yes | Set backup ID |
-| POST | `/v1/archives` | Yes | Refresh backup |
-| GET | `/v1/archives` | Yes | Get backup info |
+| GET | `/v1/archives/backupid/limits` | Yes | Get backup ID limits |
+| POST | `/v1/archives/redeem-receipt` | Yes | Redeem backup receipt |
+| GET | `/v1/archives/auth` | Yes | Get backup auth |
+| GET | `/v1/archives` | ZK | Get backup info |
+| POST | `/v1/archives` | ZK | Refresh backup |
+| DELETE | `/v1/archives` | ZK | Delete backup |
+| PUT | `/v1/archives/keys` | ZK | Set backup public key |
+| GET | `/v1/archives/upload/form` | ZK | Get backup upload form |
+| GET | `/v1/archives/media/upload/form` | ZK | Get media upload form |
+| PUT | `/v1/archives/media` | ZK | Copy media |
+| PUT | `/v1/archives/media/batch` | ZK | Copy media in batch |
+| GET | `/v1/archives/media` | ZK | List media |
+| POST | `/v1/archives/media/delete` | ZK | Delete media |
+| GET | `/v1/archives/auth/read` | ZK | Get CDN read auth |
+| GET | `/v1/archives/auth/svrb` | ZK | Get SVR-B auth |
 
 ---
 
@@ -1131,11 +1002,17 @@ Apple DeviceCheck attestation and assertion for iOS clients.
 
 ---
 
+## Web UI and frontend
+
+When a web UI handler is wired the server also registers its client-facing routes under `/api/v1/*` and an event-hub route. When a frontend filesystem is supplied, `/` is a single-page-app catch-all registered last, so every API route above takes priority. These are outside the Signal wire protocol.
+
+---
+
 ## FIDO2 (build tag: `fido2`)
 
-FIDO2/WebAuthn endpoints for passwordless authentication and MFA enrollment. These routes are only available when the server is built with the `fido2` build tag.
+FIDO2/WebAuthn endpoints for passwordless registration and MFA enrollment. They exist only in a binary built with `-tags fido2` and registered through `Server.RegisterFIDO2`. Until the server has FIDO2 state, every handler replies `404 fido2 not configured`.
 
-See [../auth/fido2.md](../auth/fido2.md) for detailed FIDO2 flow documentation.
+See [../auth/fido2.md](../auth/fido2.md) for the ceremony flows.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
@@ -1143,21 +1020,17 @@ See [../auth/fido2.md](../auth/fido2.md) for detailed FIDO2 flow documentation.
 | POST | `/v1/fido2/session` | No | Begin FIDO2-only registration |
 | GET | `/v1/fido2/session/{id}` | No | Get session status |
 | POST | `/v1/fido2/session/{id}/complete` | No | Complete attestation |
+| POST | `/v1/fido2/auth/begin` | Yes | Begin FIDO2 assertion |
+| POST | `/v1/fido2/auth/complete` | No | Complete assertion |
 | POST | `/v1/fido2/enroll` | Yes | Begin enrollment (MFA) |
 | POST | `/v1/fido2/enroll/{id}/complete` | Yes | Complete enrollment |
-| POST | `/v1/fido2/auth/begin` | Yes* | Begin FIDO2 assertion |
-| POST | `/v1/fido2/auth/complete` | No | Complete assertion |
 | GET | `/v1/fido2/credentials` | Yes | List credentials |
 | DELETE | `/v1/fido2/credentials/{id}` | Yes | Remove credential |
 | PUT | `/v1/fido2/credentials/{id}/name` | Yes | Rename credential |
 
-*Uses Basic Auth directly (not the full auth middleware wrapper).
+Errors map as: credential or session not found `404`, no credentials `404`, duplicate credential `409`, expired session `410`, ceremony failure or wrong session type `400`, anything else `500`.
 
 ### GET /v1/fido2/capabilities
-
-Returns the server's FIDO2/WebAuthn configuration.
-
-**Response (200):**
 
 ```json
 {
@@ -1173,17 +1046,7 @@ Returns the server's FIDO2/WebAuthn configuration.
 
 ### POST /v1/fido2/session
 
-Begin a FIDO2-only registration ceremony (passwordless account creation).
-
-**Request:**
-
-```json
-{
-  "username": "user@example.com"
-}
-```
-
-**Response (200):**
+Begin a FIDO2-only registration ceremony. Body `{"username": "user@example.com"}` (required).
 
 ```json
 {
@@ -1198,50 +1061,30 @@ Begin a FIDO2-only registration ceremony (passwordless account creation).
 }
 ```
 
-The `options` field contains the WebAuthn `PublicKeyCredentialCreationOptions` for the browser's `navigator.credentials.create()` call.
+`options` holds the WebAuthn `PublicKeyCredentialCreationOptions` for `navigator.credentials.create()`. `GET /v1/fido2/session/{id}` returns just the `session` object. `POST /v1/fido2/session/{id}/complete` takes the attestation as the request body and returns the stored credential (shape below).
 
 ### POST /v1/fido2/enroll (auth)
 
-Begin enrollment of an additional FIDO2 credential (MFA) for an already-authenticated account.
-
-**Request:**
-
-```json
-{
-  "credentialName": "YubiKey 5"
-}
-```
+Begin enrollment of an additional credential. Body `{"credentialName": "YubiKey 5"}`. Returns the same `session` and `options` shape. `POST /v1/fido2/enroll/{id}/complete` returns the credential.
 
 ### POST /v1/fido2/auth/begin (auth)
 
-Begin a FIDO2 login assertion ceremony.
-
-**Request:**
-
-```json
-{
-  "accountUuid": "account-uuid"
-}
-```
+Begin a login assertion. Body `{"accountUuid": "account-uuid"}` (required). Returns `session` and `options` (a WebAuthn credential assertion). The route is wrapped in the same Basic `authMiddleware` as the other authenticated routes.
 
 ### POST /v1/fido2/auth/complete
 
-Complete the FIDO2 login assertion. Returns an auth token on success.
-
-**Response (200):**
+Complete the login assertion. Body: the assertion, with the session id as `sessionId` (required).
 
 ```json
 {
   "accountUuid": "account-uuid",
-  "token": "auth-token"
+  "token": ""
 }
 ```
 
+`token` is always empty: the handler verifies the assertion and returns the account, and issues no token ("token generation is handled by the auth layer").
+
 ### GET /v1/fido2/credentials (auth)
-
-List all FIDO2 credentials for the authenticated account.
-
-**Response (200):**
 
 ```json
 {
@@ -1258,11 +1101,11 @@ List all FIDO2 credentials for the authenticated account.
 }
 ```
 
+### DELETE /v1/fido2/credentials/{id} (auth)
+
+**Response:** `204 No Content`.
+
 ### PUT /v1/fido2/credentials/{id}/name (auth)
-
-Rename a FIDO2 credential.
-
-**Request:**
 
 ```json
 {

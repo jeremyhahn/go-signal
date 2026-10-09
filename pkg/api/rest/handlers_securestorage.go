@@ -22,5 +22,5 @@ func (s *Server) handleGetStorageAuth(w http.ResponseWriter, r *http.Request) {
 	// handlers; without it every storage-auth request would leak one
 	// protected allocation for the process lifetime.
 	defer creds.Destroy()
-	s.writeExternalServiceCredentials(w, r, "storage", creds.Username, creds.Password)
+	writeJSONContext(r.Context(), w, http.StatusOK, *creds)
 }

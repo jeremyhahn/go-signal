@@ -33,8 +33,8 @@ type VerificationConfig struct {
 	RemoteInsecure bool `yaml:"remoteInsecure"`
 
 	// GRPCListen is the host:port the standalone registration-service
-	// binary binds its gRPC listener to. Empty means "use the default"
-	// at the binary entry point (0.0.0.0:8090). Only consumed by
+	// binary binds its gRPC listener to. Defaults to
+	// DefaultVerificationGRPCListen. Only consumed by
 	// cmd/registration-service; signald ignores this field.
 	GRPCListen string `yaml:"grpcListen"`
 }

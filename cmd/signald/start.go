@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -347,7 +348,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// wipe-after-draining and these defers are the backstop.
 	defer cfg.Destroy()
 
-	httpAddr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.HTTPPort)
+	httpAddr := cfg.Server.HTTPListen
 
 	slog.InfoContext(ctx, "starting Signal server",
 		slog.String("version", version),
@@ -558,7 +559,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	metricsReg := metrics.NewRegistry("signald")
 	probes.Add("cache", checks.Ping("cache", cacheClient))
 	go func() {
-		if err := health.RunSidecar(ctx, probes, metricsReg, ""); err != nil {
+		if err := health.RunSidecar(ctx, probes, metricsReg, cfg.Health.Listen); err != nil {
 			logger.Error("signald health sidecar", slog.Any("error", err))
 		}
 	}()
@@ -1119,9 +1120,13 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 
 	// Start REST API server.
+	httpHost, httpPort, err := splitListen(cfg.Server.HTTPListen)
+	if err != nil {
+		return &StartupError{Stage: "resolving the REST listen address", Cause: err}
+	}
 	srv := rest.NewServer(rest.ServerConfig{
-		Host:               cfg.Server.Host,
-		Port:               cfg.Server.HTTPPort,
+		Host:               httpHost,
+		Port:               httpPort,
 		IsProduction:       cfg.IsProduction(),
 		TLSCertFile:        cfg.Server.TLSCertFile,
 		TLSKeyFile:         cfg.Server.TLSKeyFile,
@@ -1232,8 +1237,8 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// methods return codes.Unimplemented but they're reachable and
 	// exercise the auth + anonymous interceptor split.
 	var grpcServer *grpcapi.Server
-	if cfg.Server.GRPCPort != 0 {
-		grpcAddr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.GRPCPort)
+	if cfg.Server.GRPCListen != "" {
+		grpcAddr := cfg.Server.GRPCListen
 		dirSource := &directoryAccountSource{store: accountStore}
 		dirEvents := &directoryEventSource{bus: directoryBus}
 		grpcServer = grpcapi.New(grpcapi.Config{Listen: grpcAddr}, accountsMgr, svc, dirSource,
@@ -1485,4 +1490,22 @@ func registrationServiceDialOptions(cfg config.VerificationConfig) []grpc.DialOp
 	}
 	creds := credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12})
 	return []grpc.DialOption{grpc.WithTransportCredentials(creds)}
+}
+
+// splitListen splits a resolved host:port listen address into the host and
+// numeric port the REST server takes. An empty address (no REST listener
+// configured) yields host "" and port 0, which binds an ephemeral port.
+func splitListen(addr string) (string, int, error) {
+	if addr == "" {
+		return "", 0, nil
+	}
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", 0, err
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return "", 0, err
+	}
+	return host, port, nil
 }
