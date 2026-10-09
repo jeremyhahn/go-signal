@@ -13,7 +13,10 @@ import (
 // loads, with every address this binary binds set in the file to fileVal.
 func rootAddressTestConfig(t *testing.T, fileVal string) string {
 	t.Helper()
-	body := "server:\n  httpPort: 8080\nstorage:\n  backend: memory\n"
+	// The server block comes from addressKeys (server.httpListen), so no
+	// legacy port is written: the listen address alone must satisfy the
+	// at-least-one-listener rule.
+	body := "storage:\n  backend: memory\n"
 	sections := map[string]string{}
 	var order []string
 	for _, key := range addressKeys {

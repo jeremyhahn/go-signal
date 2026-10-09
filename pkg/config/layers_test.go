@@ -18,6 +18,13 @@ func TestEnvName_MechanicalRule(t *testing.T) {
 		KeyCDSIWSListen:              "SIGNAL_CDSI_WSLISTEN",
 		KeyStorageServiceHTTPListen:  "SIGNAL_STORAGESERVICE_HTTPLISTEN",
 		KeyKeyTransparencyGRPCListen: "SIGNAL_KEYTRANSPARENCY_GRPCLISTEN",
+		KeyServerHTTPListen:          "SIGNAL_SERVER_HTTPLISTEN",
+		KeyServerGRPCListen:          "SIGNAL_SERVER_GRPCLISTEN",
+		KeyKeyTransparencyRemoteAddr: "SIGNAL_KEYTRANSPARENCY_REMOTEADDR",
+		KeyVerificationRemoteAddr:    "SIGNAL_VERIFICATION_REMOTEADDR",
+		KeyStorageServiceRemoteURL:   "SIGNAL_STORAGESERVICE_REMOTEURL",
+		KeySVR2RemoteURL:             "SIGNAL_SVR2_REMOTEURL",
+		KeyAttachmentsTusURI:         "SIGNAL_ATTACHMENTS_TUSURI",
 	}
 	for _, d := range addressDefaults {
 		if got := EnvName(d.key); got != want[d.key] {
@@ -36,6 +43,13 @@ func TestFlagName_KebabCase(t *testing.T) {
 		KeyCDSIWSListen:              "cdsi-ws-listen",
 		KeyStorageServiceHTTPListen:  "storage-service-http-listen",
 		KeyKeyTransparencyGRPCListen: "key-transparency-grpc-listen",
+		KeyServerHTTPListen:          "server-http-listen",
+		KeyServerGRPCListen:          "server-grpc-listen",
+		KeyKeyTransparencyRemoteAddr: "key-transparency-remote-addr",
+		KeyVerificationRemoteAddr:    "verification-remote-addr",
+		KeyStorageServiceRemoteURL:   "storage-service-remote-url",
+		KeySVR2RemoteURL:             "svr2-remote-url",
+		KeyAttachmentsTusURI:         "attachments-tus-uri",
 	}
 	for _, d := range addressDefaults {
 		if got := FlagName(d.key); got != want[d.key] {
@@ -75,7 +89,7 @@ func TestLoadWithFlags_Precedence(t *testing.T) {
 				flag bool
 				want string
 			}{
-				{"default", false, false, false, d.value},
+				{"default", false, false, false, resolvedDefault(d)},
 				{"file over default", true, false, false, fileVal},
 				{"env over default", false, true, false, envVal},
 				{"flag over default", false, false, true, flagVal},

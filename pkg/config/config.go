@@ -28,6 +28,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -266,6 +267,16 @@ type FrontendConfig struct {
 
 // ServerConfig holds HTTP/gRPC server settings.
 type ServerConfig struct {
+	// HTTPListen and GRPCListen are the host:port signald binds its REST and
+	// gRPC listeners to. Empty disables the listener. When empty after the
+	// file, environment and flag layers, the legacy Host/HTTPPort/GRPCPort
+	// keys are folded in (see resolveServerListeners), so Load always
+	// returns the resolved address here.
+	HTTPListen string `yaml:"httpListen"`
+	GRPCListen string `yaml:"grpcListen"`
+
+	// Host, HTTPPort and GRPCPort are the legacy form of the listen
+	// addresses above.
 	Host           string   `yaml:"host"`
 	HTTPPort       int      `yaml:"httpPort"`
 	GRPCPort       int      `yaml:"grpcPort"`
@@ -653,8 +664,20 @@ func (c *Config) Destroy() {
 
 // Validate checks the configuration for required fields and valid values.
 func (c *Config) Validate() error {
-	if c.Server.HTTPPort == 0 && c.Server.GRPCPort == 0 {
-		return &ConfigValidationError{Field: "server", Message: "at least one of httpPort or grpcPort must be set"}
+	resolveServerListeners(c)
+	if c.Server.HTTPListen == "" && c.Server.GRPCListen == "" {
+		return &ConfigValidationError{Field: "server", Message: "at least one of httpListen or grpcListen must be set"}
+	}
+	for _, d := range []struct{ key, addr string }{
+		{string(KeyServerHTTPListen), c.Server.HTTPListen},
+		{string(KeyServerGRPCListen), c.Server.GRPCListen},
+	} {
+		if d.addr == "" {
+			continue
+		}
+		if _, _, err := net.SplitHostPort(d.addr); err != nil {
+			return &ConfigValidationError{Field: d.key, Message: "listen address must be host:port"}
+		}
 	}
 	if c.Storage.Backend == "" {
 		return &ConfigValidationError{Field: "storage.backend", Message: "storage backend is required"}

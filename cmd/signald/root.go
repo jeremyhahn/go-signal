@@ -11,9 +11,19 @@ var (
 	cfg     *config.Config
 )
 
-// addressKeys are the listen addresses signald binds itself, each settable
-// by flag, environment and config file.
-var addressKeys = []config.AddressKey{config.KeyHealthListen}
+// addressKeys are the addresses signald binds, dials or advertises, each
+// settable by flag, environment and config file (flags > env > file >
+// defaults).
+var addressKeys = []config.AddressKey{
+	config.KeyHealthListen,
+	config.KeyServerHTTPListen,
+	config.KeyServerGRPCListen,
+	config.KeyKeyTransparencyRemoteAddr,
+	config.KeyVerificationRemoteAddr,
+	config.KeyStorageServiceRemoteURL,
+	config.KeySVR2RemoteURL,
+	config.KeyAttachmentsTusURI,
+}
 
 // rootCmd is the base command for the signald server.
 var rootCmd = &cobra.Command{

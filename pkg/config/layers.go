@@ -77,7 +77,7 @@ func AddAddressFlags(fs *pflag.FlagSet, keys ...AddressKey) {
 			panic(&ConfigValidationError{Field: string(key), Message: "not an address key"})
 		}
 		fs.String(FlagName(key), d.value,
-			"listen address ("+string(key)+" in the config file, "+EnvName(key)+" in the environment)")
+			"address ("+string(key)+" in the config file, "+EnvName(key)+" in the environment)")
 	}
 }
 
