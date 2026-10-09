@@ -99,9 +99,11 @@ func TestApp_Startup(t *testing.T) {
 	t.Run("SetsContext", func(t *testing.T) {
 		app, err := NewApp(t.Context(), newTestAppConfig())
 		require.NoError(t, err)
-		assert.Nil(t, app.ctx)
-		app.Startup(context.Background())
+		// Before Startup the context is the one NewApp was given, never nil.
 		assert.NotNil(t, app.ctx)
+		startup := context.Background()
+		app.Startup(startup)
+		assert.Equal(t, startup, app.ctx)
 	})
 	t.Run("OverridesContext", func(t *testing.T) {
 		app, err := NewApp(t.Context(), newTestAppConfig())

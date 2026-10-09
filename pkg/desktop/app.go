@@ -38,13 +38,18 @@ func NewApp(ctx context.Context, cfg signal.ClientConfig) (*App, error) {
 	}
 
 	return &App{
+		// Wails binds the frontend methods before it calls Startup, so the
+		// application context has to be usable from construction. Startup
+		// replaces it with the runtime context.
+		ctx:    ctx,
 		client: client,
 		daos:   factory,
 	}, nil
 }
 
 // Startup is called by Wails when the application starts.
-// The context is saved for runtime event emission.
+// The context is saved for runtime event emission and supersedes the one
+// NewApp was given.
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 }
