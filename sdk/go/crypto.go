@@ -80,7 +80,13 @@ func (c *Client) initCrypto(ctx context.Context) error {
 	var identityKeyPair *identity.KeyPair
 	var regID uint32 = 1
 
-	creds, _ := c.store.GetCredentials(ctx)
+	// A store with no credentials yet (fresh registration) returns nil, nil. Any
+	// error is a failure to read them, and must not be mistaken for that case:
+	// the identity store would be cached with registration ID 1 for good.
+	creds, err := c.store.GetCredentials(ctx)
+	if err != nil {
+		return signalerrors.Wrap(signalerrors.ErrInternal, "load credentials for crypto init", err)
+	}
 	if creds != nil {
 		regID = creds.DeviceID
 	}
