@@ -24,7 +24,7 @@
 # cert below is addressed as .devcontainer/ca-cert.pem. .dockerignore excludes
 # .devcontainer/ wholesale and re-admits exactly that one file.
 
-FROM golang:1.27.1-bookworm AS toolchain
+FROM golang:1.27.2-bookworm AS toolchain
 
 # Install JRE 21 from Eclipse Temurin for signal-cli compatibility
 RUN apt-get update && apt-get install -y --no-install-recommends \
