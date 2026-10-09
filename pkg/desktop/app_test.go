@@ -26,11 +26,11 @@ type appStubStore struct{}
 // registeredStubStore returns a non-nil Credentials so IsRegistered returns true.
 type registeredStubStore struct{ appStubStore }
 
-func (appStubStore) GetCredentials() (*signal.Credentials, error) { return nil, nil }
-func (appStubStore) SaveCredentials(_ *signal.Credentials) error  { return nil }
-func (appStubStore) GetContacts() ([]signal.Contact, error)       { return nil, nil }
-func (appStubStore) SaveContact(_ *signal.Contact) error          { return nil }
-func (appStubStore) DeleteContact(_ string) error                 { return nil }
+func (appStubStore) GetCredentials(context.Context) (*signal.Credentials, error)    { return nil, nil }
+func (appStubStore) SaveCredentials(_ context.Context, _ *signal.Credentials) error { return nil }
+func (appStubStore) GetContacts() ([]signal.Contact, error)                         { return nil, nil }
+func (appStubStore) SaveContact(_ *signal.Contact) error                            { return nil }
+func (appStubStore) DeleteContact(_ string) error                                   { return nil }
 func (appStubStore) GetMessages(_ string, _ int) ([]signal.Message, error) {
 	return nil, nil
 }
@@ -50,14 +50,14 @@ type closeFailsStore struct{ appStubStore }
 
 func (closeFailsStore) Close() error { return errors.New("store close failed") }
 
-func (registeredStubStore) GetCredentials() (*signal.Credentials, error) {
+func (registeredStubStore) GetCredentials(context.Context) (*signal.Credentials, error) {
 	return &signal.Credentials{UUID: "test-uuid-001", Number: "+15550001111"}, nil
 }
 
 // errorCredStore returns an error from GetCredentials to exercise the err != nil branch.
 type errorCredStore struct{ appStubStore }
 
-func (errorCredStore) GetCredentials() (*signal.Credentials, error) {
+func (errorCredStore) GetCredentials(context.Context) (*signal.Credentials, error) {
 	return nil, errors.New("credential store unavailable")
 }
 
@@ -79,7 +79,7 @@ func newTestAppConfig() signal.ClientConfig {
 // TestNewApp verifies App construction.
 func TestNewApp(t *testing.T) {
 	t.Run("SucceedsWithStubStore", func(t *testing.T) {
-		app, err := NewApp(newTestAppConfig())
+		app, err := NewApp(t.Context(), newTestAppConfig())
 		require.NoError(t, err)
 		require.NotNil(t, app)
 	})
@@ -89,7 +89,7 @@ func TestNewApp(t *testing.T) {
 			UserAgent: "test/0.0",
 			Store:     appStubStore{},
 		}
-		_, err := NewApp(cfg)
+		_, err := NewApp(t.Context(), cfg)
 		require.Error(t, err)
 	})
 }
@@ -97,14 +97,14 @@ func TestNewApp(t *testing.T) {
 // TestApp_Startup verifies that Startup sets the context.
 func TestApp_Startup(t *testing.T) {
 	t.Run("SetsContext", func(t *testing.T) {
-		app, err := NewApp(newTestAppConfig())
+		app, err := NewApp(t.Context(), newTestAppConfig())
 		require.NoError(t, err)
 		assert.Nil(t, app.ctx)
 		app.Startup(context.Background())
 		assert.NotNil(t, app.ctx)
 	})
 	t.Run("OverridesContext", func(t *testing.T) {
-		app, err := NewApp(newTestAppConfig())
+		app, err := NewApp(t.Context(), newTestAppConfig())
 		require.NoError(t, err)
 		ctx1 := context.Background()
 		ctx2, cancel := context.WithCancel(context.Background())
@@ -118,7 +118,7 @@ func TestApp_Startup(t *testing.T) {
 // TestApp_Shutdown verifies Shutdown does not panic.
 func TestApp_Shutdown(t *testing.T) {
 	t.Run("ShutdownWithClient", func(t *testing.T) {
-		app, err := NewApp(newTestAppConfig())
+		app, err := NewApp(t.Context(), newTestAppConfig())
 		require.NoError(t, err)
 		assert.NotPanics(t, func() { app.Shutdown(context.Background()) })
 	})
@@ -143,7 +143,7 @@ func newTestAppForServer(t *testing.T, serverURL string) *App {
 		UserAgent: "test/0.0",
 		Store:     appStubStore{},
 	}
-	app, err := NewApp(cfg)
+	app, err := NewApp(t.Context(), cfg)
 	require.NoError(t, err)
 	return app
 }
@@ -160,7 +160,7 @@ func newTestAppWithDAOStore(t *testing.T, serverURL string) *App {
 		UserAgent: "test/0.0",
 		Store:     daoStore,
 	}
-	app, err := NewApp(cfg)
+	app, err := NewApp(t.Context(), cfg)
 	require.NoError(t, err)
 	return app
 }
@@ -168,7 +168,7 @@ func newTestAppWithDAOStore(t *testing.T, serverURL string) *App {
 // TestApp_IsRegistered verifies the registration status check.
 func TestApp_IsRegistered(t *testing.T) {
 	t.Run("FalseWhenNoCredentials", func(t *testing.T) {
-		app, err := NewApp(newTestAppConfig())
+		app, err := NewApp(t.Context(), newTestAppConfig())
 		require.NoError(t, err)
 		// Stub store returns nil credentials → not registered.
 		registered, err := app.IsRegistered()
@@ -182,7 +182,7 @@ func TestApp_IsRegistered(t *testing.T) {
 			UserAgent: "test/0.0",
 			Store:     registeredStubStore{},
 		}
-		app, err := NewApp(cfg)
+		app, err := NewApp(t.Context(), cfg)
 		require.NoError(t, err)
 		registered, err := app.IsRegistered()
 		require.NoError(t, err)
@@ -195,7 +195,7 @@ func TestApp_IsRegistered(t *testing.T) {
 			UserAgent: "test/0.0",
 			Store:     errorCredStore{},
 		}
-		app, err := NewApp(cfg)
+		app, err := NewApp(t.Context(), cfg)
 		require.NoError(t, err)
 		// Error from store → IsRegistered returns false, nil (not the error).
 		registered, err := app.IsRegistered()
@@ -425,7 +425,7 @@ func TestNewApp_DAOStoreFactory(t *testing.T) {
 			UserAgent: "test/0.0",
 			Store:     daoStore,
 		}
-		app, err := NewApp(cfg)
+		app, err := NewApp(t.Context(), cfg)
 		require.NoError(t, err)
 		// The factory must be extracted; a.daos must be non-nil.
 		assert.NotNil(t, app.daos)
@@ -485,9 +485,9 @@ func TestRun_ServerURLDefaults(t *testing.T) {
 // an error-returning lifecycle.
 func TestRunContext_ReportsAFailureToCloseTheStore(t *testing.T) {
 	original := newApp
-	newApp = func(cfg signal.ClientConfig) (*App, error) {
+	newApp = func(ctx context.Context, cfg signal.ClientConfig) (*App, error) {
 		cfg.Store = closeFailsStore{}
-		return NewApp(cfg)
+		return NewApp(ctx, cfg)
 	}
 	t.Cleanup(func() { newApp = original })
 
@@ -537,7 +537,7 @@ func TestRunContext_ReturnsOnCancelAndReleasesTheStore(t *testing.T) {
 	// client on the same dataDir can only be created if the first was closed.
 	// Asserting on the lock rather than on a Close() call is what makes this a
 	// test of the behaviour instead of a test of the code shape.
-	reopened, err := signal.NewClient(signal.ClientConfig{
+	reopened, err := signal.NewClient(t.Context(), signal.ClientConfig{
 		ServerURL: "http://localhost:9999",
 		DataDir:   tmpDir,
 		UserAgent: "signal-desktop-go-test/0.1",

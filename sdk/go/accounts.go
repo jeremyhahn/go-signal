@@ -140,7 +140,7 @@ func (c *Client) Register(ctx context.Context, number, sessionID string) (*Regis
 
 	// Generate auth password in secure memory.
 	passwordPlain := generatePassword()
-	password, err := secrets.NewSecureString(passwordPlain)
+	password, err := secrets.NewSecureString(ctx, passwordPlain)
 	if err != nil {
 		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "protect auth password", err)
 	}
@@ -184,7 +184,7 @@ func (c *Client) Register(ctx context.Context, number, sessionID string) (*Regis
 	}()
 
 	var result RegistrationResult
-	err = c.doRequestWithAuth(ctx, "POST", "/v1/registration", number, password.Plaintext(), regReq, &result)
+	err = c.doRequestWithAuth(ctx, "POST", "/v1/registration", number, password.Plaintext(ctx), regReq, &result)
 	if err != nil {
 		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "register", err)
 	}
@@ -197,7 +197,7 @@ func (c *Client) Register(ctx context.Context, number, sessionID string) (*Regis
 		Password: password,
 		DeviceID: 1,
 	}
-	if err := c.store.SaveCredentials(creds); err != nil {
+	if err := c.store.SaveCredentials(ctx, creds); err != nil {
 		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "save credentials", err)
 	}
 
@@ -264,7 +264,7 @@ func (c *Client) ReplenishPreKeys(ctx context.Context) error {
 		return nil
 	}
 
-	creds, err := c.store.GetCredentials()
+	creds, err := c.store.GetCredentials(ctx)
 	if err != nil || creds == nil {
 		return signalerrors.New(signalerrors.ErrUnauthenticated, "no credentials for pre-key upload")
 	}
@@ -327,8 +327,8 @@ func (c *Client) WhoAmI(ctx context.Context) (*Account, error) {
 }
 
 // ListAccounts returns all locally registered accounts.
-func (c *Client) ListAccounts() ([]Account, error) {
-	creds, err := c.store.GetCredentials()
+func (c *Client) ListAccounts(ctx context.Context) ([]Account, error) {
+	creds, err := c.store.GetCredentials(ctx)
 	if err != nil || creds == nil {
 		return nil, nil
 	}

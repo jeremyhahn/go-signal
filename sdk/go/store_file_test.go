@@ -54,7 +54,7 @@ func TestFileStore_WriteJSON_MarshalError(t *testing.T) {
 func TestFileStore_GetCredentials_NotFound(t *testing.T) {
 	store, err := NewFileStore(t.TempDir())
 	require.NoError(t, err)
-	creds, err := store.GetCredentials()
+	creds, err := store.GetCredentials(t.Context())
 	require.NoError(t, err)
 	assert.Nil(t, creds)
 }
@@ -68,11 +68,11 @@ func TestFileStore_CredentialsRoundTrip(t *testing.T) {
 		UUID:     "test-uuid",
 		PNI:      "test-pni",
 		DeviceID: 1,
-		Password: secrets.MustNewSecureString("my-secret-password"),
+		Password: secrets.MustNewSecureString(t.Context(), "my-secret-password"),
 	}
-	require.NoError(t, store.SaveCredentials(creds))
+	require.NoError(t, store.SaveCredentials(t.Context(), creds))
 
-	got, err := store.GetCredentials()
+	got, err := store.GetCredentials(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, "+15550000001", got.Number)
@@ -81,7 +81,7 @@ func TestFileStore_CredentialsRoundTrip(t *testing.T) {
 	assert.Equal(t, uint32(1), got.DeviceID)
 	// Password loaded from auth token file.
 	require.NotNil(t, got.Password)
-	assert.Equal(t, "my-secret-password", got.Password.Plaintext())
+	assert.Equal(t, "my-secret-password", got.Password.Plaintext(t.Context()))
 }
 
 func TestFileStore_SaveCredentials_NilPassword(t *testing.T) {
@@ -93,9 +93,9 @@ func TestFileStore_SaveCredentials_NilPassword(t *testing.T) {
 		DeviceID: 1,
 		// Password intentionally nil.
 	}
-	require.NoError(t, store.SaveCredentials(creds))
+	require.NoError(t, store.SaveCredentials(t.Context(), creds))
 
-	got, err := store.GetCredentials()
+	got, err := store.GetCredentials(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, "+15550000001", got.Number)
@@ -375,7 +375,7 @@ func TestFileStore_SaveCredentials_WriteJSONFails(t *testing.T) {
 	require.NoError(t, os.Mkdir(store.path("credentials.json"), 0700))
 
 	creds := &Credentials{Number: "+15550000001", DeviceID: 1}
-	err = store.SaveCredentials(creds)
+	err = store.SaveCredentials(t.Context(), creds)
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, syscall.EISDIR)
 }
@@ -391,9 +391,9 @@ func TestFileStore_SaveCredentials_AuthTokenIsDirectory(t *testing.T) {
 	creds := &Credentials{
 		Number:   "+15550000001",
 		DeviceID: 1,
-		Password: secrets.MustNewSecureString("super-secret"),
+		Password: secrets.MustNewSecureString(t.Context(), "super-secret"),
 	}
-	err = store.SaveCredentials(creds)
+	err = store.SaveCredentials(t.Context(), creds)
 	assert.Error(t, err)
 }
 
@@ -430,7 +430,7 @@ func TestFileStore_GetCredentials_CorruptFile(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "credentials.json"), []byte("{not json"), 0o600))
 
-	creds, err := store.GetCredentials()
+	creds, err := store.GetCredentials(t.Context())
 	require.Error(t, err)
 	assert.Nil(t, creds)
 }

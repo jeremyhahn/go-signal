@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -205,7 +206,16 @@ func (s *wsKVStore) Exists(_ context.Context, key string) (bool, error) {
 func (s *wsKVStore) RegisterEntityIndexes(et string, idxs []kvstore.EntityIndex) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.regIndexes[et] = idxs
+	// Registration accumulates, as the kvstore contract requires: the DAO
+	// registers single-field and compound indexes in separate calls.
+	for _, idx := range idxs {
+		name := idx.ResolvedName(et)
+		if !slices.ContainsFunc(s.regIndexes[et], func(have kvstore.EntityIndex) bool {
+			return have.ResolvedName(et) == name
+		}) {
+			s.regIndexes[et] = append(s.regIndexes[et], idx)
+		}
+	}
 	return nil
 }
 
@@ -287,11 +297,11 @@ func newWSFactory() (*daostore.Factory, error) {
 // allowing Manager lifecycle tests to run without a real server.
 type stubSignalStore struct{}
 
-func (stubSignalStore) GetCredentials() (*signal.Credentials, error) { return nil, nil }
-func (stubSignalStore) SaveCredentials(_ *signal.Credentials) error  { return nil }
-func (stubSignalStore) GetContacts() ([]signal.Contact, error)       { return nil, nil }
-func (stubSignalStore) SaveContact(_ *signal.Contact) error          { return nil }
-func (stubSignalStore) DeleteContact(_ string) error                 { return nil }
+func (stubSignalStore) GetCredentials(context.Context) (*signal.Credentials, error)    { return nil, nil }
+func (stubSignalStore) SaveCredentials(_ context.Context, _ *signal.Credentials) error { return nil }
+func (stubSignalStore) GetContacts() ([]signal.Contact, error)                         { return nil, nil }
+func (stubSignalStore) SaveContact(_ *signal.Contact) error                            { return nil }
+func (stubSignalStore) DeleteContact(_ string) error                                   { return nil }
 func (stubSignalStore) GetMessages(_ string, _ int) ([]signal.Message, error) {
 	return nil, nil
 }
@@ -318,7 +328,7 @@ func newTestClient() (*signal.Client, error) {
 		UserAgent: "test/0.0",
 		Store:     stubSignalStore{},
 	}
-	return signal.NewClient(cfg)
+	return signal.NewClient(context.Background(), cfg)
 }
 
 // ---------------------------------------------------------------------------
@@ -333,7 +343,7 @@ type credentialStore struct {
 	creds *signal.Credentials
 }
 
-func (s *credentialStore) GetCredentials() (*signal.Credentials, error) {
+func (s *credentialStore) GetCredentials(context.Context) (*signal.Credentials, error) {
 	return s.creds, nil
 }
 
@@ -349,5 +359,5 @@ func newTestClientWithCreds(t *testing.T, serverURL string, creds *signal.Creden
 		UserAgent: "test/0.0",
 		Store:     &credentialStore{creds: creds},
 	}
-	return signal.NewClient(cfg)
+	return signal.NewClient(t.Context(), cfg)
 }

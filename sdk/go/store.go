@@ -1,14 +1,19 @@
 package signal
 
-import "github.com/jeremyhahn/go-signal/pkg/config/secrets"
+import (
+	"context"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
+)
 
 // Store is the local persistence interface for the Signal client SDK.
 // The default implementation is file-based (FileStore). When go-signal
 // is embedded in go-quicbaas, a distributed implementation can be provided.
 type Store interface {
-	// Credentials
-	GetCredentials() (*Credentials, error)
-	SaveCredentials(creds *Credentials) error
+	// Credentials. The password moves in and out of protected memory, which
+	// takes the caller's context.
+	GetCredentials(ctx context.Context) (*Credentials, error)
+	SaveCredentials(ctx context.Context, creds *Credentials) error
 
 	// Contacts
 	GetContacts() ([]Contact, error)

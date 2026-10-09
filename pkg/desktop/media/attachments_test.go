@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -210,7 +211,16 @@ func (s *mediaKVStore) Exists(_ context.Context, key string) (bool, error) {
 func (s *mediaKVStore) RegisterEntityIndexes(et string, idxs []kvstore.EntityIndex) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.regIndexes[et] = idxs
+	// Registration accumulates, as the kvstore contract requires: the DAO
+	// registers single-field and compound indexes in separate calls.
+	for _, idx := range idxs {
+		name := idx.ResolvedName(et)
+		if !slices.ContainsFunc(s.regIndexes[et], func(have kvstore.EntityIndex) bool {
+			return have.ResolvedName(et) == name
+		}) {
+			s.regIndexes[et] = append(s.regIndexes[et], idx)
+		}
+	}
 	return nil
 }
 

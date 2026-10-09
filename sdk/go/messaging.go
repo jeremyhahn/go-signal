@@ -44,10 +44,10 @@ func (c *Client) Send(ctx context.Context, recipient, message string, opts *Send
 	var content string
 	var msgType int
 
-	if err := c.initCrypto(); err == nil {
+	if err := c.initCrypto(ctx); err == nil {
 		if err := c.ensureSession(ctx, recipient, 1); err == nil {
 			plaintext := []byte(message)
-			ciphertext, err := c.encryptMessage(recipient, 1, plaintext)
+			ciphertext, err := c.encryptMessage(ctx, recipient, 1, plaintext)
 			if err == nil {
 				serialized, serErr := ciphertext.Serialize()
 				if serErr == nil {
@@ -114,7 +114,7 @@ func (c *Client) Receive(ctx context.Context, _ *ReceiveOptions) ([]ReceivedMess
 		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "receive messages", err)
 	}
 
-	_ = c.initCrypto()
+	_ = c.initCrypto(ctx)
 
 	for i := range result.Messages {
 		msg := &result.Messages[i]
@@ -124,7 +124,7 @@ func (c *Client) Receive(ctx context.Context, _ *ReceiveOptions) ([]ReceivedMess
 		if err == nil && c.crypto != nil {
 			switch msg.Type {
 			case protocol.PREKEY_TYPE, protocol.WHISPER_TYPE:
-				plaintext, err := c.decryptMessage(msg.Source, uint32(msg.SourceDevice), msg.Type, contentBytes)
+				plaintext, err := c.decryptMessage(ctx, msg.Source, uint32(msg.SourceDevice), msg.Type, contentBytes)
 				if err == nil {
 					msg.Body = string(plaintext)
 				}
@@ -235,7 +235,7 @@ func (c *Client) sendSignalContent(ctx context.Context, recipient string, conten
 // the account's own UUID so the server can fan it out to every linked device.
 // An error is returned if credentials are not present in the local store.
 func (c *Client) SendContacts(ctx context.Context) error {
-	creds, err := c.store.GetCredentials()
+	creds, err := c.store.GetCredentials(ctx)
 	if err != nil {
 		return signalerrors.Wrap(signalerrors.ErrInternal, "get credentials", err)
 	}

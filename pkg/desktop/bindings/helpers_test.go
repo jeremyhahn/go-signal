@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -207,7 +208,16 @@ func (s *bindKVStore) Exists(_ context.Context, key string) (bool, error) {
 func (s *bindKVStore) RegisterEntityIndexes(et string, idxs []kvstore.EntityIndex) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.regIndexes[et] = idxs
+	// Registration accumulates, as the kvstore contract requires: the DAO
+	// registers single-field and compound indexes in separate calls.
+	for _, idx := range idxs {
+		name := idx.ResolvedName(et)
+		if !slices.ContainsFunc(s.regIndexes[et], func(have kvstore.EntityIndex) bool {
+			return have.ResolvedName(et) == name
+		}) {
+			s.regIndexes[et] = append(s.regIndexes[et], idx)
+		}
+	}
 	return nil
 }
 
@@ -290,11 +300,11 @@ func newTestBindFactory(t *testing.T) *daostore.Factory {
 // stubBindStore is a no-op signal.Store for creating a test Client.
 type stubBindStore struct{}
 
-func (stubBindStore) GetCredentials() (*signal.Credentials, error) { return nil, nil }
-func (stubBindStore) SaveCredentials(_ *signal.Credentials) error  { return nil }
-func (stubBindStore) GetContacts() ([]signal.Contact, error)       { return nil, nil }
-func (stubBindStore) SaveContact(_ *signal.Contact) error          { return nil }
-func (stubBindStore) DeleteContact(_ string) error                 { return nil }
+func (stubBindStore) GetCredentials(context.Context) (*signal.Credentials, error)    { return nil, nil }
+func (stubBindStore) SaveCredentials(_ context.Context, _ *signal.Credentials) error { return nil }
+func (stubBindStore) GetContacts() ([]signal.Contact, error)                         { return nil, nil }
+func (stubBindStore) SaveContact(_ *signal.Contact) error                            { return nil }
+func (stubBindStore) DeleteContact(_ string) error                                   { return nil }
 func (stubBindStore) GetMessages(_ string, _ int) ([]signal.Message, error) {
 	return nil, nil
 }
@@ -320,7 +330,7 @@ func newBindClient(t *testing.T) *signal.Client {
 		UserAgent: "test/0.0",
 		Store:     stubBindStore{},
 	}
-	c, err := signal.NewClient(cfg)
+	c, err := signal.NewClient(t.Context(), cfg)
 	require.NoError(t, err)
 	return c
 }
@@ -335,7 +345,7 @@ func newBindClientURL(t *testing.T, serverURL string) *signal.Client {
 		UserAgent: "test/0.0",
 		Store:     stubBindStore{},
 	}
-	c, err := signal.NewClient(cfg)
+	c, err := signal.NewClient(t.Context(), cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 	return c
@@ -391,7 +401,7 @@ func newBindClientWithContacts(t *testing.T, contacts []signal.Contact) *signal.
 		UserAgent: "test/0.0",
 		Store:     store,
 	}
-	c, err := signal.NewClient(cfg)
+	c, err := signal.NewClient(t.Context(), cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 	return c
@@ -407,7 +417,7 @@ func newBindClientWithGroups(t *testing.T, groups []signal.Group) *signal.Client
 		UserAgent: "test/0.0",
 		Store:     store,
 	}
-	c, err := signal.NewClient(cfg)
+	c, err := signal.NewClient(t.Context(), cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 	return c

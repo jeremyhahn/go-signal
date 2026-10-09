@@ -1,6 +1,7 @@
 package signal
 
 import (
+	"context"
 	"os"
 	"testing"
 
@@ -26,8 +27,10 @@ type mockStore struct {
 	stickerPacks     []InstalledStickerPack
 }
 
-func (s *mockStore) GetCredentials() (*Credentials, error) { return s.credentials, s.credErr }
-func (s *mockStore) SaveCredentials(c *Credentials) error {
+func (s *mockStore) GetCredentials(context.Context) (*Credentials, error) {
+	return s.credentials, s.credErr
+}
+func (s *mockStore) SaveCredentials(_ context.Context, c *Credentials) error {
 	s.credentials = c
 	return s.saveCredErr
 }
@@ -125,7 +128,7 @@ func newTestClient(t *testing.T, serverURL string, store Store) *Client {
 		DataDir:   t.TempDir(),
 		Store:     store,
 	}
-	c, err := NewClient(cfg)
+	c, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -143,14 +146,14 @@ func newTestClientWithCreds(t *testing.T, serverURL string, creds *Credentials) 
 // --- NewClient tests ---
 
 func TestNewClient_MissingServerURL(t *testing.T) {
-	_, err := NewClient(ClientConfig{DataDir: t.TempDir(), Store: &stubStore{}})
+	_, err := NewClient(t.Context(), ClientConfig{DataDir: t.TempDir(), Store: &stubStore{}})
 	if err == nil {
 		t.Error("expected error for missing ServerURL")
 	}
 }
 
 func TestNewClient_MissingDataDir(t *testing.T) {
-	_, err := NewClient(ClientConfig{ServerURL: "http://localhost", Store: &stubStore{}})
+	_, err := NewClient(t.Context(), ClientConfig{ServerURL: "http://localhost", Store: &stubStore{}})
 	if err == nil {
 		t.Error("expected error for missing DataDir")
 	}
@@ -162,7 +165,7 @@ func TestNewClient_DefaultUserAgent(t *testing.T) {
 		DataDir:   t.TempDir(),
 		Store:     &stubStore{},
 	}
-	c, err := NewClient(cfg)
+	c, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -179,7 +182,7 @@ func TestNewClient_WithStore(t *testing.T) {
 		DataDir:   t.TempDir(),
 		Store:     store,
 	}
-	c, err := NewClient(cfg)
+	c, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -194,7 +197,7 @@ func TestNewClient_LoadsCredentialsFromStore(t *testing.T) {
 		Number:   "+15550000001",
 		UUID:     "some-uuid",
 		DeviceID: 2,
-		Password: secrets.MustNewSecureString("mypassword"),
+		Password: secrets.MustNewSecureString(t.Context(), "mypassword"),
 	}
 	ms := &mockStore{credentials: creds}
 	cfg := ClientConfig{
@@ -202,7 +205,7 @@ func TestNewClient_LoadsCredentialsFromStore(t *testing.T) {
 		DataDir:   t.TempDir(),
 		Store:     ms,
 	}
-	c, err := NewClient(cfg)
+	c, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -222,7 +225,7 @@ func TestClient_Config(t *testing.T) {
 		Store:     &stubStore{},
 		UserAgent: "test-agent/1.0",
 	}
-	c, err := NewClient(cfg)
+	c, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -239,7 +242,7 @@ func TestClient_Config(t *testing.T) {
 func TestClient_Close_WithNilStore(t *testing.T) {
 	c := &Client{
 		config: ClientConfig{
-			Password: secrets.MustNewSecureString("pw"),
+			Password: secrets.MustNewSecureString(t.Context(), "pw"),
 		},
 	}
 	if err := c.Close(); err != nil {
@@ -249,7 +252,7 @@ func TestClient_Close_WithNilStore(t *testing.T) {
 
 // mustSecurePassword seals pw for test fixtures, panicking on failure.
 func mustSecurePassword(pw string) *secrets.SecureString {
-	ss, err := NewSecurePassword(pw)
+	ss, err := NewSecurePassword(context.Background(), pw)
 	if err != nil {
 		panic(err)
 	}
@@ -257,21 +260,21 @@ func mustSecurePassword(pw string) *secrets.SecureString {
 }
 
 func TestNewSecurePassword(t *testing.T) {
-	ss, err := NewSecurePassword("hunter2")
+	ss, err := NewSecurePassword(t.Context(), "hunter2")
 	if err != nil {
 		t.Fatalf("NewSecurePassword: %v", err)
 	}
 	if ss == nil {
 		t.Fatal("expected non-nil SecureString")
 	}
-	if ss.Plaintext() != "hunter2" {
-		t.Errorf("Plaintext() = %q", ss.Plaintext())
+	if ss.Plaintext(t.Context()) != "hunter2" {
+		t.Errorf("Plaintext() = %q", ss.Plaintext(t.Context()))
 	}
 	ss.Destroy()
 }
 
 func TestNewSecurePasswordEmpty(t *testing.T) {
-	ss, err := NewSecurePassword("")
+	ss, err := NewSecurePassword(t.Context(), "")
 	if err == nil {
 		t.Fatal("expected an error for an empty password")
 	}
@@ -298,7 +301,7 @@ func TestNewClient_NilStore_AutoCreatesDAOStore(t *testing.T) {
 		DataDir:   t.TempDir(),
 		// Store: nil intentionally
 	}
-	c, err := NewClient(cfg)
+	c, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient with nil store: %v", err)
 	}
@@ -319,7 +322,7 @@ func TestNewClient_NilStore_DAOStoreCreationError(t *testing.T) {
 		ServerURL: "http://localhost",
 		DataDir:   conflictFile, // DAO store can't be created inside a file
 	}
-	_, err := NewClient(cfg)
+	_, err := NewClient(t.Context(), cfg)
 	if err == nil {
 		t.Error("expected error when DAO store creation fails")
 	}
@@ -330,7 +333,7 @@ func TestInitCrypto_WithCredentials_SetsRegID(t *testing.T) {
 	creds := &Credentials{UUID: "my-uuid", DeviceID: 7, Password: mustSecurePassword("pw")}
 	ms := &mockStore{credentials: creds}
 	c := newTestClient(t, "http://localhost", ms)
-	if err := c.initCrypto(); err != nil {
+	if err := c.initCrypto(t.Context()); err != nil {
 		t.Fatalf("initCrypto with credentials: %v", err)
 	}
 	if c.crypto == nil {
@@ -339,7 +342,7 @@ func TestInitCrypto_WithCredentials_SetsRegID(t *testing.T) {
 }
 
 func TestNewClient_WithInvalidCACert(t *testing.T) {
-	badPEM := secrets.MustNewSecureString("not-a-valid-cert")
+	badPEM := secrets.MustNewSecureString(t.Context(), "not-a-valid-cert")
 	defer badPEM.Destroy()
 	cfg := ClientConfig{
 		ServerURL: "http://localhost",
@@ -347,7 +350,7 @@ func TestNewClient_WithInvalidCACert(t *testing.T) {
 		Store:     &stubStore{},
 		CACert:    badPEM,
 	}
-	_, err := NewClient(cfg)
+	_, err := NewClient(t.Context(), cfg)
 	if err == nil {
 		t.Error("expected error for invalid CA cert PEM")
 	}

@@ -22,9 +22,10 @@ type App struct {
 
 // NewApp creates the desktop application. The Signal SDK client is created
 // with a QRDB-backed DAOStore by default (shared with the CLI). The desktop
-// App wraps the client with Wails-bound methods for the React frontend.
-func NewApp(cfg signal.ClientConfig) (*App, error) {
-	client, err := signal.NewClient(cfg)
+// App wraps the client with Wails-bound methods for the React frontend. ctx
+// bounds loading the saved credentials into protected memory.
+func NewApp(ctx context.Context, cfg signal.ClientConfig) (*App, error) {
+	client, err := signal.NewClient(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -71,9 +72,10 @@ func (a *App) Close() error {
 // Account bindings (exposed to frontend)
 // ---------------------------------------------------------------------------
 
-// IsRegistered checks whether the client has stored credentials.
+// IsRegistered checks whether the client has stored credentials, under the
+// application context Wails hands to Startup.
 func (a *App) IsRegistered() (bool, error) {
-	creds, err := a.client.Config().Store.GetCredentials()
+	creds, err := a.client.Config().Store.GetCredentials(a.ctx)
 	if err != nil {
 		return false, nil
 	}

@@ -69,7 +69,9 @@ func RunContext(ctx context.Context, serverURL, dataDir string) (err error) {
 		UserAgent: "signal-desktop-go/0.1",
 	}
 
-	app, err := newApp(cfg)
+	// Setup runs detached from cancellation, per the contract above: a
+	// cancelled ctx must not leave saved credentials unloaded.
+	app, err := newApp(context.WithoutCancel(ctx), cfg)
 	if err != nil {
 		return signalerrors.Wrap(signalerrors.ErrInternal, "desktop: create app", err)
 	}

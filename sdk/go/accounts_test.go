@@ -448,7 +448,7 @@ func TestClient_ListAccounts_WithCredentials(t *testing.T) {
 	}
 	ms := &mockStore{credentials: creds}
 	c := newTestClient(t, "http://localhost", ms)
-	accounts, err := c.ListAccounts()
+	accounts, err := c.ListAccounts(t.Context())
 	if err != nil {
 		t.Fatalf("ListAccounts: %v", err)
 	}
@@ -462,7 +462,7 @@ func TestClient_ListAccounts_WithCredentials(t *testing.T) {
 
 func TestClient_ListAccounts_NoCredentials(t *testing.T) {
 	c := newTestClient(t, "http://localhost", &stubStore{})
-	accounts, err := c.ListAccounts()
+	accounts, err := c.ListAccounts(t.Context())
 	if err != nil {
 		t.Fatalf("ListAccounts: %v", err)
 	}
@@ -687,7 +687,7 @@ func TestClient_Register_SaveCredentialsFails_WipesPassword(t *testing.T) {
 	if ms.credentials == nil || ms.credentials.Password == nil {
 		t.Fatal("expected the store to have seen the credential")
 	}
-	if !ms.credentials.Password.IsDestroyed() {
+	if !ms.credentials.Password.IsDestroyed(t.Context()) {
 		t.Error("the sealed auth password must be wiped when registration fails")
 	}
 	if c.config.Password != nil {
@@ -710,10 +710,10 @@ func TestClient_Register_Success_KeepsPassword(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	if c.config.Password == nil || c.config.Password.IsDestroyed() {
+	if c.config.Password == nil || c.config.Password.IsDestroyed(t.Context()) {
 		t.Fatal("the client must own a usable auth password after registration")
 	}
-	if c.config.Password.Plaintext() == "" {
+	if c.config.Password.Plaintext(t.Context()) == "" {
 		t.Error("the auth password must be readable for subsequent requests")
 	}
 }

@@ -1,6 +1,7 @@
 package signal
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"net/http"
@@ -36,8 +37,9 @@ type Client struct {
 	crypto     *cryptoState
 }
 
-// NewClient creates a new Signal client with the given configuration.
-func NewClient(cfg ClientConfig) (*Client, error) {
+// NewClient creates a new Signal client with the given configuration. ctx
+// bounds reading the protected CA certificate and loading saved credentials.
+func NewClient(ctx context.Context, cfg ClientConfig) (*Client, error) {
 	if cfg.ServerURL == "" {
 		return nil, signalerrors.New(signalerrors.ErrInvalidArgument, "signal: ServerURL is required")
 	}
@@ -52,8 +54,8 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	tlsConfig := &tls.Config{
 		MinVersion: tls.VersionTLS12,
 	}
-	if cfg.CACert != nil && !cfg.CACert.IsDestroyed() {
-		caBytes := cfg.CACert.Bytes()
+	if cfg.CACert != nil && !cfg.CACert.IsDestroyed(ctx) {
+		caBytes := cfg.CACert.Bytes(ctx)
 		if caBytes != nil {
 			pool := x509.NewCertPool()
 			if !pool.AppendCertsFromPEM(caBytes) {
@@ -86,12 +88,12 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 	}
 
 	// Load saved credentials if available.
-	creds, err := store.GetCredentials()
+	creds, err := store.GetCredentials(ctx)
 	if err == nil && creds != nil {
 		if cfg.Account == "" {
 			cfg.Account = creds.Number
 		}
-		if cfg.Password == nil || cfg.Password.IsDestroyed() {
+		if cfg.Password == nil || cfg.Password.IsDestroyed(ctx) {
 			cfg.Password = creds.Password
 		}
 		if cfg.DeviceID == 0 {
@@ -122,17 +124,17 @@ func (c *Client) Config() ClientConfig {
 
 // getPassword extracts the password from SecureString for use in HTTP auth.
 // The returned string should be used immediately and not stored.
-func (c *Client) getPassword() string {
+func (c *Client) getPassword(ctx context.Context) string {
 	if c.config.Password == nil {
 		return ""
 	}
-	return c.config.Password.Plaintext()
+	return c.config.Password.Plaintext(ctx)
 }
 
 // NewSecurePassword creates a SecureString from a plain password string,
 // wiping the source. Convenience for CLI flag → SecureString conversion.
 // An empty password, or a failure to obtain a protected allocation, is
 // returned as an error rather than yielding an unusable credential.
-func NewSecurePassword(password string) (*secrets.SecureString, error) {
-	return secrets.NewSecureString(password)
+func NewSecurePassword(ctx context.Context, password string) (*secrets.SecureString, error) {
+	return secrets.NewSecureString(ctx, password)
 }

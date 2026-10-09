@@ -34,7 +34,7 @@ func TestClient_ListIdentities_EmptyDAOStore(t *testing.T) {
 		DataDir:   dir,
 		Store:     daoStore,
 	}
-	c, err := NewClient(cfg)
+	c, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestClient_ListIdentities_WithUnverifiedIdentity(t *testing.T) {
 	}
 
 	cfg := ClientConfig{ServerURL: "http://localhost", DataDir: dir, Store: daoStore}
-	c, err := NewClient(cfg)
+	c, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestClient_ListIdentities_WithVerifiedIdentity(t *testing.T) {
 	}
 
 	cfg := ClientConfig{ServerURL: "http://localhost", DataDir: dir, Store: daoStore}
-	c, err := NewClient(cfg)
+	c, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestClient_TrustIdentity_NotFoundInDAO(t *testing.T) {
 		DataDir:   dir,
 		Store:     daoStore,
 	}
-	c, err := NewClient(cfg)
+	c, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

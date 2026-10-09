@@ -105,7 +105,7 @@ func TestClient_UploadStickerPack_HappyPath(t *testing.T) {
 		// codec_json build tag the file-backed DAO needs.
 		Store: &stubStore{},
 	}
-	client, err := NewClient(cfg)
+	client, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestClient_UploadStickerPack_RejectsBadPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
 	defer srv.Close()
 	cfg := ClientConfig{ServerURL: srv.URL, DataDir: t.TempDir(), Store: &stubStore{}}
-	client, err := NewClient(cfg)
+	client, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestClient_GetSticker_HappyPath(t *testing.T) {
 	defer srv.Close()
 
 	cfg := ClientConfig{ServerURL: srv.URL, DataDir: t.TempDir(), Store: &stubStore{}}
-	client, err := NewClient(cfg)
+	client, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestClient_GetSticker_HappyPath(t *testing.T) {
 
 func TestClient_GetSticker_BadPackKeyLength(t *testing.T) {
 	cfg := ClientConfig{ServerURL: "http://localhost:0", DataDir: t.TempDir(), Store: &stubStore{}}
-	client, _ := NewClient(cfg)
+	client, _ := NewClient(t.Context(), cfg)
 	defer func() { _ = client.Close() }()
 	_, err := client.GetSticker(context.Background(), "deadbeef", 0, []byte{1, 2, 3})
 	if err == nil {
@@ -214,7 +214,7 @@ func TestClient_GetSticker_TamperedEnvelopeRejected(t *testing.T) {
 	defer srv.Close()
 
 	cfg := ClientConfig{ServerURL: srv.URL, DataDir: t.TempDir(), Store: &stubStore{}}
-	client, _ := NewClient(cfg)
+	client, _ := NewClient(t.Context(), cfg)
 	defer func() { _ = client.Close() }()
 	_, err := client.GetSticker(context.Background(), "deadbeef", 0, packKey)
 	if err == nil {
@@ -224,7 +224,7 @@ func TestClient_GetSticker_TamperedEnvelopeRejected(t *testing.T) {
 
 func TestClient_StickerPackRegistry_CRUDRoundTrip(t *testing.T) {
 	cfg := ClientConfig{ServerURL: "http://localhost:0", DataDir: t.TempDir(), Store: &stubStore{}}
-	client, err := NewClient(cfg)
+	client, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestClient_StickerPackRegistry_CRUDRoundTrip(t *testing.T) {
 
 func TestClient_SaveStickerPack_RejectsEmptyID(t *testing.T) {
 	cfg := ClientConfig{ServerURL: "http://localhost:0", DataDir: t.TempDir(), Store: &stubStore{}}
-	client, _ := NewClient(cfg)
+	client, _ := NewClient(t.Context(), cfg)
 	defer func() { _ = client.Close() }()
 	if err := client.SaveStickerPack(&InstalledStickerPack{}); err == nil {
 		t.Error("expected error on empty PackID")
@@ -295,7 +295,7 @@ func TestClient_UploadStickerPack_SurfacesServerError(t *testing.T) {
 	defer srv.Close()
 
 	cfg := ClientConfig{ServerURL: srv.URL, DataDir: t.TempDir(), Store: &stubStore{}}
-	client, err := NewClient(cfg)
+	client, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -467,7 +467,7 @@ func TestUploadStickerPayload_EmbeddedCDN_ServerError(t *testing.T) {
 func TestClient_GetSticker_EmptyPackID(t *testing.T) {
 	packKey, _ := stickers.NewPackKey()
 	cfg := ClientConfig{ServerURL: "http://localhost:0", DataDir: t.TempDir(), Store: &stubStore{}}
-	client, _ := NewClient(cfg)
+	client, _ := NewClient(t.Context(), cfg)
 	defer func() { _ = client.Close() }()
 
 	_, err := client.GetSticker(context.Background(), "", 0, packKey)
@@ -484,7 +484,7 @@ func TestClient_GetSticker_ServerError(t *testing.T) {
 
 	packKey, _ := stickers.NewPackKey()
 	cfg := ClientConfig{ServerURL: srv.URL, DataDir: t.TempDir(), Store: &stubStore{}}
-	client, err := NewClient(cfg)
+	client, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -533,7 +533,7 @@ func TestClient_UploadStickerPack_StickerCountMismatch(t *testing.T) {
 
 	packDir := writeStickerPackDir(t) // has 2 stickers
 	cfg := ClientConfig{ServerURL: srv.URL, DataDir: t.TempDir(), Store: &stubStore{}}
-	client, err := NewClient(cfg)
+	client, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -553,15 +553,15 @@ type stubStore struct {
 	stickerPacks []InstalledStickerPack
 }
 
-func (*stubStore) GetCredentials() (*Credentials, error)      { return nil, nil }
-func (*stubStore) SaveCredentials(*Credentials) error         { return nil }
-func (*stubStore) GetContacts() ([]Contact, error)            { return nil, nil }
-func (*stubStore) SaveContact(*Contact) error                 { return nil }
-func (*stubStore) DeleteContact(string) error                 { return nil }
-func (*stubStore) GetMessages(string, int) ([]Message, error) { return nil, nil }
-func (*stubStore) SaveMessage(*Message) error                 { return nil }
-func (*stubStore) GetGroups() ([]Group, error)                { return nil, nil }
-func (*stubStore) SaveGroup(*Group) error                     { return nil }
+func (*stubStore) GetCredentials(context.Context) (*Credentials, error) { return nil, nil }
+func (*stubStore) SaveCredentials(context.Context, *Credentials) error  { return nil }
+func (*stubStore) GetContacts() ([]Contact, error)                      { return nil, nil }
+func (*stubStore) SaveContact(*Contact) error                           { return nil }
+func (*stubStore) DeleteContact(string) error                           { return nil }
+func (*stubStore) GetMessages(string, int) ([]Message, error)           { return nil, nil }
+func (*stubStore) SaveMessage(*Message) error                           { return nil }
+func (*stubStore) GetGroups() ([]Group, error)                          { return nil, nil }
+func (*stubStore) SaveGroup(*Group) error                               { return nil }
 func (s *stubStore) GetStickerPacks() ([]InstalledStickerPack, error) {
 	return append([]InstalledStickerPack(nil), s.stickerPacks...), nil
 }

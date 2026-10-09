@@ -107,7 +107,7 @@ func TestDoRequest_WithBasicAuth_UsingUUID(t *testing.T) {
 	creds := &Credentials{
 		UUID:     "user-uuid",
 		DeviceID: 1,
-		Password: secrets.MustNewSecureString("mypass"),
+		Password: secrets.MustNewSecureString(t.Context(), "mypass"),
 	}
 	ms := &mockStore{credentials: creds}
 
@@ -122,10 +122,10 @@ func TestDoRequest_WithBasicAuth_UsingUUID(t *testing.T) {
 		ServerURL: srv.URL,
 		DataDir:   t.TempDir(),
 		Store:     ms,
-		Password:  secrets.MustNewSecureString("mypass"),
+		Password:  secrets.MustNewSecureString(t.Context(), "mypass"),
 		DeviceID:  1,
 	}
-	c, err := NewClient(cfg)
+	c, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -151,10 +151,10 @@ func TestDoRequest_WithBasicAuth_FallbackToAccount(t *testing.T) {
 		DataDir:   t.TempDir(),
 		Store:     &stubStore{}, // GetCredentials returns nil
 		Account:   "+15550000001",
-		Password:  secrets.MustNewSecureString("pw"),
+		Password:  secrets.MustNewSecureString(t.Context(), "pw"),
 		DeviceID:  1,
 	}
-	c, err := NewClient(cfg)
+	c, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

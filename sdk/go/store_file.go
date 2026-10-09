@@ -1,6 +1,7 @@
 package signal
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -61,7 +62,7 @@ type credentialsOnDisk struct {
 	DeviceID uint32 `json:"deviceId"`
 }
 
-func (s *FileStore) GetCredentials() (*Credentials, error) {
+func (s *FileStore) GetCredentials(ctx context.Context) (*Credentials, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -77,7 +78,7 @@ func (s *FileStore) GetCredentials() (*Credentials, error) {
 	var password *secrets.SecureString
 	pwBytes, err := os.ReadFile(s.path(".auth_token"))
 	if err == nil && len(pwBytes) > 0 {
-		password, err = secrets.NewSecureString(string(pwBytes))
+		password, err = secrets.NewSecureString(ctx, string(pwBytes))
 		// Wipe the intermediate buffer immediately, whether or not sealing
 		// succeeded.
 		for i := range pwBytes {
@@ -97,7 +98,7 @@ func (s *FileStore) GetCredentials() (*Credentials, error) {
 	}, nil
 }
 
-func (s *FileStore) SaveCredentials(creds *Credentials) error {
+func (s *FileStore) SaveCredentials(ctx context.Context, creds *Credentials) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -116,7 +117,7 @@ func (s *FileStore) SaveCredentials(creds *Credentials) error {
 	// The password is extracted from SecureString, written, and the
 	// intermediate buffer is zeroed.
 	if creds.Password != nil {
-		pw := creds.Password.Bytes()
+		pw := creds.Password.Bytes(ctx)
 		if pw != nil {
 			if err := os.WriteFile(s.path(".auth_token"), pw, 0600); err != nil {
 				for i := range pw {
