@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 // fixedNow returns a static UTC instant the SigV4 reference vectors use:
@@ -22,7 +24,7 @@ func fixedNow() time.Time {
 //
 // The expected key for us-east-1/iam at 2015-08-30 is the hex digest below.
 func TestDeriveSigningKey_AWSReference(t *testing.T) {
-	got := deriveSigningKey("wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", "20150830", "us-east-1", "iam")
+	got := deriveSigningKey([]byte("wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"), "20150830", "us-east-1", "iam")
 	wantHex := "c4afb1cc5771d871763a393e44b703571b55cc28424d1a5e86da6ed3c154a4b9"
 	gotHex := toHex(got)
 	if gotHex != wantHex {
@@ -95,7 +97,7 @@ func TestAwsURIEncode_RespectsSlashFlag(t *testing.T) {
 func TestSign_AddsAllExpectedHeaders(t *testing.T) {
 	signer := &sigV4{
 		accessKeyID:     "AKIDEXAMPLE",
-		secretAccessKey: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+		secretAccessKey: secrets.MustNewSecureString(t.Context(), "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"),
 		region:          "us-east-1",
 		service:         sesService,
 		now:             fixedNow,
@@ -104,7 +106,7 @@ func TestSign_AddsAllExpectedHeaders(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, "https://email.us-east-1.amazonaws.com/v2/email/outbound-emails",
 		strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
-	if err := signer.Sign(req, body); err != nil {
+	if err := signer.Sign(t.Context(), req, body); err != nil {
 		t.Fatalf("Sign: %v", err)
 	}
 	if got := req.Header.Get("X-Amz-Date"); got != "20150830T123600Z" {
@@ -129,7 +131,7 @@ func TestSign_AddsAllExpectedHeaders(t *testing.T) {
 	req2, _ := http.NewRequest(http.MethodPost, "https://email.us-east-1.amazonaws.com/v2/email/outbound-emails",
 		strings.NewReader(string(body)))
 	req2.Header.Set("Content-Type", "application/json")
-	if err := signer.Sign(req2, body); err != nil {
+	if err := signer.Sign(t.Context(), req2, body); err != nil {
 		t.Fatalf("Sign: %v", err)
 	}
 	if req.Header.Get("Authorization") != req2.Header.Get("Authorization") {
@@ -140,7 +142,7 @@ func TestSign_AddsAllExpectedHeaders(t *testing.T) {
 func TestSign_PropagatesSessionToken(t *testing.T) {
 	signer := &sigV4{
 		accessKeyID:     "AKID",
-		secretAccessKey: "secret",
+		secretAccessKey: secrets.MustNewSecureString(t.Context(), "secret"),
 		sessionToken:    "stoken",
 		region:          "us-east-1",
 		service:         sesService,
@@ -148,7 +150,7 @@ func TestSign_PropagatesSessionToken(t *testing.T) {
 	}
 	req, _ := http.NewRequest(http.MethodPost, "https://email.us-east-1.amazonaws.com/v2/email/outbound-emails",
 		strings.NewReader("{}"))
-	if err := signer.Sign(req, []byte("{}")); err != nil {
+	if err := signer.Sign(t.Context(), req, []byte("{}")); err != nil {
 		t.Fatalf("Sign: %v", err)
 	}
 	if got := req.Header.Get("X-Amz-Security-Token"); got != "stoken" {
@@ -159,15 +161,36 @@ func TestSign_PropagatesSessionToken(t *testing.T) {
 func TestSign_RejectsMissingCredentials(t *testing.T) {
 	signer := &sigV4{region: "us-east-1"}
 	req, _ := http.NewRequest(http.MethodPost, "https://example.com/", strings.NewReader("{}"))
-	if err := signer.Sign(req, []byte("{}")); err == nil {
+	if err := signer.Sign(t.Context(), req, []byte("{}")); err == nil {
 		t.Fatal("expected error for missing creds")
 	}
 }
 
 func TestSign_RejectsMissingRegion(t *testing.T) {
-	signer := &sigV4{accessKeyID: "k", secretAccessKey: "s"}
+	signer := &sigV4{accessKeyID: "k", secretAccessKey: secrets.MustNewSecureString(t.Context(), "s")}
 	req, _ := http.NewRequest(http.MethodPost, "https://example.com/", strings.NewReader("{}"))
-	if err := signer.Sign(req, []byte("{}")); err == nil {
+	if err := signer.Sign(t.Context(), req, []byte("{}")); err == nil {
 		t.Fatal("expected error for missing region")
+	}
+}
+
+func TestSign_RejectsDestroyedSecret(t *testing.T) {
+	secret := secrets.MustNewSecureString(t.Context(), "s")
+	signer := &sigV4{accessKeyID: "k", secretAccessKey: secret, region: "us-east-1"}
+	secret.Destroy()
+	req, _ := http.NewRequest(http.MethodPost, "https://example.com/", strings.NewReader("{}"))
+	if err := signer.Sign(t.Context(), req, []byte("{}")); err == nil {
+		t.Fatal("expected error for destroyed secret")
+	}
+	if req.Header.Get("Authorization") != "" {
+		t.Fatal("Authorization must not be set when the secret is unavailable")
+	}
+}
+
+func TestDeriveSigningKey_DoesNotMutateSecret(t *testing.T) {
+	secret := []byte("abc")
+	_ = deriveSigningKey(secret, "20150830", "us-east-1", "iam")
+	if string(secret) != "abc" {
+		t.Fatalf("secret mutated: %q", secret)
 	}
 }

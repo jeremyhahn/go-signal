@@ -1,6 +1,7 @@
 package ses
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 // sigV4 holds the credentials + region needed to sign AWS API requests.
@@ -19,7 +22,7 @@ import (
 // no STS session tokens beyond a literal SessionToken header).
 type sigV4 struct {
 	accessKeyID     string
-	secretAccessKey string
+	secretAccessKey *secrets.SecureString
 	sessionToken    string
 	region          string
 	service         string
@@ -32,8 +35,8 @@ type sigV4 struct {
 // The body bytes must be the exact bytes that will be transmitted; SES
 // computes the payload hash from them. This implementation handles only
 // non-streaming requests (Content-Length set, body buffered).
-func (s *sigV4) Sign(req *http.Request, body []byte) error {
-	if s.accessKeyID == "" || s.secretAccessKey == "" {
+func (s *sigV4) Sign(ctx context.Context, req *http.Request, body []byte) error {
+	if s.accessKeyID == "" || s.secretAccessKey.IsEmpty(ctx) {
 		return errors.New("ses sigv4: missing credentials")
 	}
 	if s.region == "" {
@@ -80,7 +83,14 @@ func (s *sigV4) Sign(req *http.Request, body []byte) error {
 		hexSHA256([]byte(canonicalRequest)),
 	}, "\n")
 
-	signingKey := deriveSigningKey(s.secretAccessKey, dateStamp, s.region, s.service)
+	// The secret is revealed only for the key derivation and never becomes a
+	// Go string.
+	var signingKey []byte
+	if !s.secretAccessKey.WithBytes(ctx, func(secret []byte) {
+		signingKey = deriveSigningKey(secret, dateStamp, s.region, s.service)
+	}) {
+		return errors.New("ses sigv4: credentials unavailable")
+	}
 	signature := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
 
 	auth := "AWS4-HMAC-SHA256 " +
@@ -111,8 +121,10 @@ func hmacSHA256(key, data []byte) []byte {
 //	kRegion  = HMAC(kDate, region)
 //	kService = HMAC(kRegion, service)
 //	kSigning = HMAC(kService, "aws4_request")
-func deriveSigningKey(secret, date, region, service string) []byte {
-	k := hmacSHA256([]byte("AWS4"+secret), []byte(date))
+func deriveSigningKey(secret []byte, date, region, service string) []byte {
+	kSecret := append([]byte("AWS4"), secret...)
+	defer clear(kSecret)
+	k := hmacSHA256(kSecret, []byte(date))
 	k = hmacSHA256(k, []byte(region))
 	k = hmacSHA256(k, []byte(service))
 	return hmacSHA256(k, []byte("aws4_request"))

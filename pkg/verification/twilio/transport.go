@@ -57,7 +57,7 @@ type Transport struct {
 	client     *http.Client
 	baseURL    string
 	accountSID string
-	authToken  string
+	authToken  *secrets.SecureString
 	serviceSID string
 	channel    string
 }
@@ -71,7 +71,7 @@ func NewTransport(ctx context.Context, cfg Config) (*Transport, error) {
 	if cfg.AccountSID == "" {
 		return nil, errors.New("twilio: AccountSID is required")
 	}
-	if cfg.AuthToken == nil || cfg.AuthToken.Plaintext(ctx) == "" {
+	if cfg.AuthToken == nil || cfg.AuthToken.IsEmpty(ctx) {
 		return nil, errors.New("twilio: AuthToken is required")
 	}
 	if cfg.ServiceSID == "" {
@@ -93,13 +93,25 @@ func NewTransport(ctx context.Context, cfg Config) (*Transport, error) {
 		client:     hc,
 		baseURL:    baseURL,
 		accountSID: cfg.AccountSID,
-		authToken:  cfg.AuthToken.Plaintext(ctx),
+		authToken:  cfg.AuthToken,
 		serviceSID: cfg.ServiceSID,
 		channel:    channel,
 	}, nil
 }
 
 // Name returns the transport identifier.
+// authorize sets HTTP Basic credentials on req. The auth token stays sealed
+// on the Transport and is revealed only here, for this one request; an
+// unavailable token fails the call rather than sending an empty password.
+func (t *Transport) authorize(ctx context.Context, req *http.Request) error {
+	token, err := t.authToken.Reveal(ctx)
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth(t.accountSID, token)
+	return nil
+}
+
 func (t *Transport) Name() string { return "twilio" }
 
 // SendCode triggers a Twilio Verify SMS to the destination. The code
@@ -118,7 +130,9 @@ func (t *Transport) SendCode(ctx context.Context, destination string, _ string, 
 		return t.wrapErr(destination, err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.SetBasicAuth(t.accountSID, t.authToken)
+	if err := t.authorize(ctx, req); err != nil {
+		return t.wrapErr(destination, err)
+	}
 
 	resp, err := t.client.Do(req)
 	if err != nil {
@@ -147,7 +161,9 @@ func (t *Transport) Verify(ctx context.Context, destination, code string) (bool,
 		return false, t.wrapErr(destination, err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.SetBasicAuth(t.accountSID, t.authToken)
+	if err := t.authorize(ctx, req); err != nil {
+		return false, t.wrapErr(destination, err)
+	}
 
 	resp, err := t.client.Do(req)
 	if err != nil {

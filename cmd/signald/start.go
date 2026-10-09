@@ -618,7 +618,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	apnJobsMgr := jobs.NewManager(jobsStore, logger)
 	// Create an independent copy of the signing key so that certificates
 	// manager holds its own SecureString and cannot alias the config value.
-	signingKeyCopy, err := secrets.NewSecureString(ctx, signingKey.Plaintext(ctx))
+	signingKeyCopy, err := signingKey.Clone(ctx)
 	if err != nil {
 		return &StartupError{Stage: "signing key protection", Cause: err}
 	}

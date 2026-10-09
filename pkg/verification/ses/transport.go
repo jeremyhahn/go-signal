@@ -76,7 +76,7 @@ func NewTransport(ctx context.Context, cfg Config) (*Transport, error) {
 	if cfg.AccessKeyID == "" {
 		return nil, errors.New("ses: AccessKeyID is required")
 	}
-	if cfg.SecretAccessKey == nil || cfg.SecretAccessKey.Plaintext(ctx) == "" {
+	if cfg.SecretAccessKey == nil || cfg.SecretAccessKey.IsEmpty(ctx) {
 		return nil, errors.New("ses: SecretAccessKey is required")
 	}
 	if cfg.FromAddress == "" {
@@ -101,7 +101,7 @@ func NewTransport(ctx context.Context, cfg Config) (*Transport, error) {
 		subject:     subject,
 		signer: &sigV4{
 			accessKeyID:     cfg.AccessKeyID,
-			secretAccessKey: cfg.SecretAccessKey.Plaintext(ctx),
+			secretAccessKey: cfg.SecretAccessKey,
 			sessionToken:    cfg.SessionToken,
 			region:          cfg.Region,
 			service:         sesService,
@@ -174,7 +174,7 @@ func (t *Transport) SendCode(ctx context.Context, destination, code string, _ ..
 		return t.wrapErr(destination, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if err := t.signer.Sign(req, body); err != nil {
+	if err := t.signer.Sign(ctx, req, body); err != nil {
 		return t.wrapErr(destination, err)
 	}
 	resp, err := t.client.Do(req)
