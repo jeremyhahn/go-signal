@@ -5,7 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"strings"
 	"testing"
+
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
 func TestBasicAuthHeader_RoundTripsThroughValidate(t *testing.T) {
@@ -64,5 +67,45 @@ func TestValidateBasicAuth_ConstantTimeAccept(t *testing.T) {
 	tampered := "Basic " + base64.StdEncoding.EncodeToString(raw)
 	if _, ok := ValidateBasicAuth(tampered, []byte(secret)); ok {
 		t.Error("tampered credential must not validate")
+	}
+}
+
+// =============================================================================
+// BasicAuthHeaderCredential: assembly from an ALREADY-ISSUED credential.
+// =============================================================================
+
+// The header must be byte-identical to the obvious string spelling it
+// replaces. The point of the change is where the bytes live, not what they are
+// — a header that differs is a broken integration, not a hardened one.
+func TestBasicAuthHeaderCredential_MatchesTheStringSpelling(t *testing.T) {
+	for _, tc := range []struct{ user, pass string }{
+		{"attachment-key", "hunter2"},
+		{"user:with:colons", "pass:with:colons"},
+		{"", "pass-only"},
+		{"unicode-é", "☃𝄞"},
+		{"long", strings.Repeat("x", 200)},
+	} {
+		t.Run(tc.user+"/"+tc.pass, func(t *testing.T) {
+			got := BasicAuthHeaderCredential(tc.user, secrets.MustNewSecureString(tc.pass))
+			want := "Basic " + base64.StdEncoding.EncodeToString([]byte(tc.user+":"+tc.pass))
+			if got != want {
+				t.Errorf("header changed:\n  got  %q\n  want %q", got, want)
+			}
+		})
+	}
+}
+
+// A destroyed or unset credential must produce no header at all. Returning a
+// header with an empty password would be worse than failing: the caller would
+// send it, and the far side would reject it as a credential failure rather
+// than surfacing the real fault.
+func TestBasicAuthHeaderCredential_FailsClosedOnUnavailableSecret(t *testing.T) {
+	s := secrets.MustNewSecureString("pw")
+	s.Destroy()
+	if got := BasicAuthHeaderCredential("user", s); got != "" {
+		t.Errorf("destroyed credential produced a header: %q", got)
+	}
+	if got := BasicAuthHeaderCredential("user", nil); got != "" {
+		t.Errorf("nil credential produced a header: %q", got)
 	}
 }

@@ -1,6 +1,9 @@
 # Postgres storage schema
 
-Postgres is one of three production backends supported by go-signal, alongside go-qrdb (default) and DynamoDB. The Postgres schema follows a hybrid design philosophy: columns commonly used in WHERE clauses or joins are promoted to the top level for indexing; opaque server blobs (encoded Account structs, group state, message envelopes) live in JSONB columns. This approach avoids the impedance mismatch of translating key-value domain operations to pure relational form while keeping hot queries efficient.
+> **Status: REFERENCE** · Last verified: 2026-10-09
+> The tables created by `pkg/storage/postgres/migrations/` and how the stores use them.
+
+Postgres is a durable backend selected with `storage.backend: postgres`. The Postgres schema follows a hybrid design philosophy: columns commonly used in WHERE clauses or joins are promoted to the top level for indexing; opaque server blobs (encoded Account structs, group state, message envelopes) live in JSONB columns. This approach avoids the impedance mismatch of translating key-value domain operations to pure relational form while keeping hot queries efficient.
 
 All schema creation is handled by the embedded migrator in `pkg/storage/postgres/migrate.go`. Migrations are sorted by version number, applied inside a Postgres advisory lock to serialize concurrent schema changes, and tracked in a `schema_migrations` bookkeeping table.
 
@@ -10,19 +13,19 @@ All schema creation is handled by the embedded migrator in `pkg/storage/postgres
 
 **Foreign-key CASCADE on the strictly account-bound tables.** The four pre-key tables and `profiles` reference `accounts(aci) ON DELETE CASCADE` — deleting the parent account removes their rows in one statement, no app code required. Other tables that hold an `account_uuid` column (`provisioning_sessions`, the username tables, `fido2_credentials`, `fido2_sessions`, `storage_manifests`, `storage_items`, `spam_reports`, `messages`, `verification_sessions`) deliberately omit the FK. Reasons vary: verification sessions exist *before* the account row during registration; spam reports outlive the reporter for moderation review; messages are self-expiring via the TTL sweeper. `DeleteForAccount` for those domains runs an explicit `DELETE FROM <table> WHERE account_uuid = $1` from the relevant store.
 
-**TTL replacement: expires_at + periodic sweeper.** Postgres has no native TTL mechanism like DynamoDB or Redis. Tables with time-bound data (provisioning sessions, verification sessions, username reservations, messages) carry an `expires_at TIMESTAMPTZ` column with a partial index (`WHERE expires_at IS NOT NULL` for messages). Background worker processes run sweeper tasks that periodically `DELETE FROM table WHERE expires_at < NOW()`. This is scheduled lazily to keep schema uncluttered; Phase 1.4 workers define the cadence per table.
+**TTL replacement: expires_at + periodic sweeper.** Postgres has no native TTL mechanism like DynamoDB or Redis. Tables with time-bound data (provisioning sessions, verification sessions, username reservations, messages) carry an `expires_at TIMESTAMPTZ` column with a partial index (`WHERE expires_at IS NOT NULL` for messages). Background worker processes run sweeper tasks that periodically `DELETE FROM table WHERE expires_at < NOW()`. This is scheduled lazily to keep schema uncluttered; The jobs in `pkg/workers/jobs.go` define the cadence.
 
 **Conditional write: ON CONFLICT, UNIQUE constraints, and advisory locks.** DynamoDB's conditional expressions (`ConditionExpression`, `LeadingKeys`) are replaced by:
 - `UNIQUE` constraints for natural uniqueness (e.164 phone numbers, username hashes, credential IDs).
 - `ON CONFLICT` clauses for idempotent upserts (e.g., pre-key replacement).
 - Partial unique indexes (e.g., `profiles_latest_idx`) to enforce cardinality constraints like "at most one latest profile per account."
-- Advisory locks (`pg_advisory_lock`) when coordinating across multiple statements that the database can't express as a single atomic operation (e.g., username reservation selecting a candidate, then inserting it with expiry).
+- Transactions (`Client.WithTx`) for multi-statement operations such as username reservation, which sweeps expired reservations, checks candidates and inserts in one transaction. The only advisory lock is the migrator's.
 
 ---
 
 ## Migrations
 
-Migrations are SQL files stored in `pkg/storage/postgres/migrations/` embedded at compile time via `//go:embed`. Files follow the naming convention `NNNN_name.up.sql` and `NNNN_name.down.sql`, where `NNNN` is a zero-padded version number. The migrator:
+Migrations are SQL files stored in `pkg/storage/postgres/migrations/` embedded at compile time via `//go:embed`. Files follow the naming convention `NNNN_name.up.sql` and `NNNN_name.down.sql`, where `NNNN` is a zero-padded version number. Every version has both files; the migrator applies only the `up` files. It:
 
 1. Acquires a Postgres advisory lock (`pg_advisory_lock(0x607551147A1A1B1C)`) to serialize concurrent migrations from multiple running instances.
 2. Creates the `schema_migrations` table if it doesn't exist.
@@ -69,9 +72,9 @@ CREATE TABLE accounts (
 
 **Lifecycle:** Accounts are created at registration and deleted explicitly on account removal. No automatic TTL.
 
-**Conditional writes:** `Create` enforces uniqueness on `aci`, `pni`, `e164`, `username_hash`, and `username_link_handle` via Postgres UNIQUE constraints. On conflict, `AccountAlreadyExistsError` is returned with the conflicting identifier. `Update` uses optimistic locking: the submitted `version` must equal the stored version plus one, enforced by a `WHERE version = ?` clause.
+**Conditional writes:** `Create` enforces uniqueness on `aci`, `pni`, `e164`, `username_hash`, and `username_link_handle` via Postgres UNIQUE constraints. On conflict, `AccountAlreadyExistsError` is returned with the conflicting identifier. `Update` uses optimistic locking: the update runs with `WHERE aci = ? AND version = ? - 1`, so the submitted `version` must be the stored version plus one; otherwise `VersionConflictError` is returned.
 
-**Java equivalent:** `/mnt/vm-host-1/Signal-Server/service/src/main/java/org/whispersystems/textsecuregcm/storage/Accounts.java` — direct mapping with identical column names and semantics.
+**Java equivalent:** `Accounts.java` (Signal-Server `storage` package) — direct mapping with identical column names and semantics.
 
 **Implementation:** `pkg/storage/postgres/accounts.go` — `AccountStore` interface satisfied by `postgres.AccountStore`.
 
@@ -136,7 +139,7 @@ This eliminates the race condition present in KV backends where listing keys, pi
 
 `StoreECPreKeys` and `StoreKEMPreKeys` use `pgx.Batch` to delete all old keys and insert the new batch in a single network roundtrip while running in a transaction.
 
-**Java equivalent:** `/mnt/vm-host-1/Signal-Server/service/src/main/java/org/whispersystems/textsecuregcm/storage/Keys.java` — same table structure; the `keyId` field is mapped directly.
+**Java equivalent:** `Keys.java` (Signal-Server `storage` package) — same table structure; the `keyId` field is mapped directly.
 
 **Implementation:** `pkg/storage/postgres/keys.go` — `PreKeyStore` interface satisfied by `postgres.PreKeyStore`.
 
@@ -164,7 +167,7 @@ CREATE INDEX provisioning_sessions_expires_idx
 
 **Conditional writes:** Natural primary key on `code` prevents duplicate sessions; on collision, a conflict error is returned.
 
-**Java equivalent:** `/mnt/vm-host-1/Signal-Server/service/src/main/java/org/whispersystems/textsecuregcm/storage/ProvisioningCode.java` and the `ProvisioningCodeStore` — the `code` and `expiration` fields map directly.
+**Java equivalent:** `ProvisioningCode.java` (Signal-Server `storage` package) and the `ProvisioningCodeStore` — the `code` and `expiration` fields map directly.
 
 **Implementation:** `pkg/storage/postgres/provisioning.go` — `ProvisioningStore` interface satisfied by `postgres.ProvisioningStore`.
 
@@ -214,13 +217,13 @@ CREATE TABLE username_links (
 - `SetLink` stores the handle-to-link mapping; `GetLink` retrieves it by handle.
 
 **Conditional writes:**
-- `ReserveHash` runs inside a transaction that manually sweeps expired reservations at the start, then checks confirmed + reserved hashes in the candidate list. The advisory lock in `pkg/storage/postgres/usernames.go` coordinates this across multiple transactions.
+- `ReserveHash` runs inside a transaction that manually sweeps expired reservations at the start, then checks confirmed + reserved hashes in the candidate list. Reservation, confirmation and deletion each run in a `WithTx` transaction.
 - `UNIQUE` constraint on `username_hash` in `usernames_reserved` prevents two accounts from reserving the same hash concurrently; conflicts are mapped to `UsernameHashConflictError`.
 - `UNIQUE` constraint on `account_uuid` in `usernames_confirmed` ensures only one hash per account.
 
 **Java equivalent:**
-- `usernames_confirmed` / `usernames_reserved`: `/mnt/vm-host-1/Signal-Server/service/src/main/java/org/whispersystems/textsecuregcm/storage/Usernames.java` — exact structure.
-- `username_links`: `/mnt/vm-host-1/Signal-Server/service/src/main/java/org/whispersystems/textsecuregcm/storage/UsernameLinks.java` — same fields.
+- `usernames_confirmed` / `usernames_reserved`: `Usernames.java` (Signal-Server `storage` package) — exact structure.
+- `username_links`: `UsernameLinks.java` (Signal-Server `storage` package) — same fields.
 
 **Implementation:** `pkg/storage/postgres/usernames.go` — `UsernameStore` interface satisfied by `postgres.UsernameStore`. Uses `c.WithTx` for multi-statement atomicity.
 
@@ -253,7 +256,7 @@ CREATE TABLE groups (
 
 **Conditional writes:** `Update` enforces optimistic locking: the submitted `revision` must equal the stored revision plus one, via `WHERE revision = ?` in the update clause.
 
-**Java equivalent:** `/mnt/vm-host-1/Signal-Server/service/src/main/java/org/whispersystems/textsecuregcm/storage/Groups.java` — matches the Java schema exactly.
+**Java equivalent:** `Groups.java` (Signal-Server `storage` package) — matches the Java schema exactly.
 
 **Implementation:** `pkg/storage/postgres/groups.go` — `GroupStore` interface satisfied by `postgres.GroupStore`.
 
@@ -290,7 +293,7 @@ CREATE INDEX messages_expires_idx
 - `seq`: Global message counter (primary key). Assigned by Postgres on insert; returned to the caller and stored in `Envelope.ID` so clients have an opaque, stable cursor.
 - `account_uuid`, `device_id`: Destination account and device.
 - `server_guid`: Unique per-message identifier (e.g., UUID generated by the sender or server). Used for delete-by-GUID operations.
-- `expires_at`: When the message should be purged (nullable). Currently always `NULL` because Signal mobile clients do not yet transmit per-message TTL in this API. Kept as a nullable column to enable per-row expiry in the future without schema changes.
+- `expires_at`: When the message should be purged (nullable). `MessageStore.Insert` does not set it, so rows currently carry `NULL` and `RemoveExpired` deletes nothing until a writer populates it.
 
 **JSONB column:** `envelope` holds the complete serialized `messages.Envelope` struct.
 
@@ -298,7 +301,7 @@ CREATE INDEX messages_expires_idx
 
 **Conditional writes:** `server_guid` is unique across the entire table, preventing duplicate message IDs. If a message arrives with a duplicate GUID, the database rejects it with a unique-constraint violation.
 
-**Java equivalent:** `/mnt/vm-host-1/Signal-Server/service/src/main/java/org/whispersystems/textsecuregcm/storage/Messages.java` — same table and queue structure; the `seq` is the Postgres `BIGSERIAL` equivalent of Java's atomic counter.
+**Java equivalent:** `Messages.java` (Signal-Server `storage` package) — same table and queue structure; the `seq` is the Postgres `BIGSERIAL` equivalent of Java's atomic counter.
 
 **Implementation:** `pkg/storage/postgres/messages.go` — `MessageStore` interface satisfied by `postgres.MessageStore`.
 
@@ -336,7 +339,7 @@ CREATE UNIQUE INDEX profiles_latest_idx
 
 **Conditional writes:** The partial unique index is the enforcement mechanism; no explicit `ON CONFLICT` is needed. The transaction ensures the index is not violated.
 
-**Java equivalent:** `/mnt/vm-host-1/Signal-Server/service/src/main/java/org/whispersystems/textsecuregcm/storage/Profiles.java` — the qrdb Java implementation uses a separate mirror key `profile:{uuid}:_latest` to track latest; the Postgres schema achieves the same with a partial unique index.
+**Java equivalent:** `Profiles.java` (Signal-Server `storage` package) — the qrdb Java implementation uses a separate mirror key `profile:{uuid}:_latest` to track latest; the Postgres schema achieves the same with a partial unique index.
 
 **Implementation:** `pkg/storage/postgres/profiles.go` — `ProfileStore` interface satisfied by `postgres.ProfileStore`. Uses `c.WithTx` for atomic promotion of latest.
 
@@ -371,7 +374,7 @@ CREATE INDEX verification_sessions_expires_idx
 
 **Conditional writes:** Primary key on `id` prevents duplicate sessions.
 
-**Java equivalent:** `/mnt/vm-host-1/Signal-Server/service/src/main/java/org/whispersystems/textsecuregcm/storage/VerificationSessionStore.java` — similar structure.
+**Java equivalent:** `VerificationSessionStore.java` (Signal-Server `storage` package) — similar structure.
 
 **Implementation:** `pkg/storage/postgres/verification.go` — `VerificationSessionStore` interface satisfied by `postgres.VerificationSessionStore`.
 
@@ -422,7 +425,7 @@ CREATE INDEX fido2_sessions_expires_idx
 
 **Conditional writes:** `credential_id` is unique; duplicate registrations conflict with `CredentialExistsError`.
 
-**Java equivalent:** `/mnt/vm-host-1/Signal-Server/service/src/main/java/org/whispersystems/textsecuregcm/storage/Credentials.java` and `/mnt/vm-host-1/Signal-Server/service/src/main/java/org/whispersystems/textsecuregcm/storage/PushChallengeSessions.java` — similar structure.
+**Java equivalent:** `Credentials.java` (Signal-Server `storage` package) and `PushChallengeSessions.java` (Signal-Server `storage` package) — similar structure.
 
 **Implementation:** `pkg/storage/postgres/fido2.go` — `FIDO2AccountsStore` interface satisfied by `postgres.FIDO2AccountsStore` (build-tagged `fido2`).
 
@@ -462,7 +465,7 @@ CREATE TABLE storage_items (
 
 **Conditional writes:** `PutManifest` enforces monotonic versioning via application-level checks: the submitted version must be strictly greater than the stored version, enforced in the service layer.
 
-**Java equivalent:** `/mnt/vm-host-1/Signal-Server/service/src/main/java/org/whispersystems/textsecuregcm/storage/StorageServiceStore.java` — same structure and semantics.
+**Java equivalent:** `StorageServiceStore.java` (Signal-Server `storage` package) — same structure and semantics.
 
 **Implementation:** `pkg/storage/postgres/securestorage.go` — `SecureStorageStore` interface satisfied by `postgres.SecureStorageStore`.
 
@@ -498,9 +501,22 @@ CREATE INDEX spam_reports_reporter_idx
 
 **Conditional writes:** None; the primary key on `id` is naturally unique.
 
-**Java equivalent:** `/mnt/vm-host-1/Signal-Server/service/src/main/java/org/whispersystems/textsecuregcm/storage/ReportMessageDynamoDb.java` — similar structure.
+**Java equivalent:** `ReportMessageDynamoDb.java` (Signal-Server `storage` package) — similar structure.
 
 **Implementation:** `pkg/storage/postgres/reports.go` — `SpamReportStore` interface satisfied by `postgres.SpamReportStore`.
+
+---
+
+## Later migrations (0002–0007)
+
+| Migration | Tables | Notes |
+|---|---|---|
+| `0002_recovery_passwords` | `registration_recovery_passwords` (`pni` PK, `hash`, `salt`, `expires_at`) | Expiry is enforced on read; `expires_at` is indexed. Store: `recoverypasswords.go`. |
+| `0003_backups` | `backups`, `backups_pending_deletion`, `backup_redeemed_receipts` | Keyed by `hashed_backup_id`; indexes on `last_refresh`, `last_media_refresh` and receipt `expires_at`. Store: `backups.go`. |
+| `0004_call_quality_surveys` | `call_quality_surveys` (`response_id` PK) | Unauthenticated survey submissions; not linked to an account. Store: `callquality.go`. |
+| `0005_remote_config` | `remote_config` (`name` PK, `percentage` 0–100, `uuids` JSONB) | Store: `remoteconfig.go`. |
+| `0006_scheduled_jobs` | `scheduled_jobs` (`status` 1 pending, 2 running, 3 failed) | Partial index on `fire_at` for pending rows; workers claim due rows with `FOR UPDATE SKIP LOCKED`. Store: `jobs.go`. |
+| `0007_scheduled_jobs_claimed_at` | adds `scheduled_jobs.claimed_at` | Lets stale running rows be re-queued. |
 
 ---
 

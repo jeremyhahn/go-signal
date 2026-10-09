@@ -1,5 +1,8 @@
 # Authentication
 
+> **Status: REFERENCE** · Last verified: 2026-10-09
+> As-built description of go-signal request authentication.
+
 go-signal authenticates API requests using HTTP Basic Auth. After initial registration, clients include credentials in every request. The server validates them in middleware before any handler runs.
 
 ## Basic Auth Format
@@ -26,7 +29,7 @@ The gRPC interceptor `AuthenticatedUnary` in `pkg/api/grpc/interceptors/auth.go`
 
 ## Registration Modes
 
-go-signal supports three registration modes. The mode determines what credentials the server requires and how post-registration authentication works.
+go-signal describes three registration modes. Only Standard is enforced end to end. The FIDO2 ceremony endpoints exist under the `fido2` build tag, but the `requireMfa` and `allowFido2Only` settings are only reported by `GET /v1/fido2/capabilities`: no handler or middleware enforces them, and the registration endpoint does not consult FIDO2.
 
 | Mode | Phone Required | FIDO2 Required | Post-Auth |
 |---|---|---|---|
@@ -41,7 +44,7 @@ Phone-based verification followed by account creation. This is the default path.
 1. **Create session**: `POST /v1/verification/session` with the phone number in the request body. Returns a session ID.
 2. **Request code**: `POST /v1/verification/session/{id}/code` triggers delivery of a verification code via the configured transport (SMS gateway, stub logger, etc.).
 3. **Submit code**: `PUT /v1/verification/session/{id}/code` with the received code. The server validates using constant-time comparison. On success, the session is marked `verified: true`.
-4. **Register**: `PUT /v1/registration` with the verified `session_id`, identity keys (`aciIdentityKey`, `pniIdentityKey`), signed pre-keys, and account attributes. The server generates a UUID, creates the account, and stores the pre-keys.
+4. **Register**: `POST /v1/registration` with Basic credentials (`E.164 number:password`; a malformed number or empty password is `400`) and a body carrying the verified `sessionId`, identity keys (`aciIdentityKey`, `pniIdentityKey`), signed pre-keys, and account attributes. The server generates a UUID, creates the account, and stores the pre-keys. A `recoveryPassword` may replace `sessionId` (`RegistrationRequest` in `pkg/api/rest/types.go`).
 
 After registration, the client authenticates all subsequent requests with Basic Auth using the UUID and the password provided during registration.
 
@@ -50,19 +53,19 @@ After registration, the client authenticates all subsequent requests with Basic 
 Adds a FIDO2 enrollment step after standard registration. Requires the `fido2` build tag.
 
 1. Complete the standard registration flow above.
-2. **Begin enrollment**: `POST /v1/fido2/enroll` (authenticated). The server starts a WebAuthn credential creation ceremony and returns a challenge.
-3. **Complete enrollment**: The client responds with the attestation from the authenticator. The server verifies it and stores the new credential.
+2. **Begin enrollment**: `POST /v1/fido2/enroll` (Basic Auth). The server starts a WebAuthn credential creation ceremony and returns a session and creation options.
+3. **Complete enrollment**: `POST /v1/fido2/enroll/{id}/complete` (Basic Auth) with the authenticator's attestation. The server verifies it and stores the new credential.
 
-After enrollment, authentication requires both Basic Auth credentials and a valid FIDO2 assertion. The server verifies the assertion through `FIDO2AccountsManager.CompleteLogin()`.
+A FIDO2 assertion is verified by `FIDO2AccountsManager.CompleteLogin()` through `POST /v1/fido2/auth/begin` (Basic Auth) and `POST /v1/fido2/auth/complete`. The REST and gRPC auth layers do not require an assertion on other requests.
 
 ### FIDO2-Only Registration
 
-Creates an account using only a FIDO2 authenticator. Phone number is optional. Requires the `fido2` build tag with `allowFido2Only: true` in configuration.
+Requires the `fido2` build tag. Not yet an account-creation path: the endpoints below run the WebAuthn ceremonies and store a credential, but create no account and do not check `allowFido2Only`.
 
-1. **Begin session**: `POST /v1/fido2/session` starts a WebAuthn registration ceremony. The server generates a challenge and returns credential creation options.
-2. **Complete attestation**: The client sends the authenticator's attestation response. The server verifies it, creates the account, and stores the credential.
+1. **Begin session**: `POST /v1/fido2/session` with a `username` starts a WebAuthn registration ceremony. The server generates a challenge and returns credential creation options.
+2. **Complete attestation**: `POST /v1/fido2/session/{id}/complete` with the authenticator's attestation response. The server verifies it and stores the credential.
 
-Post-registration authentication uses FIDO2 assertions exclusively. No shared password is involved.
+`POST /v1/fido2/auth/complete` returns the credential's `accountUuid` with an empty `token`; token issuance is not implemented in that handler (`handleFIDO2CompleteLogin`, `pkg/api/rest/handlers_fido2.go`).
 
 ## Security Properties
 
@@ -76,7 +79,7 @@ Post-registration authentication uses FIDO2 assertions exclusively. No shared pa
 
 Standard registration relies on a phone number and a shared password. Both are vulnerable to phishing, SIM swaps, and credential theft. FIDO2 MFA keeps the password but adds a hardware-bound factor that is origin-scoped and resistant to replay. FIDO2-Only eliminates shared secrets entirely.
 
-Clone detection works through the WebAuthn sign counter. Each assertion increments the counter stored in the credential. If the server sees a counter value lower than or equal to the stored value, it sets `CloneWarning: true` on the credential, signaling that the authenticator may have been duplicated.
+Clone detection works through the WebAuthn sign counter. `CompleteLogin` copies `SignCount` and `CloneWarning` from the `go-webauthn` result onto the stored credential; the library sets `CloneWarning` when the counter does not advance, signaling that the authenticator may have been duplicated.
 
 ## Implementation Details
 

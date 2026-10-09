@@ -1,47 +1,67 @@
 # Configuration Reference
 
-The go-signal server reads a single YAML configuration file at startup. Every runtime option is controlled through this file.
+> **Status: REFERENCE** · Last verified: 2026-10-09
+> As-built description of the go-signal YAML configuration (`pkg/config`) and how `cmd/signald` consumes it.
+
+The daemon reads a single YAML file. Source: `pkg/config/config.go` and the `config_*.go` files beside it.
 
 ## Loading
-
-Pass the config path when starting the daemon:
 
 ```bash
 signald start --config /path/to/config.yaml
 ```
 
-The load process has three steps:
+`--config` is a persistent flag on the root command (`cmd/signald/root.go`); it defaults to `configs/signal-server.yml`.
 
-1. **Parse YAML** - Read the file and unmarshal into the `Config` struct.
-2. **Resolve secret URIs** - Walk all string fields and resolve `kms://`, `${VAR}`, and sentinel values through the `ConfigProcessor`. See [secrets.md](../configuration/secrets.md) for details.
-3. **Validate** - Check required fields and apply defaults.
+`config.Load` (`pkg/config/config.go`) does two steps:
 
-If any step fails, the server exits with a typed error:
+1. **Parse YAML** into `Config` with `yaml.v3`. Fields typed `*secrets.SecureString` are sealed into protected memory as they decode. The raw file bytes are zeroed after parsing.
+2. **Validate** (`Config.Validate`): requires `server.httpPort` or `server.grpcPort`, requires `storage.backend`, defaults `server.maxDevices` to `6`, and runs the production gate when `mode: production`.
+
+A failed load wipes every secret it had already sealed. There is no secret-resolution step: `kms://`, `${VAR}` and sentinel values are kept as literal text. See [secrets.md](secrets.md).
 
 | Error Type | Trigger |
 |---|---|
-| `ConfigLoadError` | File cannot be read (missing, permission denied, etc.) |
-| `ConfigParseError` | YAML is malformed or cannot be unmarshaled |
-| `ConfigValidationError` | A required field is missing or a value is out of range |
+| `ConfigLoadError` | File cannot be read |
+| `ConfigParseError` | YAML is malformed or a value has the wrong type |
+| `ConfigValidationError` | `server` has no port, or `storage.backend` is empty (`Field`, `Message`) |
+| `ProductionValidationError` | `mode: production` and one or more violations; lists all of them |
 
-Source: `pkg/config/config.go`
+Unknown YAML keys are ignored. Secret fields below are marked **secret**.
+
+---
+
+## mode
+
+`mode: production` turns on the production gate (`validateProduction`); any other value, including empty, is development. The comparison is case-insensitive. The gate collects every violation into one `ProductionValidationError`:
+
+- `storage.backend` is `postgres` or `file`.
+- `cache.backend` is `redis`.
+- `verification.transport` is not empty or `stub`; `verification.fixedCode` is empty; `verification.remoteInsecure` is false.
+- `captcha.provider` is `hcaptcha` or `recaptcha`.
+- `zkConfig.enabled` is true with a non-empty `zkConfig.serverSecret`.
+- `callingZkConfig.serverSecret` is set and is not the well-known development secret.
+- `cdn.bucket`, `cdn.region`, `cdn.accessKey` and `cdn.secretKey` are set, and the keys are not the development placeholders.
+- `server.tlsCertFile` and `server.tlsKeyFile` are set; `server.allowedOrigins` has no `*`.
+- `limits.messages.bucketSize` is greater than zero.
+- `keyTransparency.remoteInsecure` and `storageService.remoteInsecure` are false.
 
 ---
 
 ## server
 
-HTTP/2 and gRPC listener settings.
+| YAML Key | Type | Default | Description |
+|---|---|---|---|
+| `host` | string | `""` (all interfaces) | Bind address |
+| `httpPort` | int | - | HTTP/2 REST port |
+| `grpcPort` | int | - | gRPC port |
+| `tlsCertFile` | string | - | TLS certificate PEM path |
+| `tlsKeyFile` | string | - | TLS private key PEM path |
+| `maxDevices` | int | `6` | Maximum linked devices per account |
+| `trustedProxies` | []string | - | Proxies whose forwarded client address is trusted |
+| `allowedOrigins` | []string | - | Allowed CORS/WebSocket origins |
 
-| Field | YAML Key | Type | Required | Default | Description |
-|---|---|---|---|---|---|
-| Host | `host` | string | No | `""` (all interfaces) | Bind address for listeners |
-| HTTPPort | `httpPort` | int | * | - | Port for the HTTP/2 REST API |
-| GRPCPort | `grpcPort` | int | * | - | Port for the gRPC API |
-| TLSCertFile | `tlsCertFile` | string | No | - | Path to TLS certificate PEM file |
-| TLSKeyFile | `tlsKeyFile` | string | No | - | Path to TLS private key PEM file |
-| MaxDevices | `maxDevices` | int | No | `6` | Maximum linked devices per account |
-
-\* At least one of `httpPort` or `grpcPort` must be non-zero. Both can be set to run REST and gRPC simultaneously.
+At least one of `httpPort` or `grpcPort` must be non-zero.
 
 ```yaml
 server:
@@ -57,76 +77,46 @@ server:
 
 ## storage
 
-Persistent backend selection. The `backend` field determines which nested section is used.
+`backend` is required. `cmd/signald/start.go` switches on it:
 
-| Field | YAML Key | Type | Required | Default | Description |
-|---|---|---|---|---|---|
-| Backend | `backend` | string | No | `"memory"` | One of: `"memory"` (default), `"file"`, `"postgres"`, `"qrdb"` |
-
-The `signald` daemon wires these backends in `cmd/signald` (see the storage-backend
-switch): `"memory"` (ephemeral, the default), `"file"` (KV-backed, persists under
-`storage.file.dataDir`), `"postgres"` (the `storage.postgres` section), and `"qrdb"`
-(the production KV backend; currently an in-process transport with no dedicated config
-section). An unrecognized value falls back to `"memory"`.
+| Value | Behaviour |
+|---|---|
+| `memory` | Ephemeral. Also the fallback for any unrecognised value, including `dynamodb` |
+| `file` | KV store persisted under `storage.file.dataDir` |
+| `postgres` | `storage.postgres`; migrations run at startup |
+| `qrdb` | In-process fake KV transport; not durable |
 
 ### storage.file
 
-Used when `backend: "file"`.
-
-| Field | YAML Key | Type | Required | Default | Description |
-|---|---|---|---|---|---|
-| DataDir | `dataDir` | string | No | `"data"` | Root directory for the file-system KV store |
-
-```yaml
-storage:
-  backend: "file"
-  file:
-    dataDir: "/var/lib/signald/data"
-```
+| YAML Key | Type | Default | Description |
+|---|---|---|---|
+| `dataDir` | string | `data` (applied by the daemon) | Root directory for the file KV store |
 
 ### storage.dynamodb
 
-DynamoDB configuration is declared in the config schema but is **not wired into the
-`signald` daemon's backend switch** in the current build (selecting `"dynamodb"` falls
-back to `"memory"`). The fields below are retained for forward compatibility.
+Declared in the schema, not wired: `dynamodb` falls back to `memory`, and the production gate rejects it.
 
-| Field | YAML Key | Type | Required | Default | Description |
-|---|---|---|---|---|---|
-| Region | `region` | string | No | - | AWS region (e.g., `us-east-1`) |
-| Endpoint | `endpoint` | string | No | - | Custom endpoint URL (for LocalStack, etc.) |
-| AccountsTable | `accountsTable` | string | No | - | Table name for accounts |
-| MessagesTable | `messagesTable` | string | No | - | Table name for messages |
-| KeysTable | `keysTable` | string | No | - | Table name for pre-keys |
-| ProfilesTable | `profilesTable` | string | No | - | Table name for profiles |
-| PendingAccounts | `pendingAccountsTable` | string | No | - | Table name for pending accounts |
-
-```yaml
-storage:
-  backend: "dynamodb"
-  dynamodb:
-    region: "us-east-1"
-    endpoint: "http://localhost:4566"
-    accountsTable: "signal-accounts"
-    messagesTable: "signal-messages"
-    keysTable: "signal-keys"
-    profilesTable: "signal-profiles"
-    pendingAccountsTable: "signal-pending"
-```
+| YAML Key | Type | Description |
+|---|---|---|
+| `region`, `endpoint` | string | AWS region and custom endpoint |
+| `accountsTable`, `messagesTable`, `keysTable`, `profilesTable` | string | Table names |
+| `pendingAccountsTable` | string | Pending-accounts table |
 
 ### storage.postgres
 
-Used when `backend: "postgres"`.
+`url`, when set, wins over the structured fields.
 
-| Field | YAML Key | Type | Required | Default | Description |
-|---|---|---|---|---|---|
-| Host | `host` | string | No | - | PostgreSQL host |
-| Port | `port` | int | No | - | PostgreSQL port |
-| Database | `database` | string | No | - | Database name |
-| User | `user` | string | No | - | Database user |
-| Password | `password` | string | No | - | Database password (supports secret URIs) |
-| SSLMode | `sslMode` | string | No | - | SSL mode: `"disable"`, `"require"`, `"verify-full"`, etc. |
-
-The `password` field supports secret resolution. You can use `kms://` URIs, `${ENV_VAR}` references, or sentinel values. See [secrets.md](../configuration/secrets.md).
+| YAML Key | Type | Default | Description |
+|---|---|---|---|
+| `url` | string, **secret** | - | libpq-style connection string |
+| `host` | string | `localhost` | Host |
+| `port` | int | `5432` | Port |
+| `database` | string | - | Database name |
+| `user` | string | - | User |
+| `password` | string, **secret** | - | Password |
+| `sslMode` | string | `disable` | `disable`, `require`, `verify-full`, ... Set it explicitly in production |
+| `maxConns`, `minConns` | int | pgx default | Pool size bounds |
+| `maxConnLifetime`, `maxConnIdleTime`, `connectTimeout` | duration | pgx default | Go durations, for example `30m` |
 
 ```yaml
 storage:
@@ -136,7 +126,7 @@ storage:
     port: 5432
     database: "signal"
     user: "signal"
-    password: "kms://secrets/db-password"
+    password: "change-me"
     sslMode: "verify-full"
 ```
 
@@ -144,375 +134,267 @@ storage:
 
 ## cache
 
-Optional caching layer.
-
-| Field | YAML Key | Type | Required | Default | Description |
-|---|---|---|---|---|---|
-| Backend | `backend` | string | No | - | One of: `"redis"`, `"memory"` |
-
-### cache.redis
-
-Used when `backend: "redis"`.
-
-| Field | YAML Key | Type | Required | Default | Description |
-|---|---|---|---|---|---|
-| URL | `url` | string | No | - | Redis connection URL |
-| Password | `password` | string | No | - | Redis password (supports secret URIs) |
-| DB | `db` | int | No | `0` | Redis database number |
+| YAML Key | Type | Description |
+|---|---|---|
+| `backend` | string | `redis` or `memory`; anything else uses the memory client. Production requires `redis` |
+| `redis.url` | string | Redis URL |
+| `redis.password` | string, **secret** | Redis password |
+| `redis.db` | int | Database number (`0`) |
 
 ```yaml
 cache:
   backend: "redis"
   redis:
     url: "redis://cache.internal:6379"
-    password: "${REDIS_PASSWORD}"
-    db: 0
+    password: "change-me"
 ```
 
 ---
 
 ## push
 
-Push notification service configuration.
-
-### push.apn
-
-Apple Push Notification service settings.
-
-| Field | YAML Key | Type | Required | Default | Description |
-|---|---|---|---|---|---|
-| TeamID | `teamId` | string | No | - | Apple Developer team ID |
-| KeyID | `keyId` | string | No | - | APNs auth key ID |
-| BundleID | `bundleId` | string | No | - | iOS app bundle identifier |
-| PrivateKey | `privateKey` | string | No | - | APNs auth key (supports secret URIs) |
-| Sandbox | `sandbox` | bool | No | `false` | Use APNs sandbox environment |
-
-### push.fcm
-
-Firebase Cloud Messaging settings.
-
-| Field | YAML Key | Type | Required | Default | Description |
-|---|---|---|---|---|---|
-| Credentials | `credentials` | string | No | - | FCM service account credentials JSON (supports secret URIs) |
-
-```yaml
-push:
-  apn:
-    teamId: "ABCDE12345"
-    keyId: "KEY123"
-    bundleId: "org.signal.ios"
-    privateKey: "kms://secrets/apn-key"
-    sandbox: false
-  fcm:
-    credentials: "kms://secrets/fcm-creds"
-```
+| YAML Key | Type | Description |
+|---|---|---|
+| `apn.teamId`, `apn.keyId`, `apn.bundleId` | string | Apple team, key and app identifiers |
+| `apn.privateKey` | string, **secret** | APNs auth key |
+| `apn.sandbox` | bool | Use the APNs sandbox (`false`) |
+| `fcm.projectId` | string | Firebase project; empty falls back to the `project_id` in the credentials |
+| `fcm.credentials` | string, **secret** | FCM service account JSON |
 
 ---
 
 ## cdn
 
-Attachment and media storage.
+| YAML Key | Type | Description |
+|---|---|---|
+| `bucket`, `region` | string | S3-compatible bucket and region |
+| `accessKey`, `secretKey` | string, **secret** | Signing credentials |
 
-| Field | YAML Key | Type | Required | Default | Description |
-|---|---|---|---|---|---|
-| Bucket | `bucket` | string | No | - | S3-compatible bucket name |
-| Region | `region` | string | No | - | Bucket region |
-| AccessKey | `accessKey` | string | No | - | Access key (supports secret URIs) |
-| SecretKey | `secretKey` | string | No | - | Secret key (supports secret URIs) |
+---
 
-```yaml
-cdn:
-  bucket: "signal-attachments"
-  region: "us-east-1"
-  accessKey: "${AWS_ACCESS_KEY_ID}"
-  secretKey: "${AWS_SECRET_ACCESS_KEY}"
-```
+## attachments, staticResources, frontend
+
+| YAML Key | Type | Description |
+|---|---|---|
+| `attachments.storageDir` | string | Local directory for file-based attachment storage |
+| `attachments.tusUri` | string | External TUS server URL; empty uses the embedded `/cdn3` endpoint |
+| `attachments.tusSharedSecret` | string, **secret** | HMAC key the external TUS server validates |
+| `staticResources.resourcesDir` | string | Served at `/resources/{path}` |
+| `staticResources.updatesDir` | string | Served at `/updates/{path}` |
+| `frontend.enabled` | bool | Serve the embedded web UI at `/` (`false`) |
 
 ---
 
 ## limits
 
-Token-bucket rate limiting. Each subsection configures a separate limiter. Tokens refill at `leakRatePerMin` tokens per minute up to `bucketSize`.
+Token-bucket limiters. Each key takes `bucketSize` (maximum burst) and `leakRatePerMin` (tokens refilled per minute). A zero field falls back to the default in `limits.DefaultConfig`.
 
-| Section | YAML Key | Description |
-|---|---|---|
-| Messages | `messages` | Rate limit on message sends |
-| PreKeys | `preKeys` | Rate limit on pre-key uploads |
-| Attachment | `attachment` | Rate limit on attachment uploads |
-| Profile | `profile` | Rate limit on profile updates |
+| Key | Applies to (keyed by) |
+|---|---|
+| `registration` | Registration endpoints (IP) |
+| `messages` | Message sends (account) |
+| `preKeys` | Pre-key fetches (account) |
+| `profiles` | Profile reads and writes (account) |
+| `attachments` | Attachment uploads (account) |
+| `verification` | Verification sessions (IP) |
+| `pin` | PIN attempts (account) |
+| `usernames` | Username operations (account) |
+| `authentication` | Failed authentication (IP or account) |
+| `accountCheck` | Account existence checks (IP) |
+| `captchaAttempt`, `captchaSuccess` | Captcha attempts and successes (IP) |
+| `deviceAllocate`, `deviceVerify` | Device provisioning (account) |
+| `inboundMessageBytes` | Inbound message byte volume (account) |
 
-Each section has the same fields:
-
-| Field | YAML Key | Type | Required | Default | Description |
-|---|---|---|---|---|---|
-| BucketSize | `bucketSize` | int | No | - | Maximum burst size |
-| LeakRatePerMin | `leakRatePerMin` | int | No | - | Token refill rate per minute |
+The deprecated `profile` and `attachment` keys are not in the schema; use `profiles` and `attachments`.
 
 ```yaml
 limits:
   messages:
     bucketSize: 256
     leakRatePerMin: 60
-  preKeys:
-    bucketSize: 10
-    leakRatePerMin: 5
-  attachment:
-    bucketSize: 25
-    leakRatePerMin: 10
-  profile:
-    bucketSize: 10
-    leakRatePerMin: 5
 ```
+
+---
+
+## fraud
+
+Registration fraud detection. A zero value uses the default.
+
+| YAML Key | Type | Default | Description |
+|---|---|---|---|
+| `maxRegistrationsPerIP` | int | `10` | Attempts per IP in the window |
+| `maxRegistrationsPerPrefix` | int | `50` | Attempts per phone prefix in the window |
+| `windowMinutes` | int | `60` | Rolling window |
 
 ---
 
 ## turn
 
-TURN relay server credentials. The server generates time-limited TURN credentials using the shared secret.
+Only Cloudflare TURN is configured; there is no shared-secret or `uris` key.
 
-| Field | YAML Key | Type | Required | Default | Description |
-|---|---|---|---|---|---|
-| Secret | `secret` | string | No | - | HMAC shared secret (supports secret URIs) |
-| URIs | `uris` | []string | No | - | TURN server URIs |
-
-```yaml
-turn:
-  secret: "kms://secrets/turn-secret"
-  uris:
-    - "turn:turn.example.com:3478"
-    - "turns:turn.example.com:5349"
-```
+| YAML Key | Type | Description |
+|---|---|---|
+| `cloudflare.apiToken` | string, **secret** | Cloudflare TURN API token |
+| `cloudflare.endpoint` | string | API endpoint |
+| `cloudflare.urls`, `cloudflare.urlsWithIps` | []string | TURN URLs returned to clients |
+| `cloudflare.hostname` | string | TURN hostname |
+| `cloudflare.requestedCredentialTtl`, `cloudflare.clientCredentialTtl` | string | Credential lifetimes |
+| `cloudflare.numHttpClients` | int | HTTP client pool size |
 
 ---
 
-## zkConfig
+## zkConfig and callingZkConfig
 
-Zero-knowledge proof configuration for anonymous credentials.
+| YAML Key | Type | Description |
+|---|---|---|
+| `zkConfig.enabled` | bool | Enable ZK credentials (`false`) |
+| `zkConfig.serverSecret` | string, **secret** | ZK server secret |
+| `zkConfig.signingKey` | string, **secret** | Signing key |
+| `callingZkConfig.serverSecret` | string, **secret** | Call-link credential secret |
 
-| Field | YAML Key | Type | Required | Default | Description |
-|---|---|---|---|---|---|
-| Enabled | `enabled` | bool | No | `false` | Enable ZK credential support |
-| ServerSecret | `serverSecret` | string | No | - | ZK server secret key (supports secret URIs) |
+---
 
-```yaml
-zkConfig:
-  enabled: true
-  serverSecret: "kms://secrets/zk-server-secret"
-```
+## callQualitySurvey
+
+| YAML Key | Type | Description |
+|---|---|---|
+| `backend` | string | `log` or `pubsub` |
+| `pubSub.projectId`, `pubSub.topicId` | string | Google Cloud Pub/Sub target |
 
 ---
 
 ## payments
 
-Payment processing configuration.
-
-### payments.stripe
-
-| Field | YAML Key | Type | Required | Default | Description |
-|---|---|---|---|---|---|
-| APIKey | `apiKey` | string | No | - | Stripe API key (supports secret URIs) |
-| WebhookSecret | `webhookSecret` | string | No | - | Stripe webhook signing secret (supports secret URIs) |
-
-```yaml
-payments:
-  stripe:
-    apiKey: "kms://secrets/stripe-api-key"
-    webhookSecret: "kms://secrets/stripe-webhook-secret"
-```
+| YAML Key | Type | Description |
+|---|---|---|
+| `stripe.apiKey` | string, **secret** | Stripe API key |
+| `stripe.webhookSecret` | string, **secret** | Webhook signing secret |
 
 ---
 
 ## directory
 
-Contact discovery settings.
-
-| Field | YAML Key | Type | Required | Default | Description |
-|---|---|---|---|---|---|
-| Enabled | `enabled` | bool | No | `false` | Enable the contact discovery directory |
-
-```yaml
-directory:
-  enabled: true
-```
+| YAML Key | Type | Description |
+|---|---|---|
+| `enabled` | bool | Enable the contact discovery directory (`false`) |
 
 ---
 
 ## storageService
 
-Encrypted contact/settings sync storage. signald can either run this in-process (monolithic deployments) or talk to a standalone `storage-service` binary. The mode is selected by `remoteUrl`: when it is **empty**, signald enables the embedded storage-service and serves the `/storage/...` routes itself; when it is set, signald only acts as a privileged admin client (DELETE-on-account-deletion) and the in-process routes fall back to a `204` stub.
+`remoteUrl` selects the mode. Empty enables the in-process storage-service and signald serves `/storage` itself (`cmd/signald/start.go`). When set, signald acts only as an admin client and the in-process `/storage` routes stay on the `204` stub.
 
-| Field | YAML Key | Type | Required | Default | Description |
-|---|---|---|---|---|---|
-| HTTPListen | `httpListen` | string | No | `0.0.0.0:8096` | Bind address for the standalone `storage-service` binary |
-| SharedSecret | `sharedSecret` | string | No* | - | HMAC secret shared between signald and storage-service for credential derivation (supports secret URIs) |
-| RemoteURL | `remoteUrl` | string | No | `""` (embedded) | storage-service admin endpoint. Empty enables the in-process storage-service |
-| RemoteInsecure | `remoteInsecure` | bool | No | `false` | Permit a plaintext HTTP channel to storage-service (development only; production requires TLS 1.3) |
+| YAML Key | Type | Default | Description |
+|---|---|---|---|
+| `httpListen` | string | `0.0.0.0:8096` (standalone binary) | Bind address of `cmd/storage-service` |
+| `sharedSecret` | string, **secret** | - | HMAC secret shared with storage-service. Not enforced at load; unset selects the legacy stub that mints random-UUID credentials (`SecureStorageManager.SetSharedSecret`), which a real storage-service rejects |
+| `remoteUrl` | string | `""` | storage-service admin endpoint |
+| `remoteInsecure` | bool | `false` | Allow plaintext HTTP; rejected in production |
 
-\* Not enforced at config-load time, but required in practice: it is the HMAC key that signald uses to mint `/v1/storage/auth` credentials and that storage-service uses to verify them.
+---
 
-```yaml
-# Monolithic: embedded storage-service (default)
-storageService:
-  sharedSecret: "kms://secrets/storage-shared-secret"
+## svr2, cdsi, keyTransparency
 
-# Distributed: external storage-service binary
-storageService:
-  sharedSecret: "kms://secrets/storage-shared-secret"
-  remoteUrl: "https://storage-service.internal:8096"
-```
+Settings for the standalone `svr2`, `cdsi` and `key-transparency` binaries and signald's clients for them.
 
-Source: `pkg/config/config.go` (`StorageServiceConfig`)
+| YAML Key | Type | Description |
+|---|---|---|
+| `svr2.httpListen`, `svr2.wsListen` | string | Binary listeners (`0.0.0.0:8091`, `0.0.0.0:8092`) |
+| `svr2.attestation` | string | `software` (default) or `tpm`; standalone binaries must use `software` |
+| `svr2.sharedSecret` | string, **secret** | HMAC secret for SVR2 credentials |
+| `svr2.remoteUrl` | string | Admin endpoint signald calls; empty disables it |
+| `cdsi.wsListen` | string | WebSocket listener (`0.0.0.0:8094`) |
+| `cdsi.attestation` | string | `software` (default) or `tpm` |
+| `cdsi.sharedSecret` | string, **secret** | HMAC secret shared with signald |
+| `cdsi.signaldDirectoryAddr` | string | signald DirectoryService gRPC address |
+| `cdsi.signaldDirectoryInsecure` | bool | Plaintext gRPC to signald |
+| `keyTransparency.grpcListen` | string | Binary gRPC listener (`0.0.0.0:8098`) |
+| `keyTransparency.remoteAddr` | string | KT gRPC endpoint signald calls; empty uses the in-process manager |
+| `keyTransparency.remoteInsecure` | bool | Plaintext gRPC; rejected in production |
+
+---
+
+## remoteConfig and backups
+
+| YAML Key | Type | Description |
+|---|---|---|
+| `remoteConfig.defaults` | list | Feature flags upserted at boot: `name`, `percentage`, `value`, `defaultValue`, `hashKey`, `uuids` |
+| `remoteConfig.refreshInterval` | duration | Store re-read interval; zero means 10 seconds |
+| `backups.enabled` | bool | Build the backups subsystem (`false`) |
+| `backups.blob.backend` | string | `filesystem` is the only implementation |
+| `backups.blob.root` | string | Directory for the filesystem backend |
+| `backups.blob.cdnNumber` | int | CDN number; default `3` |
+| `backups.expiryGraceHours` | int | Refresh grace; zero uses 30 days |
+| `backups.maxTotalMediaSize` | int | Per-user media quota in bytes; zero uses 100 GiB |
+
+---
+
+## captcha
+
+Source: `pkg/config/config_captcha.go`.
+
+| YAML Key | Type | Default | Description |
+|---|---|---|---|
+| `provider` | string | `test` | `hcaptcha`, `recaptcha` or `test`. `test` accepts any token; production rejects it |
+| `secretKey` | string, **secret** | - | Upstream verification secret; not needed for `test` |
+| `siteKey` | string | - | Public site key |
+| `scoreThreshold` | float | `0.5` when zero | Minimum reCAPTCHA v3 score, in [0.0, 1.0] |
+| `siteKeysByAction` | map[string][]string | - | Allowed site keys per action (`challenge`, `registration`); empty accepts any |
 
 ---
 
 ## verification
 
-Phone number verification settings.
+Source: `pkg/config/config_verification.go`.
 
-| Field | YAML Key | Type | Required | Default | Description |
-|---|---|---|---|---|---|
-| CodeLength | `codeLength` | int | No | `6` | Number of digits in verification codes |
-| CodeTTLSeconds | `codeTTLSeconds` | int | No | `300` | Seconds before a code expires |
-| MaxAttempts | `maxAttempts` | int | No | `3` | Maximum code submission attempts per session |
-| Transport | `transport` | string | No | `"stub"` | Delivery transport: `"smtp"` or `"stub"` |
+| YAML Key | Type | Default | Description |
+|---|---|---|---|
+| `transport` | string | `stub` | `stub` or `twilio`. `smtp` is not accepted by the daemon (see below) |
+| `codeLength` | int | `6` | Digits in a code |
+| `codeTTLSeconds` | int | `300` | Code lifetime |
+| `maxAttempts` | int | `3` | Submissions per session |
+| `fixedCode` | string | - | Static code for integration tests with the `stub` transport; the daemon refuses it with any other transport, and production rejects it |
+| `remoteAddr` | string | - | gRPC address of an external registration-service; empty embeds verification in signald |
+| `remoteInsecure` | bool | `false` | Plaintext gRPC to `remoteAddr`; rejected in production |
+| `grpcListen` | string | `0.0.0.0:8090` | Listener of `cmd/registration-service`; signald ignores it |
 
-The `stub` transport logs codes to stdout and is intended for development only.
+`codeLength`, `codeTTLSeconds` and `maxAttempts` are passed to the registration core only by `cmd/registration-service`; the monolithic daemon uses the core defaults, which equal the table values. `stub` logs the code and never delivers it.
 
-Source: `pkg/config/config_verification.go`
+`pkg/verification/factory.Build` is the single transport selector. It knows `stub` (or empty) and `twilio`; any other value, `smtp` included, fails with an invalid-argument error. The `smtp` package (`pkg/verification/smtp`, build tag `smtp`) is not referenced by the factory or by `cmd/`, so `verification.smtp` is parsed and its password is wiped, but nothing in the daemon consumes it.
+
+### verification.twilio
+
+| YAML Key | Type | Default | Description |
+|---|---|---|---|
+| `accountSid` | string | - | Account SID (Basic username) |
+| `authToken` | string, **secret** | - | Auth token (Basic password) |
+| `verifyServiceSid` | string | - | Verify Service SID |
+| `channel` | string | `sms` | `sms`, `call` or `whatsapp` |
 
 ### verification.smtp
 
-Used when `transport: "smtp"`. Requires the `smtp` build tag.
+Parsed but not consumed by the daemon.
 
-| Field | YAML Key | Type | Required | Default | Description |
-|---|---|---|---|---|---|
-| Host | `host` | string | No | - | SMTP server hostname |
-| Port | `port` | int | No | - | SMTP server port |
-| Username | `username` | string | No | - | SMTP auth username |
-| Password | `password` | string | No | - | SMTP auth password (supports secret URIs) |
-| FromAddress | `fromAddress` | string | No | - | Sender email address |
-| UseTLS | `useTLS` | bool | No | `false` | Enable STARTTLS |
-| DefaultCarrier | `defaultCarrier` | string | No | - | Fallback carrier for SMS gateway routing |
-| CarrierGateways | `carrierGateways` | map[string]string | No | - | Carrier name to SMS-to-email gateway domain mapping |
-
-```yaml
-verification:
-  codeLength: 6
-  codeTTLSeconds: 300
-  maxAttempts: 3
-  transport: "smtp"
-  smtp:
-    host: "smtp.example.com"
-    port: 587
-    username: "signal-verify"
-    password: "kms://secrets/smtp-password"
-    fromAddress: "verify@example.com"
-    useTLS: true
-    defaultCarrier: "tmomail.net"
-    carrierGateways:
-      att: "txt.att.net"
-      tmobile: "tmomail.net"
-      verizon: "vtext.com"
-```
+| YAML Key | Type | Description |
+|---|---|---|
+| `host`, `port`, `username` | string, int, string | SMTP server and login |
+| `password` | string, **secret** | SMTP password |
+| `fromAddress` | string | Sender address |
+| `useTLS` | bool | Enable TLS |
+| `defaultCarrier` | string | Fallback carrier |
+| `carrierGateways` | map[string]string | Carrier to SMS-gateway domain |
 
 ---
 
 ## fido2
 
-WebAuthn/FIDO2 authentication settings. Only available when the binary is built with the `fido2` build tag.
-
-Source: `pkg/config/config_fido2.go`
-
-| Field | YAML Key | Type | Required | Default | Description |
-|---|---|---|---|---|---|
-| Enabled | `enabled` | bool | No | `false` | Enable FIDO2 authentication |
-| RPID | `rpId` | string | Yes* | - | Relying Party ID (typically the domain) |
-| RPName | `rpName` | string | Yes* | - | Human-readable Relying Party name |
-| RPOrigins | `rpOrigins` | []string | Yes* | - | Allowed origin URLs for WebAuthn ceremonies |
-| Attestation | `attestation` | string | No | `"none"` | Attestation preference: `"none"`, `"indirect"`, `"direct"` |
-| UserVerification | `userVerification` | string | No | `"preferred"` | User verification: `"required"`, `"preferred"`, `"discouraged"` |
-| TimeoutSeconds | `timeoutSeconds` | int | No | `60` | Ceremony timeout in seconds |
-| RequireMFA | `requireMfa` | bool | No | `false` | Require MFA for all accounts |
-| AllowFIDO2Only | `allowFido2Only` | bool | No | `false` | Allow registration with FIDO2 only (no phone number) |
-
-\* Required when `enabled: true`.
-
-### Validation rules
-
-When `enabled` is `true`:
-- `rpId` must be non-empty
-- `rpName` must be non-empty
-- `rpOrigins` must contain at least one entry
-- `attestation` must be one of: `"none"`, `"indirect"`, `"direct"` (or empty, which defaults to `"none"`)
-- `userVerification` must be one of: `"required"`, `"preferred"`, `"discouraged"` (or empty, which defaults to `"preferred"`)
-
-When `enabled` is `false`, all other fields are ignored and no validation is performed.
-
-```yaml
-fido2:
-  enabled: true
-  rpId: "signal.example.com"
-  rpName: "Signal Server"
-  rpOrigins:
-    - "https://signal.example.com"
-  attestation: "none"
-  userVerification: "preferred"
-  timeoutSeconds: 60
-  requireMfa: false
-  allowFido2Only: false
-```
+Defined in `pkg/config/config_fido2.go` (build tag `fido2`). Details and defaults are in [../auth/fido2.md](../auth/fido2.md). `requireMfa` and `allowFido2Only` are reported by `GET /v1/fido2/capabilities` and enforced nowhere.
 
 ---
 
-## Full example
+## Examples
 
-A minimal production configuration:
-
-```yaml
-server:
-  httpPort: 8080
-  grpcPort: 9090
-  tlsCertFile: /etc/signal/tls/cert.pem
-  tlsKeyFile: /etc/signal/tls/key.pem
-
-storage:
-  backend: "postgres"
-  postgres:
-    host: "db.internal"
-    port: 5432
-    database: "signal"
-    user: "signal"
-    password: "kms://secrets/db-password"
-    sslMode: "verify-full"
-
-cache:
-  backend: "redis"
-  redis:
-    url: "redis://cache.internal:6379"
-    password: "kms://secrets/redis-password"
-
-verification:
-  transport: "smtp"
-  smtp:
-    host: "smtp.internal"
-    port: 587
-    username: "verify"
-    password: "kms://secrets/smtp-password"
-    fromAddress: "verify@example.com"
-    useTLS: true
-
-turn:
-  secret: "kms://secrets/turn-secret"
-  uris:
-    - "turn:turn.example.com:3478"
-
-limits:
-  messages:
-    bucketSize: 256
-    leakRatePerMin: 60
-```
-
-A minimal development configuration:
+Development:
 
 ```yaml
 server:
@@ -526,10 +408,59 @@ cache:
 
 verification:
   transport: "stub"
+```
 
-turn:
-  secret: "auto"
+Production skeleton (every key below is checked by the production gate):
+
+```yaml
+mode: production
+
+server:
+  httpPort: 8080
+  grpcPort: 9090
+  tlsCertFile: /etc/signal/tls/cert.pem
+  tlsKeyFile: /etc/signal/tls/key.pem
+
+storage:
+  backend: "postgres"
+  postgres:
+    host: "db.internal"
+    database: "signal"
+    user: "signal"
+    password: "change-me"
+    sslMode: "verify-full"
+
+cache:
+  backend: "redis"
+  redis:
+    url: "redis://cache.internal:6379"
+
+verification:
+  transport: "twilio"
+  twilio:
+    accountSid: "AC..."
+    authToken: "change-me"
+    verifyServiceSid: "VA..."
+
+captcha:
+  provider: "hcaptcha"
+  secretKey: "change-me"
 
 zkConfig:
-  serverSecret: "auto"
+  enabled: true
+  serverSecret: "change-me"
+
+callingZkConfig:
+  serverSecret: "change-me"
+
+cdn:
+  bucket: "signal-attachments"
+  region: "us-east-1"
+  accessKey: "change-me"
+  secretKey: "change-me"
+
+limits:
+  messages:
+    bucketSize: 256
+    leakRatePerMin: 60
 ```

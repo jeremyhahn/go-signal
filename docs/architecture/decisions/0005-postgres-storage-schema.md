@@ -1,12 +1,15 @@
 # ADR-0005: Postgres storage schema design
 
+> **Status: REFERENCE** · Last verified: 2026-10-09
+> Decision record for the Postgres backend, corrected to the as-built code.
+
 - **Status**: accepted
 - **Date**: 2026-05-06
 - **Author**: go-signal team
 
 ## Context
 
-ADR-0001 established that go-signal supports three pluggable storage backends: go-qrdb (primary), DynamoDB, and Postgres. The Postgres backend requires a concrete schema design. Unlike DynamoDB (which uses untyped key-value attributes) or go-qrdb (which uses JSON documents keyed by domain-specific prefixes), Postgres is a relational system with native support for typed columns, indexes, constraints, and transactions.
+[ADR-0001](0001-pluggable-storage.md) established pluggable storage backends, including Postgres. The Postgres backend requires a concrete schema design. Unlike DynamoDB (which uses untyped key-value attributes) or go-qrdb (which uses JSON documents keyed by domain-specific prefixes), Postgres is a relational system with native support for typed columns, indexes, constraints, and transactions.
 
 The challenge is translating Signal's domain operations — which were modeled for KV or semi-structured backends — into a relational schema without losing the advantages of both worlds: the schema simplicity of JSON-in-DB and the query efficiency of normalized columns.
 
@@ -22,13 +25,13 @@ The Postgres schema follows a hybrid design:
 
 4. **Hand-rolled migrator.** Rather than integrate `golang-migrate` or another third-party migration tool, migrations are embedded SQL files (`pkg/storage/postgres/migrations/NNNN_name.up.sql`) paired with a thin Go wrapper that uses Postgres advisory locks to serialize concurrent migrations. This keeps the import surface small and gives operators direct visibility into schema changes (readable .sql files checked into version control).
 
-5. **expires_at + background sweeper as TTL replacement.** Postgres has no native TTL like DynamoDB or Redis. Tables with time-bound data carry an `expires_at TIMESTAMPTZ` column with an optional partial index. Background worker processes (Phase 1.4) periodically `DELETE FROM table WHERE expires_at < NOW()`. This is lazier than native TTL but requires zero cloud dependency and integrates cleanly with go-signal's worker framework.
+5. **expires_at + background sweeper as TTL replacement.** Postgres has no native TTL like DynamoDB or Redis. Tables with time-bound data carry an `expires_at TIMESTAMPTZ` column with an optional partial index. Background jobs in `pkg/workers/jobs.go` (for example the remove-expired-messages job) periodically `DELETE FROM table WHERE expires_at < NOW()`. This is lazier than native TTL but requires zero cloud dependency and integrates cleanly with go-signal's worker framework.
 
 6. **ON CONFLICT + UNIQUE + advisory locks for conditional writes.** DynamoDB's conditional expressions are replaced by:
    - UNIQUE constraints and primary keys for natural uniqueness.
    - ON CONFLICT clauses for idempotent upserts (e.g., pre-key replacement).
    - Partial unique indexes for cardinality constraints (e.g., "exactly one latest profile per account").
-   - Postgres advisory locks for operations that need to coordinate across multiple statements (e.g., "select a username hash that no other account has reserved").
+   - Transactions (`Client.WithTx`) for operations that coordinate across multiple statements (e.g., "select a username hash that no other account has reserved"). The only advisory lock is the migrator's.
 
 7. **JSONB authoritative, columns are projections.** The JSONB column (e.g., `data` in accounts, groups, messages) holds the complete serialized struct. Promoted columns are copied from the struct on every write and stay in sync via application code, not triggers. This keeps schema migrations simple: adding a new field to the struct doesn't require a database alter; the field becomes part of the JSONB blob on next write.
 
@@ -40,7 +43,7 @@ The Postgres schema follows a hybrid design:
 
 - **Layered on top of KVClient.** Implement PreKeyStore, MessageStore, etc. as wrappers around a generic KV backend that translates domain queries to KV operations. Rejected: loses the benefits of relational operations. Atomic pre-key consumption would require list-get-delete in three steps with inherent races; conditional writes would rely on pessimistic locking rather than native constraints.
 
-- **golang-migrate or sql-migrate.** Use an off-the-shelf migration library. Rejected: unnecessary external dependency. The hand-rolled migrator is ~160 lines of straightforward Go; it handles advisory locks, bookkeeping, and version tracking. go-signal's slim import surface is a deliberate architectural choice.
+- **golang-migrate or sql-migrate.** Use an off-the-shelf migration library. Rejected: unnecessary external dependency. The hand-rolled migrator (`pkg/storage/postgres/migrate.go`) handles advisory locks, bookkeeping, and version tracking. go-signal's slim import surface is a deliberate architectural choice.
 
 ## Consequences
 
@@ -52,14 +55,13 @@ The Postgres schema follows a hybrid design:
 - Migration clarity. Every schema change is a readable .sql file in version control; no implicit migrations hidden in code.
 
 **Costs:**
-- Multiple schema versions to maintain. Changes to the Postgres schema must also be applied to the go-qrdb and DynamoDB backends. `docs/storage/schema-*.md` files track this.
+- Multiple schema versions to maintain. Changes to the Postgres schema may also need to be applied to the qrdb stores. `docs/storage/schema-*.md` files track this.
 - Schema coupling. The Postgres schema defines what domain fields are indexed. Adding a new commonly-queried field may require a database index; removing an indexed field requires coordination between application code and the schema.
 - No automatic TTL. Background workers must be deployed and scheduled to manage `expires_at` cleanup. This is operationally simpler than cloud-provider TTL but requires monitoring and tuning.
 
 ## References
 
-- ADR-0001: `/mnt/vm-host-1/go-signal/docs/architecture/decisions/0001-pluggable-storage.md` — storage pluggability, context for this decision.
-- Schema documentation: `/mnt/vm-host-1/go-signal/docs/storage/schema-postgres.md` — detailed table-by-table reference.
-- Implementation: `pkg/storage/postgres/` — all store implementations and the embedded migrator.
-- Java reference: `/mnt/vm-host-1/Signal-Server/service/src/main/java/org/whispersystems/textsecuregcm/storage/` — Java storage implementations for comparison.
-- Plan: `/home/jhahn/.claude/plans/fluttering-kindling-flask.md`, Phase 1.1 — gap analysis and schema porting plan.
+- [ADR-0001](0001-pluggable-storage.md): storage pluggability.
+- [../../storage/schema-postgres.md](../../storage/schema-postgres.md): table-by-table reference.
+- Implementation: `pkg/storage/postgres/` (store implementations, embedded migrations).
+- Contract tests: `test/integration/storage/`.

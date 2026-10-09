@@ -1033,3 +1033,81 @@ func TestRedactQueryParams_EmptyString(t *testing.T) {
 		t.Errorf("expected empty string for empty query, got %q", got)
 	}
 }
+
+// =============================================================================
+// writeJSON must encode through secrets.JSONAppender when the payload offers
+// one. This is the whole mechanism that keeps credential plaintext in a single
+// owned buffer: json.Marshal on a credential cannot do it, because MarshalJSON
+// must RETURN a fresh buffer, encoding/json copies it and drops the original,
+// and the abandoned copy holds the password with no owner left to wipe it.
+// =============================================================================
+
+// appenderProbe implements BOTH interfaces, with deliberately different output,
+// so the response body itself reveals which path writeJSON took. A test that
+// only checked for valid JSON would pass either way.
+type appenderProbe struct{ marshalCalled *bool }
+
+func (p appenderProbe) AppendJSON(dst []byte) ([]byte, error) {
+	return append(dst, `{"via":"appender"}`...), nil
+}
+
+func (p appenderProbe) MarshalJSON() ([]byte, error) {
+	*p.marshalCalled = true
+	return []byte(`{"via":"marshaler"}`), nil
+}
+
+func TestWriteJSON_PrefersJSONAppenderOverMarshalJSON(t *testing.T) {
+	marshalCalled := false
+	rr := httptest.NewRecorder()
+	writeJSON(rr, http.StatusOK, appenderProbe{marshalCalled: &marshalCalled})
+
+	if got := strings.TrimSpace(rr.Body.String()); got != `{"via":"appender"}` {
+		t.Errorf("writeJSON did not use the appender path: body = %s", got)
+	}
+	// The stronger assertion: MarshalJSON must not have run at all. If it had,
+	// encoding/json would have copied and abandoned its buffer — which for a
+	// real credential is precisely the unwiped plaintext this design removes.
+	if marshalCalled {
+		t.Error("writeJSON called MarshalJSON, abandoning an unwiped buffer")
+	}
+}
+
+// A payload with no AppendJSON must still marshal correctly — the appender is
+// an optimisation of ownership, not a requirement for every response type.
+func TestWriteJSON_FallsBackToMarshalForOrdinaryPayloads(t *testing.T) {
+	rr := httptest.NewRecorder()
+	writeJSON(rr, http.StatusOK, map[string]string{"key": "value"})
+	if got := strings.TrimSpace(rr.Body.String()); got != `{"key":"value"}` {
+		t.Errorf("non-appender payload marshalled wrong: %s", got)
+	}
+}
+
+// An appender that fails partway has already written the username and the
+// opening of the password literal into the buffer. writeJSON must wipe on that
+// path too, and must not emit the partial body as if it were a response.
+type failingAppender struct{ partial *[]byte }
+
+func (f failingAppender) AppendJSON(dst []byte) ([]byte, error) {
+	dst = append(dst, `{"username":"u","password":"secr`...)
+	*f.partial = dst
+	return dst, errors.New("credential unavailable")
+}
+
+func TestWriteJSON_WipesPartialBodyWhenAppenderFails(t *testing.T) {
+	var partial []byte
+	rr := httptest.NewRecorder()
+	writeJSON(rr, http.StatusOK, failingAppender{partial: &partial})
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("expected 500 on appender failure, got %d", rr.Code)
+	}
+	if len(partial) == 0 {
+		t.Fatal("probe never produced a partial buffer; the test proves nothing")
+	}
+	for i, b := range partial {
+		if b != 0 {
+			t.Fatalf("partial body left unwiped at byte %d (%q): the plaintext "+
+				"written before the failure is still resident", i, partial)
+		}
+	}
+}

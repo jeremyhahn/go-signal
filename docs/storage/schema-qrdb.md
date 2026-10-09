@@ -1,11 +1,14 @@
 # qrdb storage schema
 
+> **Status: REFERENCE** · Last verified: 2026-10-09
+> The key layout of the stores in `pkg/storage/qrdb/`.
+
 The qrdb backend stores every domain value as a JSON document keyed by a
 domain-specific prefix. Secondary lookups are handled with mirror keys
-that map an indexed field to a primary ID. This convention works across
-every qrdb transport (REST, gRPC, embedded); secondary index
-registration via the native qrdb index API is an optional optimisation
-that can layer on later without breaking compatibility.
+that map an indexed field to a primary ID. The stores run on a `KVClient`
+adapter (`kvclient_adapter.go`); `cmd/signald` wires them to an in-process
+fake KV store, so the `qrdb` backend is not durable (see
+[../architecture/overview.md](../architecture/overview.md#storage)).
 
 All stores live in `pkg/storage/qrdb/`.
 
@@ -15,6 +18,7 @@ All stores live in `pkg/storage/qrdb/`.
 |----------------------------------|-----------------------------|---------------------------------------|
 | `account:_primary:{uuid}`        | JSON `accounts.Account`     | Primary record                        |
 | `account:by-number:{e164}`       | UUID string                 | Mirror for `GetByNumber`              |
+| `account:by-pni:{pni}`           | UUID string                 | Mirror for `GetByPNI`                 |
 
 Create and Update are not atomic across the primary + mirror keys. A
 process crash between Put calls leaves a missing mirror; the next
@@ -32,8 +36,7 @@ version, or the store returns `accounts.VersionConflictError`.
 |--------------------------------|--------------------------------------|
 | `provisioning:{code}`          | JSON `devices.ProvisioningSession`   |
 
-Codes are TTL-bearing in their payload (`ExpiresAt`); cleanup runs
-through the Phase 1 worker framework.
+Codes are TTL-bearing in their payload (`ExpiresAt`).
 
 ## Groups
 
@@ -111,8 +114,7 @@ on its daily schedule.
 
 `seq` is a zero-padded uint64 allocated atomically within the
 MessageStore instance. Cross-instance global ordering is not
-guaranteed here; consumers rely on `Envelope.ServerTimestamp` once
-that pathway lands in Phase 2.4.
+guaranteed here.
 
 ## Pre-keys
 
@@ -142,8 +144,16 @@ same key.
 `GetCredentialsByAccount` scans the `fido2:cred-by-account:{uuid}:`
 prefix and fetches each credential via the primary key.
 
+## Other domains
+
+| Prefix                          | Store                                   |
+|---------------------------------|-----------------------------------------|
+| `signal:backup:`, `signal:backup:pending:` | Backups (`backups.go`)       |
+| `signal:rrp:`                   | Recovery passwords (`recoverypasswords.go`) |
+| `remoteconfig:`                 | Remote config (`remoteconfig.go`)       |
+| `scheduledjobs:`                | Scheduled jobs (`jobs.go`)              |
+
 ## Not qrdb-backed
 
 Attachment blobs are not stored in qrdb. Binary attachments go through
-`pkg/storage/blob/` against S3, GCS, Azure, or a local filesystem
-driver (Phase 3.5).
+`pkg/storage/blob/`, which has a filesystem driver and an S3 driver.

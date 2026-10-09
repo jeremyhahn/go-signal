@@ -2530,12 +2530,27 @@ func TestHandleGetSVRBAuth_SuccessPath(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
-	var resp ExternalServiceCredentialsResponse
+	// The oracle: the shape the handler used to marshal from a response struct
+	// with plain-string fields. Declared here, in the test, precisely because
+	// production no longer has such a struct — the wire form is now asserted
+	// against it rather than produced by it.
+	var resp struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
 	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	if resp.Username != "svrb-user" {
 		t.Errorf("expected username svrb-user, got %q", resp.Username)
+	}
+	// Assert the PASSWORD reaches the client, not just the username. The
+	// client is the credential's intended bearer, so a response that dropped
+	// or redacted it would be a broken protocol — and byte-scoping the
+	// serialization is exactly the kind of change that could do so silently.
+	// The previous version of this test never looked at this field.
+	if resp.Password != "svrb-pass" {
+		t.Errorf("expected password svrb-pass, got %q", resp.Password)
 	}
 }
 

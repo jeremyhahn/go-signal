@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/jeremyhahn/go-signal/pkg/extservice/common"
 )
 
 // isSafeCDNKey reports whether a client-supplied CDN object key is safe to pass
@@ -58,15 +60,18 @@ func (s *Server) handleAttachmentUploadForm(w http.ResponseWriter, r *http.Reque
 		// header the client forwards, then wiped. An unavailable credential
 		// fails the request rather than emitting a header with an empty
 		// password the TUS server would reject.
-		password, err := creds.Password.Reveal()
-		if err != nil {
-			creds.Destroy()
-			s.logger.Error("attachment credentials unavailable", "error", err.Error())
+		//
+		// Assembled by the shared helper rather than open-coded: the previous
+		// spelling revealed the password into a Go string and then built two
+		// more — the `user:pass` concatenation and its base64 — none of which
+		// can be wiped, and all of which outlived the request.
+		auth := common.BasicAuthHeaderCredential(creds.Username, creds.Password)
+		creds.Destroy()
+		if auth == "" {
+			s.logger.Error("attachment credentials unavailable")
 			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
-		auth := "Basic " + base64.StdEncoding.EncodeToString([]byte(creds.Username+":"+password))
-		creds.Destroy()
 		headers["Authorization"] = auth
 		headers["Upload-Metadata"] = "filename " + base64.StdEncoding.EncodeToString([]byte(key))
 		uploadURL = s.tusURI + "/attachments"

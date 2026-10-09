@@ -16,9 +16,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 
 	"github.com/jeremyhahn/go-signal/pkg/accounts"
 	"github.com/jeremyhahn/go-signal/pkg/auth"
+	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 	"github.com/jeremyhahn/go-signal/pkg/limits"
 	"github.com/jeremyhahn/go-signal/pkg/service"
@@ -403,13 +405,55 @@ func optionalAuthMiddleware(am service.AccountService, resolveDest func(*http.Re
 // writeJSON marshals v as JSON and writes it to the response with the given
 // status code. If marshaling fails, a 500 Internal Server Error is written.
 func writeJSON(w http.ResponseWriter, status int, v any) {
-	data, err := json.Marshal(v)
+	// Encode through secrets.JSONAppender when the payload offers it, so the
+	// plaintext lands in a buffer THIS function owns. json.Marshal on a
+	// credential cannot achieve that: the type's MarshalJSON must return a
+	// fresh buffer, encoding/json copies it and drops the original, and the
+	// abandoned copy holds the password with no owner left to wipe it. The
+	// appender hands the destination in, so there is exactly one buffer.
+	var (
+		data []byte
+		err  error
+	)
+	if a, ok := v.(secrets.JSONAppender); ok {
+		data, err = a.AppendJSON(nil)
+	} else {
+		data, err = json.Marshal(v)
+	}
+	// Wipe before the error check, not after it: a failed AppendJSON can have
+	// written a partial body, and on the credential types the username and the
+	// opening of the password literal are already in the buffer by the time
+	// anything can fail.
+	defer secure.Wipe(data)
 	if err != nil {
 		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
 		return
 	}
+	// The wipe above is UNCONDITIONAL, and deliberately so: writeJSON cannot
+	// know which payloads carry secrets. Only the ENCODE is conditional. A
+	// conditional wipe would need every credential type to opt in through a
+	// marker and would fail open for the next type that forgot — the same
+	// shape as a suppression whose stated reason nothing enforces. A type that
+	// forgets to implement JSONAppender still gets its buffer wiped; it just
+	// leaves encoding/json's abandoned copy behind, which is strictly the
+	// situation before this change rather than a regression.
+	//
+	// The cost is one memclr per response on a buffer nothing reads again.
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
+	// #nosec G705 -- the response body is HTML-escaped JSON served as
+	// application/json, so it cannot be sniffed into an executing context.
+	//
+	// This taint finding appeared only when the encode above gained the
+	// JSONAppender branch: gosec treats the interface method's return as
+	// untrusted, where json.Marshal was a known-safe source. The escaping is
+	// not merely asserted here, it is ENFORCED by test: every production
+	// appender is pinned byte-identical to encoding/json's own output over a
+	// corpus that includes `<`, `>` and `&` (the *_wireform_test.go files for
+	// all four credential types), and encoding/json escapes those by default.
+	// An appender that stopped escaping would fail those tests before it could
+	// reach this Write.
 	if _, err := w.Write(data); err != nil {
 		slog.Default().Error("failed to write JSON response", slog.String("error", err.Error()))
 	}

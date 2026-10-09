@@ -1,250 +1,188 @@
 # Architecture Overview
 
-go-signal is a Go implementation of the Signal messaging server protocol. It
-targets protocol-level compatibility with the
-[Java Signal-Server](https://github.com/signalapp/Signal-Server) reference
-implementation.
+> **Status: REFERENCE** · Last verified: 2026-10-09
+> As-built description of how go-signal is layered, which backends it can run on, and which build tags it supports.
+
+go-signal is a Go implementation of the Signal server. It targets wire compatibility with the Java [Signal-Server](https://github.com/signalapp/Signal-Server) at the commit pinned in `SIGNAL_SERVER_REV`.
 
 ```
 Module:  github.com/jeremyhahn/go-signal
-Go:      1.26
+Go:      1.27.2 (go.mod)
 License: AGPL-3.0
 ```
 
-## Three-Layer Architecture
-
-The codebase follows a strict three-layer separation. Protocol handlers never
-touch storage directly, and stores never contain business logic.
+## Layers
 
 ```
-  +---------------------------+
-  |      Protocol Layer       |
-  |   REST / gRPC / WebSocket |
-  +------------+--------------+
-               |
-  +------------v--------------+
-  |       Manager Layer       |
-  |      Business Logic       |
-  +------------+--------------+
-               |
-  +------------v--------------+
-  |        Store Layer        |
-  |    KVClient Persistence   |
-  +---------------------------+
+  +---------------------------------------+
+  |            Protocol layer             |
+  |   REST  /  gRPC  /  WebSocket         |
+  +-------------------+-------------------+
+                      |
+  +-------------------v-------------------+
+  |      Service layer  (pkg/service)     |
+  |   one interface per API-facing domain |
+  +-------------------+-------------------+
+                      |
+  +-------------------v-------------------+
+  |   Domain packages (accounts, keys,    |
+  |   messages, profiles, devices, ...)   |
+  +-------------------+-------------------+
+                      |
+  +-------------------v-------------------+
+  |         Stores and cache clients      |
+  +---------------------------------------+
 ```
 
-Requests flow top-down. A REST handler parses the HTTP request, calls a manager
-method, and formats the response. The manager validates inputs, applies business
-rules, and reads or writes through a store. The store delegates to a `KVClient`
-backend.
+A request is parsed and authenticated by a protocol handler, passed to a `pkg/service` interface, and executed by the domain package behind it. The domain package reads and writes through a store interface that it defines.
 
----
+### Protocol layer
 
-## Protocol Layer
+| Package | Protocol | Notes |
+|---|---|---|
+| `pkg/api/rest/` | REST over HTTP (TLS when `server.tlsCertFile` and `server.tlsKeyFile` are set) | Signal-compatible `/v1/...` and `/v2/...` routes, plus the web-UI `/api/v1/...` routes. See [api/rest.md](../api/rest.md). |
+| `pkg/api/grpc/` | gRPC | `org.signal.chat.*` services; one routing interceptor. See [api/grpc.md](../api/grpc.md). |
+| `pkg/api/websocket/` | WebSocket | Message delivery and provisioning sockets, mounted on the REST listener. See [api/websocket.md](../api/websocket.md). |
 
-The protocol layer exposes the server over three transports. Each transport
-parses requests, authenticates callers, and delegates to the manager layer. No
-business logic lives here.
+`cmd/signald` starts the REST server always, and the gRPC server only when `server.grpcPort` is non-zero.
 
-| Package              | Protocol  | Description                          |
-|----------------------|-----------|--------------------------------------|
-| `pkg/api/rest/`      | REST      | HTTP/2 endpoints, Signal-compatible  |
-| `pkg/api/grpc/`      | gRPC      | Protobuf services, unary interceptors|
-| `pkg/api/websocket/` | WebSocket | Real-time message delivery           |
+### Service layer
 
-REST endpoints follow the `/v1/{resource}` convention for Signal client
-compatibility. gRPC services are generated from `.proto` definitions in
-`pkg/api/grpc/proto/`. WebSocket connections handle persistent client sessions
-for message push.
+`pkg/service` holds the interfaces that protocol handlers call. Each is implemented once and shared by every transport:
 
-All three protocols run concurrently from a single server binary.
+| Interface | File |
+|---|---|
+| `AccountService` | `accounts.go` |
+| `MessageService` | `messages.go` |
+| `KeyService` | `keys.go` |
+| `ProfileService` | `profiles.go` |
+| `CertificateService` | `certificates.go` |
+| `DeviceService` | `devices.go` |
+| `UsernameService` | `usernames.go` |
+| `CallSignalingService`, `CallingService` | `calling.go`, `calling_manager.go` |
+| `BackupService` | `backups.go` |
+| `DirectoryService` | `directory.go` |
+| `SecureStorageService` | `securestorage.go` |
+| `StickersService` | `stickers.go` |
+| `KeyTransparencyService` | `keytransparency.go` |
+| `RecoveryPasswordService` | `recoverypassword.go` |
 
----
+`SignalService` (`signal.go`) aggregates `Accounts`, `Messages`, `Keys`, `Profiles`, `Certificates`, `Devices`, `Usernames`, `CallSignaling` and, when the backup subsystem is enabled, `Backups`.
 
-## Manager Layer
+The REST `Server` holds these interfaces. It also holds a few collaborators directly, for example the captcha managers, the remote-config manager, the SVR manager, the rate-limit registry, the attachment store and the report store.
 
-Managers contain all business logic, validation, and cross-cutting
-orchestration. They are shared across protocol handlers so behavior stays
-consistent regardless of transport.
+### Domain packages
 
-| Package                  | Manager                | Responsibility                    |
-|--------------------------|------------------------|-----------------------------------|
-| `pkg/accounts/`          | AccountsManager        | Account lifecycle, device linking |
-| `pkg/keys/`              | KeysManager            | Pre-key bundles, signed pre-keys  |
-| `pkg/messages/`          | MessagesManager        | Message sending, storage, delivery|
-| `pkg/profiles/`          | ProfilesManager        | Profile retrieval and updates     |
-| `pkg/verification/`      | VerificationManager    | Phone number verification flows   |
-| `pkg/fido2/`             | FIDO2AccountsManager   | WebAuthn ceremonies (build-tagged)|
-| `pkg/groups/`            | GroupsManager          | Group creation, membership        |
-| `pkg/devices/`           | DevicesManager         | Multi-device management           |
-| `pkg/certificates/`      | CertificatesManager    | Delivery certificates             |
-| `pkg/keytransparency/`   | KeyTransparencyManager | Key transparency auditing         |
-| `pkg/calling/`           | CallingManager         | Voice/video calling               |
-| `pkg/websocket/`         | SessionManager         | WebSocket session management      |
+| Package | Responsibility |
+|---|---|
+| `pkg/accounts/` | Account lifecycle |
+| `pkg/devices/` | Linked devices |
+| `pkg/keys/` | Pre-keys |
+| `pkg/messages/` | Message queueing, persistence, multi-recipient cache |
+| `pkg/profiles/` | Profiles |
+| `pkg/usernames/` | Usernames and username links |
+| `pkg/groups/` | Groups |
+| `pkg/certificates/` | Sender and server certificates |
+| `pkg/calling/` | Call signaling and quality surveys |
+| `pkg/keytransparency/` | Key-transparency client |
+| `pkg/backups/` | Message-archive backups |
+| `pkg/verification/` | Verification sessions and code delivery |
+| `pkg/fido2/` | WebAuthn (build tag `fido2`) |
+| `pkg/websocket/` | WebSocket `SessionManager` |
 
----
+[package-map.md](package-map.md) lists every package.
 
-## Store Layer
+## Storage
 
-The store layer is built on the `KVClient` interface defined in
-`pkg/store/kv.go`. Every store implementation wraps a `KVClient` for actual
-persistence.
+### Domain stores
+
+Each domain package declares the store interface it needs. `cmd/signald` selects the implementation from `storage.backend`:
+
+| `storage.backend` | Implementation | Notes |
+|---|---|---|
+| `memory` (default) | `pkg/storage/memory` | Lost on restart. |
+| `file` | `store.FileKVClient` under `storage.file.dataDir` (default `data`), with the domain `store_kv.go` implementations and `pkg/storage/qrdb` stores on a `KVClient` adapter | Durable. |
+| `postgres` | `pkg/storage/postgres` | Durable. Implements the domain interfaces directly with SQL, not through `KVClient`. Runs embedded migrations at startup. |
+| `qrdb` | `pkg/storage/qrdb` over an in-process fake KV store | Not durable; startup wires no real qrdb transport. |
+
+`dynamodb` is not implemented; an unknown or `dynamodb` value falls through to `memory`. Production mode (`mode: production`) accepts only `postgres` and `file`.
+
+### KVClient
+
+`pkg/store/kv.go` defines the key-value interface that the `file` backend and the `store_kv.go` implementations use:
 
 ```go
 type KVClient interface {
     Put(ctx context.Context, key string, value []byte) error
     Get(ctx context.Context, key string) ([]byte, error)
     Delete(ctx context.Context, key string) error
+    DeleteIfPresent(ctx context.Context, key string) (bool, error)
     List(ctx context.Context, prefix string) ([]string, error)
     Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error
     Exists(ctx context.Context, key string) (bool, error)
 }
 ```
 
-### Storage Backends
+`DeleteIfPresent` is atomic and reports whether this call removed the key; one-time pre-key consumption depends on it. Implementations: `MemoryKVClient` (`kv_memory.go`), the file-backed client (`kv_file.go`) and a failure-injecting wrapper (`kv_failing.go`).
 
-| Backend           | Implementation         | Use Case                    |
-|-------------------|------------------------|-----------------------------|
-| In-memory         | `store.MemoryKVClient` | Tests, standalone operation |
-| File-backed       | File-based KVClient    | Single-node persistence     |
-| QuicBaaS TenantKV | `TenantKVClient`      | Distributed, multi-tenant   |
+Missing and duplicate keys are reported with the typed errors `*store.KeyNotFoundError` and `*store.KeyExistsError`.
 
-The in-memory backend (`pkg/store/kv_memory.go`) provides a thread-safe
-`map[string][]byte` with deep-copy semantics on reads and writes.
+### Key prefixes
 
-### Key Prefix Convention
+KV keys start with `signal/<domain>/`. The prefixes in the code:
 
-All keys follow a hierarchical prefix scheme:
+| Prefix | Owner |
+|---|---|
+| `signal/accounts/` (`by-number/`, `by-pni/`) | `pkg/accounts` |
+| `signal/keys/` (`ec/`, `signed/`, `kem/`, `kem_last_resort/`) | `pkg/keys` |
+| `signal/messages/` | `pkg/messages` |
+| `signal/reports/`, `signal/reports-by-reporter/` | `pkg/messages` |
+| `signal/profiles/` | `pkg/profiles` |
+| `signal/verification/` | `pkg/verification` |
+| `signal/fido2/creds/` (`by-account/`), `signal/fido2/sessions/` | `pkg/fido2` |
 
-```
-signal/{domain}/{resource-type}/{identifier}
-```
+### Cache
 
-Examples:
+`pkg/cache.Client` is selected by `cache.backend`: `redis` (`pkg/cache/redis`) or the in-process default (`pkg/cache/memory`). The key layouts are in [../storage/redis-keys.md](../storage/redis-keys.md). The cache carries the message queues, multi-recipient payloads, rate-limit counters, WebSocket wake-up messages and worker leases.
 
-| Prefix                            | Owner                  |
-|-----------------------------------|------------------------|
-| `signal/fido2/creds/`             | FIDO2 credentials      |
-| `signal/fido2/creds/by-account/`  | FIDO2 credential index |
-| `signal/fido2/sessions/`          | FIDO2 ceremony sessions|
-| `signal/verification/`            | Verification sessions  |
+## Protocol primitives
 
-This convention enables efficient prefix-based listing and scanning, and
-provides clear namespace separation between subsystems.
+Cryptography and wire-format primitives come from `github.com/jeremyhahn/go-libsignal`. go-signal does not implement them. The server is Pure Go (no cgo).
 
-### Typed Errors
+## Build tags
 
-Storage operations use typed errors exclusively (never `fmt.Errorf`):
+| Tag | Effect |
+|---|---|
+| `fido2` | WebAuthn: `pkg/fido2`, FIDO2 routes, the fido2 stores, `cmd/signald/start_fido2.go` |
+| `smtp` | Compiles `pkg/verification/smtp` |
+| `desktop` | The desktop client packages under `pkg/desktop` and `cmd/signal/gui_desktop.go`. See [desktop-client.md](desktop-client.md). |
 
-| Error              | Meaning                                     |
-|--------------------|---------------------------------------------|
-| `KeyNotFoundError` | The requested key does not exist             |
-| `KeyExistsError`   | The key already exists (used by create-only) |
-
----
-
-## Signal Protocol Compliance
-
-go-signal implements the Signal messaging protocol using the `go-libsignal`
-library:
-
-- **X3DH** - Extended Triple Diffie-Hellman key agreement
-- **Double Ratchet** - Per-message encryption with forward secrecy
-- **SenderKey** - Efficient group messaging
-- **Sealed Sender** - Metadata protection
-- **Zero-Knowledge Groups** - Privacy-preserving group membership via zkgroup
-- **Secure Value Recovery (SVR)** - PIN-based secret recovery
-
-The server manages pre-key bundles, signed pre-keys, and identity keys through
-the keys subsystem. Message routing, storage, and delivery are handled by the
-messages subsystem.
-
----
-
-## Build Tag Extensions
-
-The base binary includes all core Signal functionality. Optional subsystems are
-gated behind build tags to avoid pulling in unnecessary dependencies.
-
-| Build Tag | Package                  | Description                          |
-|-----------|--------------------------|--------------------------------------|
-| `fido2`   | `pkg/fido2/`             | WebAuthn/FIDO2 credential management |
-| `smtp`    | `pkg/verification/smtp/` | SMTP-based SMS verification          |
-| `signal`  | -                        | QuicBaaS Signal integration          |
+`codec_json` and `qrdb_fts` are build tags of the go-qrdb dependency; the Makefile passes them with the defaults. The Makefile enables `fido2`, `desktop`, `codec_json` and `qrdb_fts` by default (`WITH_FIDO2`, `WITH_DESKTOP`, `WITH_FTS`) and `smtp` only with `WITH_SMTP=1`.
 
 ```bash
-# Base build (no extensions)
-make build
-
-# FIDO2 support
-make build-fido2
-
-# SMTP verification
-make build-smtp
-
-# All extensions
-make build-all
+make build                  # signald and signal, default tags
+make build-all              # frontend, then signald and signal
+make build WITH_SMTP=1      # also compile the SMTP transport
+make build-services         # cdsi, svr2, key-transparency, registration-service, storage-service
+make build-desktop          # tags fido2,desktop,codec_json (+ qrdb_fts)
 ```
 
----
-
-## Package Map
+## Package layout
 
 ```
 cmd/
-  signald/                Server daemon (cobra commands: start, version)
-  signalctl/              CLI control tool
-
-pkg/
-  accounts/               Account lifecycle management
-  api/
-    grpc/                 gRPC services and interceptors
-    rest/                 REST HTTP/2 handlers
-    websocket/            WebSocket connection management
-  auth/                   Authentication and authorization
-  backup/                 Backup management
-  badges/                 Badge management
-  calling/                Voice/video calling support
-  captcha/                Captcha verification
-  certificates/           Delivery certificates
-  config/                 YAML configuration loading
-    secrets/              Secret URI resolution (kms://, ${ENV})
-  devices/                Multi-device management
-  directory/              Contact discovery
-  errors/                 Shared typed errors
-  fido2/                  WebAuthn/FIDO2 (build-tagged)
-  groups/                 Group management
-  keys/                   Pre-key bundle management
-  keytransparency/        Key transparency
-  limits/                 Rate limiting
-  messages/               Message routing and storage
-  metrics/                Prometheus metrics
-  profiles/               Profile management
-  push/                   Push notification dispatch (APN, FCM)
-  registration/           Account registration
-  securestorage/          Secure storage
-  securevaluerecovery/    SVR protocol
-  spam/                   Spam detection
-  stickers/               Sticker pack management
-  store/                  KVClient interface and implementations
-  storage/                Storage adapter layer
-  subscriptions/          Payment subscriptions
-  usernames/              Username management
-  verification/           Phone number verification
-    smtp/                 SMTP transport (build-tagged)
-  websocket/              WebSocket protocol handling
-
-test/
-  integration/            Integration tests
-  performance/            Benchmark documentation
-  tls/                    TLS certificate test files
-  signal-cli/             Signal-cli test harness
+  signald/              server daemon (cobra: start, version)
+  signal/               client CLI (and desktop entry point)
+  cdsi/ svr2/ key-transparency/ registration-service/ storage-service/
+                        standalone service binaries (see topology.md)
+pkg/                    see package-map.md
+internal/frontend/      embedded web UI
+sdk/go/                 Go client SDK
+frontend/               React web UI source
+deploy/                 Dockerfiles, docker-compose.yml, k8s manifests
+test/                   integration, performance, TLS fixtures, signal-cli harness, build gates
 ```
-
----
 
 ## Configuration
 
-The server is configured via YAML files. Secret values support `kms://` URIs
-and `${ENV_VAR}` expansion through the `pkg/config/secrets/` subsystem. See
-[configuration/reference.md](../configuration/reference.md) for the full reference.
+`signald` reads a YAML file. See [../configuration/reference.md](../configuration/reference.md) for every key and [../configuration/secrets.md](../configuration/secrets.md) for how secrets are held.

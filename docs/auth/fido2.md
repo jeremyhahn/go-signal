@@ -1,6 +1,9 @@
 # FIDO2 / WebAuthn
 
-The FIDO2 package provides WebAuthn credential management for go-signal, supporting hardware authenticator registration, enrollment (MFA), and login ceremonies. All FIDO2 code is gated behind the `fido2` build tag and requires `libfido2-dev` at build time.
+> **Status: REFERENCE** · Last verified: 2026-10-09
+> As-built description of the go-signal `pkg/fido2` package.
+
+The FIDO2 package provides WebAuthn credential management for go-signal, supporting hardware authenticator registration, enrollment (MFA), and login ceremonies. All FIDO2 code is gated behind the `fido2` build tag. It is pure Go (`go-webauthn/webauthn`); no code in the repository links `libfido2`.
 
 **Package**: `pkg/fido2/`
 

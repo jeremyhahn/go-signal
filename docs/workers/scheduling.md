@@ -1,5 +1,8 @@
 # Worker scheduling and leader election
 
+> **Status: REFERENCE** · Last verified: 2026-10-09
+> The `pkg/workers` scheduler: cron and continuous loops, the `Leaser` contract, `CacheLeaser` and shutdown.
+
 The worker framework in `pkg/workers/` coordinates background jobs
 across signald replicas. The design goals are:
 
@@ -60,17 +63,25 @@ backs off.
 even when Acquire failed — `CacheLeaser` tracks which tokens it
 holds and no-ops on unknown keys.
 
-When `Config.Leaser` is nil (the default for single-node deployments
-and unit tests) every replica runs every worker, which is correct
-because there's only one replica.
+`Release` runs on a detached context with a 5 second timeout, so a
+cancelled worker context does not leak a held lease.
+
+When `Config.Leaser` is nil (unit tests) every scheduler runs every
+worker. signald always sets a `CacheLeaser` over its cache client, so
+the lease is shared across replicas when the cache is Redis and is
+process-local with the in-memory cache. `Config.LeaseTTL` defaults to
+30 seconds.
 
 ## CacheLeaser
 
 `workers.CacheLeaser` wraps a `cache.Client` so the Redis backend
-does the heavy lifting. Implementation:
+does the heavy lifting. Lease keys are `workers:lease:{worker name}`
+(the prefix is configurable) and the token is a random 16-byte hex
+string. Implementation:
 
 - Acquire calls `cache.Client.Lock(ctx, key, token, ttl)` which maps
-  to Redis `SET NX EX`.
+  to Redis `SET NX` with a TTL. A held lease surfaces as
+  `ErrLeaderElectionFailed`.
 - On success, the token is recorded in memory against the lease key.
 - Release calls `cache.Client.Unlock(ctx, key, token)` which runs a
   Lua script that `DEL`s only if the stored value matches the token.
@@ -89,10 +100,11 @@ With them, it's a no-op — A's recorded token doesn't match B's.
 
 ### Cron
 
-Any string other than `@continuous` / `@on-demand` is interpreted as
-a cron expression via `github.com/robfig/cron/v3`. Both standard
+Any schedule other than `@continuous` / `@on-demand` is added to a
+`github.com/robfig/cron/v3` engine created with `cron.New()`. Standard
 5-field specs (`0 3 * * *`) and `@every <duration>` shortcuts are
-supported.
+supported. An invalid spec makes `Start` fail. Failed runs are logged;
+`ErrLeaderElectionFailed` is not.
 
 ### Continuous
 
@@ -113,15 +125,14 @@ from pegging a CPU core.
 
 ### On-demand
 
-`ScheduleOnDemand` workers are never invoked automatically. Operators
-run them via the CLI:
+`ScheduleOnDemand` workers (`@on-demand`) are never started by the
+scheduler. They run only through `Scheduler.RunOnce(ctx, name)`, which
+executes any registered worker immediately regardless of schedule and
+returns an error for an unknown name. `cmd/signald` currently exposes
+only `start` and `version`, so no CLI command calls `RunOnce`.
 
-```sh
-signald workers run generate-certificate
-```
-
-Leader election still applies; running the CLI on one replica while
-another replica holds the lease returns `ErrLeaderElectionFailed`.
+Leader election still applies: `RunOnce` returns
+`ErrLeaderElectionFailed` while another holder has the lease.
 
 ## Shutdown semantics
 

@@ -1,8 +1,11 @@
 # Verification
 
-The verification package handles phone number verification for account registration. It manages session lifecycle, generates cryptographically random codes, delivers them through pluggable transports, and validates submissions with constant-time comparison.
+> **Status: REFERENCE** · Last verified: 2026-10-09
+> Phone-number verification: the transport interface, the session engine in `pkg/registration/core`, the session stores and the typed errors.
 
-**Package**: `pkg/verification/`
+Verification sessions gate account registration. The session engine generates cryptographically random codes, delivers them through a pluggable transport and validates submissions with a constant-time comparison.
+
+**Packages**: `pkg/verification/` (types, stores, transports, errors) and `pkg/registration/core/` (the `Service` engine). With `verification.remoteAddr` set, signald talks to the `registration-service` binary instead of running the engine in process (see [../architecture/decisions/0004-verification-transport-abstraction.md](../architecture/decisions/0004-verification-transport-abstraction.md)).
 
 ## VerificationTransport Interface
 
@@ -13,66 +16,69 @@ type VerificationTransport interface {
 }
 ```
 
-Transports are pluggable. The server ships with two implementations:
+Implementations in the tree:
 
-- **Stub** (default): Logs codes to stdout. Used during development.
-- **SMTP** (build tag `smtp`): Delivers codes via carrier email-to-SMS gateways. See [SMTP Gateway](smtp-gateway.md).
+| Transport | Package | Selectable through the factory |
+|---|---|---|
+| Stub | `pkg/verification` (`StubTransport`) | Yes: `verification.transport: stub`, also the default when empty |
+| Twilio Verify | `pkg/verification/twilio` | Yes: `verification.transport: twilio` |
+| SMTP (build tag `smtp`) | `pkg/verification/smtp` | No. See [SMTP Gateway](smtp-gateway.md). |
+| AWS SES | `pkg/verification/ses` | No |
 
-The `SendOption` functional option pattern allows transport-specific configuration. Currently one option exists: `WithCarrier(carrier string)`, which specifies the mobile carrier for SMS routing.
+`pkg/verification/factory.Build` is the single place that maps `verification.transport` to a transport; any other value, including `smtp`, returns an invalid-argument error. The stub logs the code and a redacted destination instead of delivering it, and the production config gate rejects it. `RouterTransport` (`pkg/verification/router.go`) dispatches to an SMS or an email transport by destination channel; it is a building block and is not wired into the factory.
 
-## VerificationManager
+`SendOption` is a functional option. One option exists: `WithCarrier(carrier string)`, which names the mobile carrier for SMS gateway routing.
 
-The `Manager` in `pkg/verification/manager.go` orchestrates the full verification flow. Created with:
+## Service (`pkg/registration/core`)
 
 ```go
-mgr := verification.NewManager(store, transport, verification.ManagerConfig{
-    CodeLength:  6,            // digits in the code (default: 6)
-    CodeTTL:     5 * time.Minute, // code validity window (default: 5m)
-    MaxAttempts: 3,            // max wrong submissions (default: 3)
-})
+svc := core.NewService(store, transport, core.Config{ /* zero values get defaults */ })
+defer svc.Shutdown()
 ```
 
-Zero-value fields get production defaults applied by `defaultManagerConfig()`.
+`NewService` starts a background goroutine that calls `store.DeleteExpired` every `CleanupInterval`; `Shutdown` stops it and is safe to call more than once.
+
+| `Config` field | Default |
+|---|---|
+| `CodeLength` | 6 digits |
+| `CodeTTL` | 5 minutes |
+| `MaxAttempts` | 3 |
+| `MaxSessions` | 10,000 |
+| `SessionTTL` | 10 minutes |
+| `CleanupInterval` | 60 seconds |
+| `RequestCodeCooldowns` | 0, 1 min, 5 min, 30 min, 60 min |
+| `FixedCode` | empty (random codes); for integration tests with the stub transport only |
 
 ### Flow
 
-**1. CreateSession(ctx, phoneNumber)**
+**1. CreateSession(ctx, number)** returns `*SessionLimitExceededError` when the store already holds `MaxSessions` sessions. Otherwise it creates a session with a random UUID and `AllowedToRequestCode: true`. `ExpiresAt` is `now + SessionTTL`.
 
-Creates a new session with a UUID, sets `AllowedToRequestCode: true`, and persists it via the store. The session's `ExpiresAt` is set to `now + CodeTTL`.
+**2. SendCode(ctx, sessionID)** checks, in order:
 
-```go
-session, err := mgr.CreateSession(ctx, "+15551234567")
-// session.ID = "a1b2c3d4-..."
-// session.AllowedToRequestCode = true
-// session.Verified = false
-```
+1. Session expiry: `*SessionExpiredError`.
+2. Already verified: `*SessionAlreadyVerifiedError`. This precedes the cooldown check, so a client that just verified is not told to wait.
+3. Cooldown: `*RequestCodeRateLimitedError` (carrying `RetryAfter`) while `NextCodeRequestAt` is in the future.
 
-**2. SendCode(ctx, sessionID)**
+It then generates the code, stores it on the session, resets `ExpiresAt` to `now + CodeTTL`, sets `AllowedToRequestCode` to false, increments `CodeRequests` and sets `NextCodeRequestAt` from the cooldown schedule (indexed by `CodeRequests`, clamped to the last entry; an empty schedule disables the cooldown). The session is persisted before the transport is called. A transport failure is returned as `*TransportError`.
 
-Retrieves the session, checks expiration, then generates a code using `crypto/rand`. Each digit is independently sampled from [0,9] using `rand.Int(rand.Reader, big.NewInt(10))`. The code is stored in the session, `AllowedToRequestCode` is set to false, and `ExpiresAt` is reset. The code is then delivered via the configured transport.
+**3. SubmitCode(ctx, sessionID, code)** checks, in order:
 
-If the transport fails, the error is wrapped in `*TransportError` with the transport name, destination, and underlying cause.
+1. Session expiry: `*SessionExpiredError`.
+2. Empty stored code: `*CodeExpiredError`.
+3. `Attempts >= MaxAttempts`: `*MaxAttemptsExceededError`.
+4. `Attempts` is incremented, then the code is compared with `crypto/subtle.ConstantTimeCompare`; a mismatch persists the new count and returns `*InvalidCodeError`.
 
-**3. SubmitCode(ctx, sessionID, code)**
+On success the session is marked `Verified: true` and the code is cleared.
 
-Validates the submitted code against the stored session code. Checks, in order:
-
-1. Session expiration -- returns `*SessionExpiredError`
-2. Code presence -- returns `*CodeExpiredError` if the code field is empty
-3. Attempt count -- returns `*MaxAttemptsExceededError` if `session.Attempts >= MaxAttempts`
-4. Code comparison -- uses `crypto/subtle.ConstantTimeCompare` to prevent timing attacks; returns `*InvalidCodeError` on mismatch
-
-On success, the session is marked `Verified: true` and the code is cleared. The attempt counter is incremented regardless of outcome.
-
-**GetSession(ctx, sessionID)** retrieves a session without modifying it.
+**GetSession(ctx, sessionID)** returns the session, or `*SessionExpiredError` when it has expired.
 
 ## Session Lifecycle
 
 ```
-Created                    Code Sent                     Submitted
-  AllowedToRequestCode=true   AllowedToRequestCode=false    Verified=true
-  Verified=false              ExpiresAt reset               Code=""
-  Code=""                     Code=<random>
+Created                       Code Sent                     Submitted
+  AllowedToRequestCode=true     AllowedToRequestCode=false    Verified=true
+  Verified=false                ExpiresAt = now + CodeTTL     Code=""
+  Code=""                       Code=<random>
 ```
 
 ## VerificationSession
@@ -81,16 +87,19 @@ Created                    Code Sent                     Submitted
 type VerificationSession struct {
     ID                   string    `json:"id"`
     Number               string    `json:"number"`
-    Code                 string    `json:"-"`  // never serialized to clients
+    Code                 string    `json:"-"` // never serialized to clients
     Verified             bool      `json:"verified"`
     Attempts             int       `json:"attempts"`
     AllowedToRequestCode bool      `json:"allowedToRequestCode"`
     CreatedAt            time.Time `json:"createdAt"`
     ExpiresAt            time.Time `json:"expiresAt"`
+    NextCodeRequestAt    time.Time `json:"nextCodeRequestAt,omitempty"`
+    CodeRequests         int       `json:"codeRequests,omitempty"`
+    CaptchaRequired      bool      `json:"captchaRequired,omitempty"`
 }
 ```
 
-The `Code` field uses `json:"-"` to prevent it from appearing in API responses. This is critical -- the code must never leave the server except through the transport.
+`Code` uses `json:"-"` so it never appears in API responses; the code leaves the server only through the transport. `NextCodeRequestAt` and `CodeRequests` drive the per-session cooldown. `CaptchaRequired` marks a session that needs a successful captcha before the next `SendCode`.
 
 ## VerificationSessionStore Interface
 
@@ -100,41 +109,49 @@ type VerificationSessionStore interface {
     Get(ctx context.Context, sessionID string) (*VerificationSession, error)
     Update(ctx context.Context, session *VerificationSession) error
     Delete(ctx context.Context, sessionID string) error
+    Count(ctx context.Context) (int, error)
+    DeleteExpired(ctx context.Context) error
 }
 ```
 
+`Count` enforces `MaxSessions`; `DeleteExpired` removes sessions whose `ExpiresAt` is in the past and is what the cleanup goroutine calls. The qrdb and Postgres implementations are listed in [../storage/overview.md](../storage/overview.md).
+
 ### MemoryVerificationSessionStore
 
-In-memory implementation using `sync.RWMutex`. Returns deep copies from `Get()` to prevent callers from mutating internal state. All methods that access a non-existent session return `*SessionNotFoundError`.
+In-memory implementation using `sync.RWMutex`. Returns copies from `Get` so callers cannot mutate internal state. Missing sessions return `*SessionNotFoundError`.
 
 ### KVVerificationSessionStore
 
-KV-backed implementation using the `store.KVClient` interface. Keys follow the pattern:
+KV-backed implementation over `store.KVClient`. Keys follow the pattern:
 
 ```
 signal/verification/{sessionID}
 ```
 
-Because `VerificationSession.Code` is tagged `json:"-"`, the KV store uses an internal `kvSession` struct that embeds `VerificationSession` and adds a separate `Code string` field with a proper JSON tag. This preserves the code during marshal/unmarshal while keeping it hidden from API serialization.
-
-The `marshalSession` function wraps the session in a `kvSession` before encoding. The `unmarshalSession` function decodes into `kvSession` and copies the code back into the embedded `VerificationSession`.
+Because `VerificationSession.Code` is tagged `json:"-"`, the KV store encodes through an internal `kvSession` struct that embeds `VerificationSession` and adds a `Code` field with a JSON tag, so the code survives a round trip. `marshalSession` and `unmarshalSession` perform the wrapping. The Postgres store does not persist the code.
 
 ## Security
 
-- **Code generation**: Each digit is independently sampled from `crypto/rand` using `rand.Int(rand.Reader, big.NewInt(10))`. No `math/rand` is used anywhere in the verification path.
-- **Code comparison**: `crypto/subtle.ConstantTimeCompare` prevents timing side-channel attacks when validating submitted codes.
-- **Attempt limiting**: The session tracks `Attempts` and rejects submissions after `MaxAttempts` is reached.
-- **Session expiration**: `ExpiresAt` is checked before code generation and before code validation. Expired sessions cannot be used.
-- **Code exclusion**: The `json:"-"` tag on `Code` ensures it is never included in JSON responses to clients.
+- **Code generation**: each digit is sampled independently from `crypto/rand` (`rand.Int(rand.Reader, big.NewInt(10))`).
+- **Code comparison**: `crypto/subtle.ConstantTimeCompare`.
+- **Attempt limiting**: submissions are rejected once `Attempts` reaches `MaxAttempts`.
+- **Cooldown**: `SendCode` is rate limited per session by `RequestCodeCooldowns`.
+- **Session expiry**: `ExpiresAt` is checked in `SendCode`, `SubmitCode` and `GetSession`.
+- **Code exclusion**: `json:"-"` keeps the code out of JSON responses.
 
 ## Typed Errors
 
 | Error Type | Trigger |
 |---|---|
 | `*SessionNotFoundError` | Session ID does not exist in the store |
-| `*SessionExpiredError` | `time.Now()` is past `session.ExpiresAt` |
-| `*CodeExpiredError` | Session exists but `Code` field is empty |
-| `*MaxAttemptsExceededError` | `session.Attempts >= MaxAttempts` |
-| `*InvalidCodeError` | Submitted code does not match stored code |
-| `*TransportError` | Transport failed to deliver the code; wraps cause via `Unwrap()` |
-| `*CarrierNotFoundError` | Specified carrier key is not in the gateway map |
+| `*SessionExpiredError` | The session's `ExpiresAt` is in the past |
+| `*CodeExpiredError` | Session exists but `Code` is empty |
+| `*MaxAttemptsExceededError` | `Attempts >= MaxAttempts` |
+| `*InvalidCodeError` | Submitted code does not match the stored code |
+| `*TransportError` | Transport failed to deliver the code; wraps the cause via `Unwrap()` |
+| `*CarrierNotFoundError` | The carrier key is not in the gateway map (SMTP transport) |
+| `*SessionLimitExceededError` | `CreateSession` with the store at `MaxSessions` |
+| `*SessionAlreadyVerifiedError` | `SendCode` on a verified session |
+| `*RequestCodeRateLimitedError` | `SendCode` before `NextCodeRequestAt` |
+
+`CaptchaRequiredError`, `CaptchaCheckUnavailableError` and `CaptchaRejectedError` are also declared in `pkg/verification/errors.go`.

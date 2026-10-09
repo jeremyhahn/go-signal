@@ -2,10 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -25,6 +21,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config"
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
+	"github.com/jeremyhahn/go-signal/pkg/extservice/common"
 	"github.com/jeremyhahn/go-signal/pkg/health"
 	"github.com/jeremyhahn/go-signal/pkg/metrics"
 	qrdbstorage "github.com/jeremyhahn/go-signal/pkg/storage/qrdb"
@@ -317,28 +314,16 @@ func validateBasicAuth(r *http.Request, secret *secrets.SecureString) (string, b
 }
 
 func validateBasicAuthKey(r *http.Request, secret []byte) (string, bool) {
-	const prefix = "Basic "
-	hdr := r.Header.Get("Authorization")
-	if !strings.HasPrefix(hdr, prefix) {
-		return "", false
-	}
-	raw, err := base64.StdEncoding.DecodeString(hdr[len(prefix):])
-	if err != nil {
-		return "", false
-	}
-	sep := strings.IndexByte(string(raw), ':')
-	if sep < 0 {
-		return "", false
-	}
-	username := string(raw[:sep])
-	password := string(raw[sep+1:])
-	mac := hmac.New(sha256.New, secret)
-	mac.Write([]byte(username))
-	want := hex.EncodeToString(mac.Sum(nil))
-	if subtle.ConstantTimeCompare([]byte(password), []byte(want)) != 1 {
-		return "", false
-	}
-	return username, true
+	// Delegated rather than repeated. This was a byte-identical third copy of
+	// common.ValidateBasicAuth, and that package exists precisely to stop this
+	// code diverging across services — its own doc says a divergence "would
+	// silently break the HMAC contract".
+	//
+	// Repeating it also meant repeating its defect: the decoded
+	// `username:password` buffer was left resident, and both the presented and
+	// the expected credential were copied into Go strings that cannot be wiped
+	// (#47). Fixing that three times would have been three chances to miss one.
+	return common.ValidateBasicAuth(r.Header.Get("Authorization"), secret)
 }
 
 func writeFrame(ctx context.Context, conn *websocket.Conn, f svr2.Frame) error {

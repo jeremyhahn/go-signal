@@ -1,16 +1,18 @@
 # Production Readiness
 
-This document tracks what is required to run go-signal in production, what the
-production-hardening pass delivered, and which items remain blocked (and on
-what).
+> **Status: REFERENCE** · Last verified: 2026-10-09
+> What running go-signal in production requires: the deployment model, the production config gate and the known incomplete areas.
+
+This document lists what is required to run go-signal in production, what the
+fail-closed gate enforces, and which items remain incomplete (and why).
 
 ## Deployment model
 
 The supported production topology is the **monolithic `signald` binary on the
 PostgreSQL backend with a Redis cache**. The five auxiliary service binaries
 (`cdsi`, `svr2`, `key-transparency`, `registration-service`, `storage-service`)
-exist and build, but the horizontally-split topology is a future phase — see
-[Remaining work](#remaining-work).
+exist and build, but the horizontally-split topology is not production-ready —
+see [Remaining work](#remaining-work).
 
 ### How to deploy
 
@@ -36,17 +38,18 @@ In `mode: production`, `config.Validate()` aggregates and rejects all of:
 
 | Check | Rejected because |
 |---|---|
-| `storage.backend` not `postgres`/`file` | memory/qrdb(fake)/dynamodb(unimplemented) are not durable |
+| `storage.backend` not `postgres`/`file` | memory/qrdb(in-process fake)/dynamodb(unimplemented, falls through to memory) are not durable |
 | `cache.backend` != `redis` | the memory cache breaks multi-instance delivery |
 | `verification.transport` empty/`stub` | the stub only logs codes |
 | `verification.fixedCode` non-empty | a fixed code bypasses verification |
 | `captcha.provider` not `hcaptcha`/`recaptcha` | `test` accepts any token |
 | `zkConfig` disabled or empty `serverSecret` | profile-key credentials downgrade to an insecure HMAC stub |
 | `callingZkConfig.serverSecret` empty or the dev value | hardcoded test secret |
+| `cdn.bucket`, `cdn.region`, `cdn.accessKey` or `cdn.secretKey` empty, or the development placeholder keys | avatar and attachment upload signing would fail |
 | missing `server.tlsCertFile`/`tlsKeyFile` | TLS is mandatory |
 | `server.allowedOrigins` contains `*` | wildcard CORS/WebSocket origins |
 | `limits.messages.bucketSize == 0` | a zero bucket disables the message spam check |
-| any `*.remoteInsecure == true` | plaintext gRPC/HTTP to external services |
+| `verification.remoteInsecure`, `keyTransparency.remoteInsecure` or `storageService.remoteInsecure` true | plaintext gRPC/HTTP to external services |
 
 Runtime complements:
 - Abuse checkers **fail closed** in production: a missing spam/fraud checker
@@ -64,7 +67,9 @@ response surfaces each.
 ### Requires external credentials / accounts
 - **Verification delivery** — Twilio Verify is wired (`pkg/verification/factory`
   → `twilio`); production requires real Twilio account/Verify-Service
-  credentials. No other SMS/voice provider is implemented.
+  credentials. The gate's message names `smtp` as acceptable, but the factory
+  does not wire it (see [../verification/smtp-gateway.md](../verification/smtp-gateway.md)),
+  so `twilio` is the only transport that works in production.
 - **DeviceCheck** (`/v1/devicecheck/attest|assert`, 501) — needs Apple
   DeviceCheck credentials and the attestation verification crypto (the latter
   likely belongs in go-libsignal).
@@ -72,9 +77,9 @@ response surfaces each.
   need Stripe integration and badge-receipt credential crypto.
 
 ### Requires further implementation
-- **Key transparency** — `pkg/keytransparency/manager.go` sends a zero
-  placeholder ACI; real JSON→proto mapping and proof generation are pending. KT
-  search/monitor are not yet bound to the real account.
+- **Key transparency** — `pkg/keytransparency/manager.go` sends a placeholder
+  ACI identity key in its request until the real mapping is wired, so
+  search/monitor are not bound to the real account.
 - **Real qrdb cluster transport** — `cmd/signald` uses an in-process
   `FakeKVStore` for the `qrdb` backend; a real cluster transport is a separate
   wire-up. Until then, **postgres is the production backend**.
@@ -90,12 +95,8 @@ response surfaces each.
 - **go-qrdb DAO secondary-index rebuild** — the DAO store does not rebuild the
   `Settings` secondary index on reopen, so credentials saved in one process
   aren't found cross-process. This blocks the CLI end-to-end integration tests
-  and must be fixed in the go-qrdb dependency.
-- **Java-parity test suite** — the 148 `TestSignalCLI_*` wire-compat tests need
-  a built `signal-cli` (Gradle source at `/mnt/vm-host-1/signal-cli`) plus a
-  JDK, provisioned in the devcontainer/CI.
-
-## Verified
-
-Unit coverage gate passes at **≥92%** (`make coverage`); backend, in-process API
-integration, and the full frontend (Vitest + Playwright) suites are green.
+  and must be fixed in the go-qrdb dependency. (Stated from the project's
+  records; not re-checked against go-qrdb.)
+- **Java-parity test suite** — the `TestSignalCLI_*` wire-compat tests under
+  `test/` need a built `signal-cli` plus a JDK, provisioned in the
+  devcontainer/CI.

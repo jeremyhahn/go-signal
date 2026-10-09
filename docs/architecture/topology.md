@@ -1,126 +1,86 @@
 # Deployment topology
 
-This document describes the service topology go-signal targets at full parity with the Java `Signal-Server`. We match Java's microservice decomposition: the chat server is one binary, and each Signal infrastructure service is its own binary.
+> **Status: REFERENCE** · Last verified: 2026-10-09
+> The binaries go-signal builds, how they talk to each other, and how `deploy/` runs them.
 
-## Target topology
+Like the Java Signal-Server, the chat server is one binary and each Signal infrastructure service is its own binary. The decision is recorded in [ADR-0002](decisions/0002-external-services-as-separate-binaries.md).
 
 ```
-                                      ┌────────────────────┐
-                                      │   signal clients   │
-                                      │ (iOS / Android /   │
-                                      │  Desktop / CLI)    │
-                                      └──────────┬─────────┘
-                                                 │ HTTPS + WebSocket
-                                                 │
-                                      ┌──────────▼─────────┐
-                                      │      signald       │
-                                      │  chat / messaging  │
-                                      │  (REST + gRPC + WS)│
-                                      └──┬───────┬───────┬─┘
-                       ┌─────────────────┘       │       └──────────────────┐
-                       │ gRPC (mTLS)            gRPC (mTLS)              gRPC (mTLS)
-                       │                         │                         │
-          ┌────────────▼────────────┐ ┌──────────▼─────────┐ ┌─────────────▼──────────┐
-          │  registration-service   │ │   key-transparency │ │     storage-service    │
-          │  (Twilio / SES / SMTP)  │ │ (VRF + Merkle log) │ │ (user-manifest store)  │
-          └─────────────────────────┘ └────────────────────┘ └────────────────────────┘
-
-                                      ┌────────────────────┐      ┌──────────────────┐
-                                      │        svr2        │      │       cdsi       │
-                                      │ (SGX + SVR4 +      │      │  (SGX + privacy- │
-                                      │  Noise protocol)   │      │  preserving      │
-                                      │                    │      │   directory)     │
-                                      └────────────────────┘      └──────────────────┘
-                                              ▲                          ▲
-                                              │ client WebSocket +       │ client gRPC +
-                                              │ Noise handshake          │ Noise handshake
-                                              │                          │
-                                              └──────────────────────────┘
-                                                (clients connect directly;
-                                                 signald routes credentials)
-
-   ─────────────── shared infrastructure ───────────────
-
-   ┌──────────────────────────┐  ┌───────────────────────┐  ┌──────────────────────┐
-   │   persistent storage     │  │     Redis cache       │  │     blob storage     │
-   │ go-qrdb | DynamoDB | PG  │  │ (messages, rate limit,│  │ S3 / GCS / Azure /   │
-   │                          │  │  pub/sub, challenges) │  │ local filesystem     │
-   └──────────────────────────┘  └───────────────────────┘  └──────────────────────┘
+ clients --REST / gRPC / WebSocket--> signald --gRPC--------------> registration-service
+    |                                   |  \--gRPC----------------> key-transparency
+    |                                   |  \--HTTP + HMAC (admin)--> svr2
+    |                                   |  \--HTTP + HMAC (admin)--> storage-service
+    |                                   ^
+    |                                   |  gRPC (DirectoryService)
+    +--WebSocket + Noise--> svr2        |
+    +--WebSocket + Noise--> cdsi -------+
+    +--HTTPS--------------> storage-service
 ```
+
+Every external service is optional for signald. Without a remote address configured, signald runs the registration engine in process, serves the storage endpoints itself, and uses the in-process key-transparency manager. The remote settings are `verification.remoteAddr`, `storageService.remoteUrl`, `keyTransparency.remoteAddr` and `svr2.remoteUrl`.
 
 ## Binaries
 
-| Binary                    | Package                 | Purpose                                                                 |
-|---------------------------|-------------------------|-------------------------------------------------------------------------|
-| `signald`                 | `cmd/signald/`          | Chat and messaging server. REST + gRPC + WebSocket. Coordinates the rest. |
-| `registration-service`    | `cmd/registration-service/` | Phone/voice/email verification sessions. Delegates to a pluggable transport (Twilio, SES, SMTP). |
-| `svr2`                    | `cmd/svr2/`             | Secure Value Recovery v4. SGX-attested, Noise-wrapped client protocol.  |
-| `cdsi`                    | `cmd/cdsi/`             | Contact Discovery Service — privacy-preserving batch phone-number lookup. |
-| `storage-service`         | `cmd/storage-service/`  | Per-account encrypted manifest storage (contacts, groups, settings).    |
-| `key-transparency`        | `cmd/key-transparency/` | Append-only log with VRF + Merkle consistency proofs.                   |
-| `signal`                  | `cmd/signal/`           | Administrative CLI (account lookup, worker invocation, cert ops).       |
+| Binary | Package | Purpose | Client-facing protocol |
+|---|---|---|---|
+| `signald` | `cmd/signald/` | Chat server: REST, gRPC and WebSocket | REST, gRPC, WebSocket |
+| `registration-service` | `cmd/registration-service/` | Verification sessions: lifecycle, code generation, per-session rate limits, transport delivery | gRPC (`RegistrationService`), called by signald |
+| `key-transparency` | `cmd/key-transparency/` | Hosts the `KeyTransparencyQueryService` gRPC contract; signald reads from it for the key-transparency REST endpoints | gRPC |
+| `svr2` | `cmd/svr2/` | SVR4 state machine over a Noise NKhfs-encrypted WebSocket; clients connect to it directly | WebSocket + Noise |
+| `cdsi` | `cmd/cdsi/` | Contact discovery v2 over a Noise NKhfs-encrypted WebSocket; clients connect to it directly | WebSocket + Noise |
+| `storage-service` | `cmd/storage-service/` | Per-account encrypted manifest and item storage; JSON over HTTPS with HMAC Basic auth; clients connect to it directly | HTTPS |
+| `signal` | `cmd/signal/` | Client CLI and desktop entry point | n/a |
 
-## Where this plan currently stands
+Build the service binaries with `make build-services`, or one at a time with `make build-cdsi`, `build-svr2`, `build-key-transparency`, `build-registration-service`, `build-storage-service`.
 
-Today (Phase 0 baseline) only `signald` and `signal` exist. The other five binaries are built in Phase 4 of the port plan. `signald` currently houses stub handlers (`handlers_svr.go`, `handlers_svr2.go`, `handlers_cdsi.go`, `handlers_storage.go`, `handlers_keytransparency.go`) that will be replaced with gRPC clients once the target services are live.
+## What signald does for each service
 
-## Shared infrastructure
-
-All binaries share three kinds of infrastructure:
-
-### Persistent key-value storage
-
-`pkg/store.KVClient` defines a single interface implemented by three backends:
-
-- **go-qrdb** — primary, self-contained, no cloud dependency.
-- **DynamoDB** — first-class alternate, schema-parity with Java Signal-Server.
-- **Postgres** — third option for teams preferring SQL.
-- **memory** — test-only.
-
-Selected per binary via the `storage.backend` config key.
-
-### Redis cache
-
-Used for:
-
-- Message queues awaiting persistence (`q:{aci}:{device}`).
-- Rate-limit counters (`rl:{limit}:{id}`).
-- Message availability flags (`hasMessages:{aci}:{device}`).
-- Multi-recipient message (MRM) shared payloads (`mrm:{hash}`).
-- Pub/sub for cross-instance WebSocket delivery.
-- Leader-election leases for distributed worker execution.
-
-Accessible through `pkg/cache.Client`.
-
-### Blob storage
-
-Used for attachments, message backups, sticker packs. Abstracted through `pkg/storage/blob` with S3, GCS, Azure Blob, and local-filesystem drivers.
+| Service | signald's role |
+|---|---|
+| `registration-service` | With `verification.remoteAddr` set, a gRPC client (`pkg/extservice/registration/grpcclient`). Otherwise the same engine (`pkg/registration/core`) runs in process. The captcha gate stays in signald (`pkg/registration/sessionshim`); the service does not know about captcha state. |
+| `key-transparency` | With `keyTransparency.remoteAddr` set, a gRPC client (`pkg/extservice/keytransparency`) over TLS 1.2 or later, or plaintext when `keyTransparency.remoteInsecure` is set. |
+| `svr2` | Issues HMAC credentials at `/v2/svr/auth` and calls the service's admin `DELETE /v1/delete` when an account is deleted. It does not proxy SVR traffic. |
+| `cdsi` | Issues HMAC credentials at `/v2/directory/auth`, which clients present as HTTP Basic on the WebSocket upgrade. At startup cdsi opens a gRPC channel to signald's `DirectoryService` and streams the directory snapshot into its in-memory index. |
+| `storage-service` | Issues credentials at `/v1/storage/auth` and calls the admin `DELETE /v1/storage` on account deletion. When `storageService.remoteUrl` is empty, signald serves the storage endpoints itself from its own manifest store; when it is set, signald's storage endpoints stay on a `204` stub. |
 
 ## Inter-service communication
 
-- **Transport**: gRPC over mTLS between services.
-- **Auth**: HMAC-signed, time-bound service credentials issued via the `ExternalServiceCredentialsGenerator` pattern (ported from Java).
-- **Circuit breakers**: Each client wraps its target service in a `gobreaker` circuit breaker.
-- **Retries**: Bounded retry with exponential backoff and jitter.
+Shared client-side code is in `pkg/extservice/common`:
 
-Shared client-side code lives in `pkg/extservice/`.
+- **Credentials**: `BasicAuthHeader` builds an HTTP Basic header whose password is the hex HMAC-SHA256 of the identity under a shared secret; `ValidateBasicAuth` checks it in constant time. This mirrors the Java `ExternalServiceCredentialsGenerator`.
+- **TLS**: `TLSConfig` takes an optional CA file and an optional client certificate and key; setting both enables mTLS. `MinVersion` defaults to TLS 1.2 and can be raised to 1.3. `Insecure` permits a plaintext channel for development and compose.
+- **Retries**: `RetryConfig` retries with exponential backoff and jitter. Defaults are 3 attempts, 200 ms initial backoff and a 5 s cap.
 
-## Client-facing connections
+There is no circuit breaker in `pkg/extservice`.
 
-Signal clients speak:
+## Shared infrastructure
 
-- **HTTPS** (REST) to `signald`.
-- **HTTP/2** (gRPC) to `signald`.
-- **WebSocket** to `signald` for real-time message delivery.
-- **WebSocket + Noise** directly to `svr2` for backup/restore operations.
-- **gRPC + Noise** directly to `cdsi` for directory lookups.
+### Persistent storage
 
-`signald` issues short-lived credentials that clients use to authenticate against `svr2` and `cdsi`.
+`storage.backend` selects `memory` (default), `file`, `postgres` or `qrdb`. The `qrdb` value runs on an in-process fake, and `dynamodb` is not implemented. See [overview.md](overview.md#storage).
+
+### Cache
+
+`cache.backend` selects `redis` or the in-process memory cache, behind `pkg/cache.Client`. Redis holds:
+
+- per-device message queues, key `q:{uuid}:{device}` with a side hash `qm:{uuid}:{device}`;
+- multi-recipient shared payloads, key `mrm::{uuid}`;
+- rate-limit counters, prefix `ratelimit:`;
+- cross-instance WebSocket wake-ups, channel prefix `signal:ws:notify:`;
+- worker leases, prefix `workers:lease:`.
+
+[../storage/redis-keys.md](../storage/redis-keys.md) has the full layout.
+
+### Blob storage
+
+Attachments go through `pkg/storage/blob`, which has a filesystem driver (`filesystem.go`) and an S3 driver (`s3/`).
 
 ## Deployment units
 
-- **Development**: `make dev` runs `signald` alone with in-memory storage and no external services. Stub handlers return deterministic mock data.
-- **Local full-stack**: `docker-compose up` in `deploy/` spins up all six services plus Redis and a storage backend.
-- **Production**: Kubernetes manifests in `deploy/k8s/` deploy each service as an independent StatefulSet with its own scaling and storage policies.
+`deploy/` holds one Dockerfile per binary (`Dockerfile.signald`, `.cdsi`, `.svr2`, `.key-transparency`, `.registration-service`, `.storage-service`) and a shared one (`Dockerfile.shared`).
 
-See [deployment/docker-compose.md](../deployment/docker-compose.md) and [deployment/kubernetes.md](../deployment/kubernetes.md) once Phase 4 lands.
+- **Development**: `make dev` runs `go run ./cmd/signald/ start`, which uses the default `memory` storage and cache unless the configuration says otherwise.
+- **Compose**: `deploy/docker-compose.yml` runs `redis`, `postgres`, `registration-service`, `svr2`, `cdsi`, `storage-service`, `key-transparency` and `signald`.
+- **Kubernetes**: `deploy/k8s/` has a kustomization with a namespace, `signald.yaml`, `services.yaml` (a `Service` and a single-replica `Deployment` for each of the five services), `redis.yaml`, `postgres.yaml` and `secrets.yaml`. See `deploy/k8s/README.md`.
+
+See also [../deployment/](../deployment/).

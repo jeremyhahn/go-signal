@@ -1,5 +1,8 @@
 # Messaging
 
+> **Status: REFERENCE** · Last verified: 2026-10-09
+> Message types, the `MessagesManager`, the `MessageStore` contract, the REST endpoints and real-time delivery.
+
 The messaging subsystem handles storing, retrieving, and delivering encrypted message envelopes between Signal clients. All message content is opaque to the server -- it stores and forwards encrypted bytes without inspecting them.
 
 ## Envelope Types
@@ -28,6 +31,7 @@ type Envelope struct {
     SourceUUID        string       `json:"sourceUuid,omitempty"`
     SourceDevice      uint32       `json:"sourceDevice,omitempty"`
     DestinationUUID   string       `json:"destinationUuid"`
+    DestinationIdentityType accounts.IdentityType `json:"destinationIdentityType,omitempty"`
     DestinationDevice uint64       `json:"destinationDevice"`
     Timestamp         uint64       `json:"timestamp"`
     ServerTimestamp   uint64       `json:"serverTimestamp"`
@@ -36,10 +40,12 @@ type Envelope struct {
     Urgent            bool         `json:"urgent"`
     Story             bool         `json:"story"`
     ReportSpamToken   []byte       `json:"reportSpamToken,omitempty"`
+    SharedMrmKey           []byte  `json:"sharedMrmKey,omitempty"`
+    SharedMrmRecipientView []byte  `json:"sharedMrmRecipientView,omitempty"`
 }
 ```
 
-The `ServerGUID` and `ServerTimestamp` fields are assigned by the server at insertion time, not by the client.
+`ServerTimestamp` is always assigned by the server at insertion. `ServerGUID` is assigned at insertion unless the caller already set one. `DestinationIdentityType` selects whether `DestinationUUID` is an ACI or a PNI; the zero value is ACI. `SharedMrmKey` and `SharedMrmRecipientView` reference a shared multi-recipient payload in the MRM cache; `Content` is empty for such an envelope until it is rehydrated on read.
 
 ### IncomingMessage
 
@@ -49,6 +55,7 @@ A single message submitted by a sending client, targeting a specific device:
 type IncomingMessage struct {
     Type                EnvelopeType `json:"type"`
     DestinationUUID     string       `json:"destinationUuid"`
+    DestinationIdentityType accounts.IdentityType `json:"destinationIdentityType,omitempty"`
     DestinationDeviceID uint64       `json:"destinationDeviceId"`
     Content             string       `json:"content"`
     Timestamp           uint64       `json:"timestamp"`
@@ -70,7 +77,7 @@ type IncomingMessageList struct {
 
 ### OutgoingMessage
 
-A message being sent to a specific device (used internally):
+A message being sent to a specific device:
 
 ```go
 type OutgoingMessage struct {
@@ -102,11 +109,13 @@ type SendMessageResponse struct {
 
 | Method | Description |
 |---|---|
-| `Insert` | Assigns a server GUID (v4 UUID) and server timestamp (Unix millis), then persists the envelope. Fires the delivery callback on success. |
-| `GetMessagesForDevice` | Returns all pending envelopes for a destination device, ordered by server timestamp ascending. |
-| `Delete` | Removes a single envelope by its server GUID. Idempotent. |
+| `Insert` | Rejects a nil envelope. Assigns a server GUID (v4 UUID) unless one is already set, and a server timestamp (Unix millis), then persists the envelope. Fires the delivery callback on success. |
+| `GetMessagesForDevice` | Returns all pending envelopes for a destination device, in insertion order (the stores order by insertion sequence). When an MRM cache is set (`SetMRMCache`), rehydrates envelopes that carry a `SharedMrmKey`; envelopes whose shared data is gone are dropped and deleted from the store. |
+| `HasMessagesForDevice` | Reports whether the device has at least one pending envelope without loading them. |
+| `Delete` | Removes a single envelope by its server GUID; an empty GUID is rejected. |
 | `DeleteForDevice` | Removes all pending envelopes for a specific device. |
 | `DeleteForAccount` | Removes all pending messages across all devices for an account. |
+| `RemoveExpired` | Removes envelopes whose `expires_at` is before a cutoff; returns the count. Used by the remove-expired-messages worker. |
 
 ### Delivery Callback
 
@@ -116,7 +125,11 @@ The `MessagesManager` accepts an optional `DeliveryCallback`:
 type DeliveryCallback func(uuid string, deviceID uint64, envelope *Envelope)
 ```
 
-After a message is successfully stored, the callback fires. The WebSocket `SessionManager` registers this callback to push messages to connected clients in real time. If the recipient has an active WebSocket session when a message arrives, it gets delivered immediately without the client needing to poll.
+After a message is successfully stored, the callback fires. `cmd/signald/start.go` registers a callback that:
+
+1. delivers the envelope to a live WebSocket session on this instance (`wsSessions.DeliverMessage`) and stops if that succeeds;
+2. otherwise sends a cross-instance wake-up (`NotifyMessageAvailable`);
+3. then, in a goroutine, schedules a push notification for devices that have an APNs or FCM registration and do not fetch messages themselves.
 
 ## MessageStore Interface
 
@@ -129,10 +142,12 @@ type MessageStore interface {
     Delete(ctx context.Context, destinationUUID string, serverGUID string) error
     DeleteForDevice(ctx context.Context, destinationUUID string, destinationDevice uint64) error
     DeleteForAccount(ctx context.Context, uuid string) error
+    RemoveExpired(ctx context.Context, before time.Time) (int64, error)
+    HasMessagesForDevice(ctx context.Context, destinationUUID string, destinationDevice uint64) (bool, error)
 }
 ```
 
-The in-memory implementation lives in `pkg/storage/memory/`.
+Implementations are in `pkg/storage/memory/`, `pkg/storage/postgres/` and `pkg/storage/qrdb/`. Memory and qrdb record no expiry, so `RemoveExpired` returns `0, nil` there.
 
 ## REST Endpoints
 
@@ -146,17 +161,15 @@ The REST API exposes five message-related endpoints:
 | `DELETE` | `/v1/messages/uuid/{guid}` | Delete a specific message by server GUID |
 | `POST` | `/v1/messages/report/{source}/{messageGuid}` | Report a message as spam |
 
-All endpoints require authentication. The send endpoints accept an `IncomingMessageList` body and return a `SendMessageResponse`.
+The two send endpoints accept either Basic auth or an `Unidentified-Access-Key` header (sealed sender), and are rate limited. The other three require Basic auth. The send endpoints accept an `IncomingMessageList` body and return a `SendMessageResponse`.
 
 ## WebSocket Delivery
 
-Messages are pushed to connected clients in real time through the WebSocket `SessionManager`. The flow works like this:
+Messages are pushed to connected clients in real time through the WebSocket `SessionManager`. The flow is:
 
 1. A sending client submits a message via `PUT /v1/messages/{destination}`.
 2. The REST handler calls `MessagesManager.Insert`, which stores the envelope and assigns server metadata.
 3. After successful storage, `Insert` invokes the registered `DeliveryCallback`.
-4. The callback checks whether the recipient has an active WebSocket session.
-5. If they do, the envelope is pushed immediately over the WebSocket connection.
-6. If they don't, the message stays in the store until the recipient connects and calls `GET /v1/messages`.
-
-This two-path delivery model means clients get messages instantly when online, and nothing is lost when they're offline.
+4. The callback delivers to a local WebSocket session if one exists.
+5. If not, it sends a cross-instance wake-up and schedules a push notification.
+6. The envelope stays in the store until the recipient connects and fetches it (WebSocket queue or `GET /v1/messages`) and the envelope is deleted.

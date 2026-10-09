@@ -1,5 +1,8 @@
 # ADR-NNNN: Short title
 
+> **Status: REFERENCE** · Last verified: 2026-10-09
+> Template for architecture decision records in this directory.
+
 - **Status**: proposed | accepted | deprecated | superseded by [ADR-XXXX](XXXX-name.md)
 - **Date**: YYYY-MM-DD
 - **Author**: name

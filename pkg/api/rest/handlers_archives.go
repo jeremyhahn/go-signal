@@ -638,12 +638,6 @@ func (s *Server) handleGetCDNReadAuth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ReadAuthResponse{Headers: headers})
 }
 
-// ExternalServiceCredentialsResponse is the body of GET /v1/archives/auth/svrb.
-type ExternalServiceCredentialsResponse struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-}
-
 // handleGetSVRBAuth is GET /v1/archives/auth/svrb.
 func (s *Server) handleGetSVRBAuth(w http.ResponseWriter, r *http.Request) {
 	user := s.zkAuthenticate(w, r)
@@ -655,21 +649,18 @@ func (s *Server) handleGetSVRBAuth(w http.ResponseWriter, r *http.Request) {
 		writeBackupError(w, err)
 		return
 	}
-	// The credential leaves protected memory only here, to be written to
-	// the client that is its intended bearer. Reveal rather than Plaintext:
-	// a credential that cannot be read back is a failure, not an empty
-	// password the client would treat as usable.
+	// The credential is written straight from protected memory into the
+	// response buffer: ExternalServiceCredentials implements
+	// secrets.JSONAppender, so writeJSON builds and wipes the only buffer the
+	// plaintext ever occupies. Revealing it into a response struct — what this
+	// handler did before — left the password in a Go string that cannot be
+	// wiped and that the runtime is free to copy.
+	//
+	// An unavailable credential still fails the response rather than emitting
+	// an empty password the client would treat as usable: AppendJSONString
+	// errors, and writeJSON turns that into a 500.
 	defer creds.Destroy()
-	password, err := creds.Password.Reveal()
-	if err != nil {
-		s.logger.Error("svrb credential unavailable", "error", err.Error())
-		writeError(w, http.StatusInternalServerError, "internal server error")
-		return
-	}
-	writeJSON(w, http.StatusOK, ExternalServiceCredentialsResponse{
-		Username: creds.Username,
-		Password: password,
-	})
+	writeJSON(w, http.StatusOK, *creds)
 }
 
 // --- helpers ----------------------------------------------------------------

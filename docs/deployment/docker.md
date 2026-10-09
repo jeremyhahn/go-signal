@@ -1,54 +1,52 @@
 # Docker
 
-go-signal ships with a multi-stage Dockerfile for production-style container builds and a docker-compose configuration for integration testing.
+> **Status: REFERENCE** · Last verified: 2026-10-09
+> The container images, the Make targets that build them and the compose files.
 
-## Container Image
+## Images
 
-The Dockerfile uses a two-stage build:
-
-1. **Builder stage** (`golang:1.26-bookworm`): Downloads dependencies, compiles `signald` with CGO disabled and stripped debug symbols (`-s -w`).
-2. **Runtime stage** (`debian:bookworm-slim`): Installs only `ca-certificates` and `wget`, then copies in the binary, config file, and TLS certificates.
-
-The runtime image exposes two ports:
-
-| Port | Protocol | Purpose |
+| File | Purpose | Base |
 |---|---|---|
-| 8080 | HTTP | REST API and WebSocket |
-| 8443 | gRPC | Protobuf RPC |
+| `Dockerfile` | Production `signald` image | `golang:1.27.2-bookworm` builder, `debian:bookworm-slim` runtime |
+| `Dockerfile.dev` | Development/demo image with baked-in test config, stub transport (fixed code `123456`) and test TLS certs. Not for production. | same |
+| `Dockerfile.service` | Parameterized image for the auxiliary services (`--build-arg SERVICE=<name>`) | |
+| `deploy/Dockerfile.*` | Per-binary images used by `deploy/docker-compose.yml` (`signald` on a distroless nonroot base) | |
 
-The entrypoint runs:
+### Production image
 
-```
-signald start --config /etc/signal-server/config.yml
-```
+The builder compiles `signald` with `CGO_ENABLED=0`, `-ldflags="-s -w"` and the `BUILD_TAGS` build arg (default `fido2`). The runtime stage installs `ca-certificates` and `wget`, runs as the non-root user `signal` (uid 10001) and exposes ports 8443 and 8444.
 
-The Dockerfile copies `configs/signal-server.yml` as the base config and patches it at build time to set TLS certificate paths to `/etc/signal-server/tls/`.
+The image ships no active configuration, secrets or TLS certificates. It bundles only `configs/signal-server-prod.yml` as `/etc/signal-server/config.yml.example`. At deploy time the operator mounts a real config at `/etc/signal-server/config.yml` (start from the template, which sets `mode: production` and activates the fail-closed gate), the TLS certificates the config references, and supplies secrets through the `${VAR}` references in the config. With no mounted config the server fails to start.
+
+The entrypoint is `signald` with the default command `start --config /etc/signal-server/config.yml`.
+
+First-party Go modules are fetched from the internal Gitea host. Credentials are passed as the optional BuildKit secret `gomodauth`, never as a build arg.
+
+### Development image
+
+`Dockerfile.dev` copies `configs/signal-server.yml` and the test certificates from `test/tls/`, points the TLS settings at them and exposes ports 8081 and 8443. It runs without `mode: production`, so the fail-closed gate is not active.
 
 ## Build and Run
 
 ```bash
-# Build the container image (tagged go-signal-dev:latest)
-make docker-build
-
-# Run the container with port mapping
-make docker-run
+make docker-build            # production image, tagged go-signal-dev:latest
+make docker-build-dev        # development image, tagged go-signal-dev:latest-dev
+make docker-run              # runs the development image (alias for docker-run-dev), ports 8081 and 8443
+make docker-build-services   # one image per auxiliary service via Dockerfile.service
 ```
 
-`make docker-run` maps both 8080 and 8443 from the container to the host and removes the container on exit.
+`docker-run` removes the container on exit. The production image has no quick-run target because it requires a mounted config.
 
-## Integration Testing Infrastructure
+## Compose
 
-The project uses docker-compose to stand up the full test environment, including the go-signal server, a signal-cli instance, and an integration test runner. The compose file lives at `.devcontainer/docker-compose.yml`.
+`deploy/docker-compose.yml` defines redis, postgres, registration-service, svr2, cdsi, storage-service, key-transparency and signald.
+
+The integration-test stack is `.devcontainer/docker-compose.yml` (devcontainer, signal-server, signal-cli, integration, redis, postgres).
 
 ```bash
-# Start the test infrastructure (detached, with rebuild)
-make docker-compose-up
-
-# Stop and remove volumes
-make docker-compose-down
-
-# Build the signal-cli test image separately
-make docker-build-signal-cli
+make docker-compose-up           # start the test stack detached, with rebuild
+make docker-compose-down         # stop it and remove volumes
+make docker-build-signal-cli     # build the signal-cli test image from test/signal-cli/
 ```
 
-The signal-cli image is built from `test/signal-cli/` and provides a real Signal client for end-to-end testing against the server. See [testing.md](testing.md) for how integration tests use this infrastructure.
+See [testing.md](testing.md) for how the integration tests use this stack.
