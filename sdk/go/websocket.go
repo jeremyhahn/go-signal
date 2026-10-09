@@ -55,9 +55,9 @@ func (c *Client) ConnectWebSocketSession(ctx context.Context, handler func(msg R
 
 	// Connect with Basic Auth via header. Extract password securely.
 	username := fmt.Sprintf("%s.%d", creds.UUID, creds.DeviceID)
-	pw := ""
-	if creds.Password != nil {
-		pw = creds.Password.Plaintext(ctx)
+	pw, err := revealPassword(ctx, creds.Password)
+	if err != nil {
+		return nil, err
 	}
 	opts := &websocket.DialOptions{
 		HTTPClient: httpClient,

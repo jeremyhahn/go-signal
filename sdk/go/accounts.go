@@ -183,8 +183,13 @@ func (c *Client) Register(ctx context.Context, number, sessionID string) (*Regis
 		}
 	}()
 
+	authToken, err := password.Reveal(ctx)
+	if err != nil {
+		return nil, signalerrors.Wrap(signalerrors.ErrUnavailable, "register: open password", err)
+	}
+
 	var result RegistrationResult
-	err = c.doRequestWithAuth(ctx, "POST", "/v1/registration", number, password.Plaintext(ctx), regReq, &result)
+	err = c.doRequestWithAuth(ctx, "POST", "/v1/registration", number, authToken, regReq, &result)
 	if err != nil {
 		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "register", err)
 	}

@@ -35,7 +35,10 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body any, r
 
 	// Add Basic Auth if credentials are available.
 	// The server expects UUID.deviceID:password format.
-	pw := c.getPassword(ctx)
+	pw, err := c.getPassword(ctx)
+	if err != nil {
+		return err
+	}
 	if pw != "" {
 		creds, _ := c.store.GetCredentials(ctx)
 		var username string

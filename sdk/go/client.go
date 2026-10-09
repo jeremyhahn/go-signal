@@ -135,11 +135,23 @@ func (c *Client) Config() ClientConfig {
 
 // getPassword extracts the password from SecureString for use in HTTP auth.
 // The returned string should be used immediately and not stored.
-func (c *Client) getPassword(ctx context.Context) string {
-	if c.config.Password == nil {
-		return ""
+func (c *Client) getPassword(ctx context.Context) (string, error) {
+	return revealPassword(ctx, c.config.Password)
+}
+
+// revealPassword opens a password for the wire. A password that was never set
+// yields "" and no error, which callers send as no credential; one that is set
+// but will not open is an error, because "" would be sent as a credential the
+// server rejects, or on an unauthenticated route silently accepts.
+func revealPassword(ctx context.Context, password *secrets.SecureString) (string, error) {
+	if password == nil || password.IsAbsent() {
+		return "", nil
 	}
-	return c.config.Password.Plaintext(ctx)
+	pw, err := password.Reveal(ctx)
+	if err != nil {
+		return "", signalerrors.Wrap(signalerrors.ErrUnavailable, "signal: open password", err)
+	}
+	return pw, nil
 }
 
 // NewSecurePassword creates a SecureString from a plain password string,
