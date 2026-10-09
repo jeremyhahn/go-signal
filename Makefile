@@ -34,7 +34,11 @@ GOBUILD       := $(GO) build -ldflags "$(LDFLAGS)"
 GOVET         := $(GO) vet
 GOFMT         := gofmt
 GOLINT        := golangci-lint
-GOSEC         := gosec
+TOOLS_BIN     := bin/tools
+GOSEC_TOOL    := $(TOOLS_BIN)/gosec
+# A caller-supplied GOSEC (command line or environment) is run as-is and the
+# tools/gosec build is skipped; the default is the binary that build produces.
+GOSEC         ?= $(GOSEC_TOOL)
 GOVULNCHECK   := govulncheck
 
 # The scanners are pinned for the same reason golangci-lint is: unpinned, they
@@ -63,7 +67,7 @@ GOVULNCHECK   := govulncheck
 # doing on any machine with a shared GOBIN, because `make gosec` resolves gosec
 # from PATH and will happily run whatever is first.
 #
-# v2.29.0 matches the ci-runner image, which is why ci.yml no longer installs
+# The gosec pin matches the ci-runner image, which is why ci.yml no longer installs
 # it on Gitea (devops.md §9 wants the reason at the pin, and "it is the version
 # the runner actually has" is the strongest one available).
 #
@@ -79,6 +83,16 @@ GOVULNCHECK   := govulncheck
 # The ordering is the point and is worth keeping: the deliberate bump surfaced
 # a live defect, where drifting to the same version would have surfaced it as a
 # mystery red on whichever innocent PR ran next.
+#
+# v2.29.0 built against x/tools v0.51.0 (#93, Go 1.27.2 adoption): v2.29.0 is
+# built against x/tools v0.49.0, which cannot read Go 1.27.2 export data
+# ("export data version 5 is greater than maximum supported version 4"), so
+# every package fails to load. The pin above stays v2.29.0 so it keeps matching
+# the ci-runner image's baked binary, but `make gosec` does not run that binary:
+# it builds tools/gosec, a tool module requiring gosec v2.29.0 and x/tools
+# v0.51.0, into $(TOOLS_BIN) and runs the result, failing closed if the build
+# fails. Drop the tool module once a gosec release ships x/tools >= v0.51.0.
+#
 # golangci-lint's pin lives HERE now, not in ci.yml, for the same reason the
 # scanners' do: it was stated in three places (ci.yml, .devcontainer/Dockerfile,
 # and the ci-runner image) and the Dockerfile had drifted to an abandoned
@@ -711,7 +725,7 @@ coverage-smtp:
 # CI / Quality
 # ==============================================================================
 
-.PHONY: ci fmt vet lint gosec vuln modverify trivy trivy-image security
+.PHONY: ci fmt vet lint gosec gosec-tool vuln modverify trivy trivy-image security
 
 ci: fmt vet lint security build test ## Run the full CI pipeline
 	@echo "==> CI pipeline complete."
@@ -771,7 +785,15 @@ GOSEC_OUT ?=
 # The SARIF options go to the FIRST pass only. gosec writes its report by
 # truncating the file, so a second pass would overwrite the first one's
 # findings and the upload would carry half the scan while reporting success.
-gosec: ## Run gosec security scanner, twice: repo tags, then with the integration tag
+gosec-tool: ## Build gosec from the tools/gosec module (x/tools that reads Go 1.27 export data)
+ifeq ($(origin GOSEC),file)
+	@echo "==> Building gosec from tools/gosec..."
+	cd tools/gosec && go build -o $(abspath $(GOSEC_TOOL)) github.com/securego/gosec/v2/cmd/gosec
+else
+	@echo "==> Using caller-supplied GOSEC=$(GOSEC); not building tools/gosec."
+endif
+
+gosec: gosec-tool ## Run gosec security scanner, twice: repo tags, then with the integration tag
 	@echo "==> Running security scanner (tags: $(or $(GOSEC_TAGS),none), format: $(GOSEC_FMT))..."
 	$(GOSEC) -concurrency 4 -exclude=$(GOSEC_EXCLUDE) -exclude-generated -tags "$(GOSEC_TAGS)" \
 		-fmt=$(GOSEC_FMT) $(if $(GOSEC_OUT),-out=$(GOSEC_OUT) -stdout -verbose=text) ./...
