@@ -39,22 +39,26 @@ func (c *Client) Send(ctx context.Context, recipient, message string, opts *Send
 
 	timestamp := time.Now().UnixMilli()
 
-	// Try encrypted send first. If crypto isn't initialized or session
-	// establishment fails, fall back to plaintext (type 8).
+	// A crypto initialization failure is an error, never a reason to send
+	// the message unencrypted.
+	if err := c.initCrypto(ctx); err != nil {
+		return nil, err
+	}
+
+	// Try encrypted send first. If session establishment fails, fall back
+	// to plaintext (type 8).
 	var content string
 	var msgType int
 
-	if err := c.initCrypto(ctx); err == nil {
-		if err := c.ensureSession(ctx, recipient, 1); err == nil {
-			plaintext := []byte(message)
-			ciphertext, err := c.encryptMessage(ctx, recipient, 1, plaintext)
-			if err == nil {
-				serialized, serErr := ciphertext.Serialize()
-				if serErr == nil {
-					content = base64.StdEncoding.EncodeToString(serialized)
-				}
-				msgType = int(ciphertext.Type())
+	if err := c.ensureSession(ctx, recipient, 1); err == nil {
+		plaintext := []byte(message)
+		ciphertext, err := c.encryptMessage(ctx, recipient, 1, plaintext)
+		if err == nil {
+			serialized, serErr := ciphertext.Serialize()
+			if serErr == nil {
+				content = base64.StdEncoding.EncodeToString(serialized)
 			}
+			msgType = int(ciphertext.Type())
 		}
 	}
 
@@ -114,7 +118,11 @@ func (c *Client) Receive(ctx context.Context, _ *ReceiveOptions) ([]ReceivedMess
 		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "receive messages", err)
 	}
 
-	_ = c.initCrypto(ctx)
+	// Without crypto the payloads cannot be decrypted; acknowledging them
+	// would delete the only copy, so stop before touching any message.
+	if err := c.initCrypto(ctx); err != nil {
+		return nil, err
+	}
 
 	for i := range result.Messages {
 		msg := &result.Messages[i]

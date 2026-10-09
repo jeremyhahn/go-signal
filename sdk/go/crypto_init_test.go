@@ -44,7 +44,9 @@ func TestInitCrypto_CredentialStoreErrorIsPropagated(t *testing.T) {
 // as the store's own error.
 func TestInitCrypto_StoreFailureIsTyped(t *testing.T) {
 	boom := errors.New("store unavailable")
-	c := newTestClient(t, "http://localhost", &mockStore{credErr: boom})
+	store := &flakyCredentialStore{err: boom}
+	c := newTestClient(t, "http://localhost", store)
+	store.fail.Store(true)
 
 	err := c.initCrypto(t.Context())
 

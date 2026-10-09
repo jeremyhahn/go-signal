@@ -190,19 +190,18 @@ func TestApp_IsRegistered(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, registered)
 	})
-	t.Run("FalseOnStoreError", func(t *testing.T) {
+	t.Run("StoreErrorFailsConstruction", func(t *testing.T) {
 		cfg := signal.ClientConfig{
 			ServerURL: "http://127.0.0.1:19997",
 			DataDir:   "/tmp/go-signal-desktop-test",
 			UserAgent: "test/0.0",
 			Store:     errorCredStore{},
 		}
+		// A credential load error is not "unregistered": it fails the
+		// client rather than yielding one with incomplete state.
 		app, err := NewApp(t.Context(), cfg)
-		require.NoError(t, err)
-		// Error from store → IsRegistered returns false, nil (not the error).
-		registered, err := app.IsRegistered()
-		require.NoError(t, err)
-		assert.False(t, registered)
+		require.Error(t, err)
+		assert.Nil(t, app)
 	})
 }
 

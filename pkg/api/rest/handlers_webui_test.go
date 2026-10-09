@@ -113,7 +113,9 @@ func TestWebUIHandler_RegisterRoutes_NoPanic(t *testing.T) {
 // --------------------------------------------------------------------------
 
 func TestHandleIsRegistered_NotRegistered(t *testing.T) {
-	store := &stubSDKStore{credsErr: errors.New("not found")}
+	// An unregistered client is a store holding no credentials (nil, nil),
+	// the shape the real stores report; a load error fails NewClient.
+	store := &stubSDKStore{}
 	client := newWebUIClient(t, store)
 	h := NewWebUIHandler(client, nil)
 
@@ -455,7 +457,7 @@ func TestWebUIRelayCall_InvalidJSON(t *testing.T) {
 // --------------------------------------------------------------------------
 
 func TestWebUIRelayCall_NoCredentials(t *testing.T) {
-	store := &stubSDKStore{credsErr: errors.New("not registered")}
+	store := &stubSDKStore{}
 	client := newWebUIClient(t, store)
 	stub := &stubCallSignalingService{}
 	h := NewWebUIHandler(client, stub)

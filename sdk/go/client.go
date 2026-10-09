@@ -90,7 +90,8 @@ func NewClient(ctx context.Context, cfg ClientConfig) (*Client, error) {
 	}
 
 	store := cfg.Store
-	if store == nil {
+	ownsStore := store == nil
+	if ownsStore {
 		daoStore, err := NewDefaultDAOStore(cfg.DataDir)
 		if err != nil {
 			return nil, signalerrors.Wrap(signalerrors.ErrInternal, "signal: create dao store", err)
@@ -98,9 +99,17 @@ func NewClient(ctx context.Context, cfg ClientConfig) (*Client, error) {
 		store = daoStore
 	}
 
-	// Load saved credentials if available.
+	// Load saved credentials. A store with none yet (an unregistered client)
+	// returns nil, nil; any error is a failure to read them and must not be
+	// mistaken for that case.
 	creds, err := store.GetCredentials(ctx)
-	if err == nil && creds != nil {
+	if err != nil {
+		if ownsStore {
+			_ = store.Close()
+		}
+		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "signal: load credentials", err)
+	}
+	if creds != nil {
 		if cfg.Account == "" {
 			cfg.Account = creds.Number
 		}
