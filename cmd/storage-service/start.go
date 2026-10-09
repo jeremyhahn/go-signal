@@ -105,8 +105,12 @@ func buildManifestStore(ctx context.Context, cfg config.StorageConfig, logger *s
 		return qrdbstorage.NewSecureStorageStore(kv), nil
 	case "postgres":
 		logger.Info("storage-service: using postgres storage backend")
+		dsn, err := cfg.Postgres.DSN(ctx)
+		if err != nil {
+			return nil, signalerrors.Wrap(signalerrors.ErrInternal, "postgres dsn", err)
+		}
 		pgClient, err := pgstorage.New(ctx, pgstorage.Config{
-			DSN:             cfg.Postgres.DSN(ctx),
+			DSN:             dsn,
 			MaxConns:        int32(cfg.Postgres.MaxConns),
 			MinConns:        int32(cfg.Postgres.MinConns),
 			MaxConnLifetime: cfg.Postgres.MaxConnLifetime,

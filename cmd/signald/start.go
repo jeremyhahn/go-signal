@@ -446,8 +446,12 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 	case "postgres":
 		slog.InfoContext(ctx, "using postgres storage backend")
+		dsn, err := cfg.Storage.Postgres.DSN(ctx)
+		if err != nil {
+			return &StartupError{Stage: "postgres dsn", Cause: err}
+		}
 		pgClient, err := pgstorage.New(ctx, pgstorage.Config{
-			DSN:             cfg.Storage.Postgres.DSN(ctx),
+			DSN:             dsn,
 			MaxConns:        int32(cfg.Storage.Postgres.MaxConns),
 			MinConns:        int32(cfg.Storage.Postgres.MinConns),
 			MaxConnLifetime: cfg.Storage.Postgres.MaxConnLifetime,

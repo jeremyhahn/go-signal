@@ -359,10 +359,18 @@ type PostgresConfig struct {
 // the structured fields are assembled. SSLMode defaults to "disable" only
 // when both URL and SSLMode are unset — production deployments must set
 // it explicitly via either the URL query parameter or sslMode field.
-func (p PostgresConfig) DSN(ctx context.Context) string {
-	if p.URL != nil {
-		if u := p.URL.Plaintext(ctx); u != "" {
-			return u
+//
+// A URL or password that is set but cannot be opened is *PostgresSecretError:
+// the structured fields are a fallback for an UNSET URL only, never for an
+// unavailable one, which would connect to a default host with TLS disabled.
+func (p PostgresConfig) DSN(ctx context.Context) (string, error) {
+	if !p.URL.IsAbsent() {
+		u, err := p.URL.Reveal(ctx)
+		if err != nil {
+			return "", &PostgresSecretError{Field: "url", Cause: err}
+		}
+		if u != "" {
+			return u, nil
 		}
 	}
 	host := p.Host
@@ -378,8 +386,11 @@ func (p PostgresConfig) DSN(ctx context.Context) string {
 		sslMode = "disable"
 	}
 	pwd := ""
-	if p.Password != nil {
-		pwd = p.Password.Plaintext(ctx)
+	if !p.Password.IsAbsent() {
+		var err error
+		if pwd, err = p.Password.Reveal(ctx); err != nil {
+			return "", &PostgresSecretError{Field: "password", Cause: err}
+		}
 	}
 	return fmt.Sprintf(
 		"postgres://%s:%s@%s:%d/%s?sslmode=%s",
@@ -388,7 +399,7 @@ func (p PostgresConfig) DSN(ctx context.Context) string {
 		host, port,
 		url.PathEscape(p.Database),
 		sslMode,
-	)
+	), nil
 }
 
 // CacheConfig holds Redis/cache settings.
@@ -889,6 +900,26 @@ func (e *ConfigValidationError) Error() string {
 // once. It is returned only when mode is "production".
 type ProductionValidationError struct {
 	Violations []string
+}
+
+// PostgresSecretError reports a configured Postgres secret (the connection
+// URL or the password) that could not be opened. It is distinct from the
+// secret being unset: an unset URL or password is a legitimate configuration,
+// while one that is set but unavailable must not be replaced by a default.
+type PostgresSecretError struct {
+	// Field names the configuration field: "url" or "password".
+	Field string
+	Cause error
+}
+
+// Error returns a human-readable description of the failure.
+func (e *PostgresSecretError) Error() string {
+	return "config: postgres " + e.Field + " is configured but could not be opened: " + e.Cause.Error()
+}
+
+// Unwrap returns the underlying cause.
+func (e *PostgresSecretError) Unwrap() error {
+	return e.Cause
 }
 
 func (e *ProductionValidationError) Error() string {
