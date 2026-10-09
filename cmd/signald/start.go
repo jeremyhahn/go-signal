@@ -183,11 +183,17 @@ func siteKeysByActionFromConfig(in map[string][]string) map[captcha.Action][]str
 func buildPushManager(ctx context.Context, cfg config.PushConfig, logger *slog.Logger) (*push.PushManager, error) {
 	mgrCfg := push.PushManagerConfig{Logger: logger}
 	if cfg.APN.TeamID != "" && cfg.APN.KeyID != "" && cfg.APN.BundleID != "" && cfg.APN.PrivateKey != nil {
+		// Reveal, not Plaintext: a configured key that cannot be opened is a
+		// startup failure, never an empty key handed to the provider.
+		signingKey, err := cfg.APN.PrivateKey.Reveal(ctx)
+		if err != nil {
+			return nil, &StartupError{Stage: "apns", Cause: err}
+		}
 		provider, err := push.NewAPNsProvider(push.APNsConfig{
 			BundleID:      cfg.APN.BundleID,
 			TeamID:        cfg.APN.TeamID,
 			KeyID:         cfg.APN.KeyID,
-			SigningKeyPEM: []byte(cfg.APN.PrivateKey.Plaintext(ctx)),
+			SigningKeyPEM: []byte(signingKey),
 			Sandbox:       cfg.APN.Sandbox,
 		})
 		if err != nil {
@@ -196,10 +202,17 @@ func buildPushManager(ctx context.Context, cfg config.PushConfig, logger *slog.L
 		mgrCfg.APNs = provider
 		logger.Info("APNs push provider configured", slog.Bool("sandbox", cfg.APN.Sandbox))
 	}
-	if cfg.FCM.Credentials != nil && cfg.FCM.Credentials.Plaintext(ctx) != "" {
+	// Only a credential that was never configured leaves FCM off. One that is
+	// configured but cannot be opened fails startup: the no-op provider would
+	// report accepted sends while dropping every Android notification.
+	if !cfg.FCM.Credentials.IsAbsent() {
+		serviceAccount, err := cfg.FCM.Credentials.Reveal(ctx)
+		if err != nil {
+			return nil, &StartupError{Stage: "fcm", Cause: err}
+		}
 		provider, err := push.NewFCMProvider(push.FCMConfig{
 			ProjectID:          cfg.FCM.ProjectID,
-			ServiceAccountJSON: []byte(cfg.FCM.Credentials.Plaintext(ctx)),
+			ServiceAccountJSON: []byte(serviceAccount),
 		})
 		if err != nil {
 			return nil, &StartupError{Stage: "fcm", Cause: err}
