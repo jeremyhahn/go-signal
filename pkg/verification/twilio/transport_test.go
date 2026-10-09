@@ -211,6 +211,51 @@ func TestSendCode_TransportErrorWrapped(t *testing.T) {
 	}
 }
 
+// A destroyed auth token must fail the call before any request is sent,
+// never authenticate with an empty password.
+func TestSendCode_DestroyedTokenFailsWithoutRequest(t *testing.T) {
+	f := newFakeTwilio()
+	defer f.Close()
+	token := secrets.MustNewSecureString("auth-secret")
+	tr, err := NewTransport(Config{
+		AccountSID: "ACtest", AuthToken: token,
+		ServiceSID: "VAservice", BaseURL: f.server.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewTransport: %v", err)
+	}
+	token.Destroy()
+
+	err = tr.SendCode(context.Background(), "+1", "")
+	var te *verification.TransportError
+	if !errors.As(err, &te) {
+		t.Fatalf("expected *TransportError, got %T", err)
+	}
+	var ue *secrets.UnavailableSecretError
+	if !errors.As(err, &ue) {
+		t.Fatalf("expected *UnavailableSecretError cause, got %v", err)
+	}
+}
+
+func TestVerify_DestroyedTokenFails(t *testing.T) {
+	f := newFakeTwilio()
+	defer f.Close()
+	token := secrets.MustNewSecureString("auth-secret")
+	tr, err := NewTransport(Config{
+		AccountSID: "ACtest", AuthToken: token,
+		ServiceSID: "VAservice", BaseURL: f.server.URL,
+	})
+	if err != nil {
+		t.Fatalf("NewTransport: %v", err)
+	}
+	token.Destroy()
+
+	ok, err := tr.Verify(context.Background(), "+1", "123456")
+	if ok || err == nil {
+		t.Fatalf("Verify = (%v, %v), want (false, error)", ok, err)
+	}
+}
+
 func TestVerify_Approved(t *testing.T) {
 	f := newFakeTwilio()
 	defer f.Close()

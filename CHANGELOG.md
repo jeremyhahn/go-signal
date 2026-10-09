@@ -6,11 +6,53 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.1-alpha] - 2026-10-09
+
+### Security
+
+- `GET /resources/<name>` can no longer serve files outside the resources root (#68). The containment check reasoned about a lexical path while the reads followed symlinks, so a symlink inside the root was served; static resources are now opened through `os.Root`, which refuses to leave the root, symlinks included. A directory answers 404 (the same as a missing file or an escape) instead of an unauthenticated listing of the tree.
+- Credential-bearing path segments — verification session ids, username-link handles and FIDO2 ceremony ids — are redacted from the access log (#40).
+- `Destroy` is terminal on the directory and secure-storage credential managers: a setter racing shutdown wipes its own clone and fails instead of installing a live secret nothing would ever wipe (#46).
+- An absent secret is now distinguished from an unreadable one under a single lock, so a configured-but-unopenable secret can no longer be treated as unset (#15, parts 1 and 4).
+- Two comparisons of protected secrets that went through `Plaintext()` now use `SecureString.Equals` inside the existing `WithBytes` borrow window (#21).
+- Production validation rejects the dev CDN placeholders (#19).
+
+### Added
+
+- Bind addresses resolve through four layers, highest first: flag, environment, config file, defaults (#60). Covered bind keys are `health.listen`, `verification.grpcListen`, `svr2.httpListen`, `svr2.wsListen`, `cdsi.wsListen`, `storageService.httpListen` and `keyTransparency.grpcListen`; signald's own listeners, dialers and advertised address are covered too (#101, below). Environment names derive from the key (`SIGNAL_` plus the upper-cased key with `.` as `_`, e.g. `SIGNAL_KEYTRANSPARENCY_GRPCLISTEN`); flag names are the kebab-cased key (e.g. `--key-transparency-grpc-listen`). A flag only overrides when the operator sets it. A required bind address explicitly emptied by file, environment or flag fails config validation (the optional keys in #101 may be empty). The new `health.listen` key (default `0.0.0.0:8099`) configures the health/metrics sidecar of signald, registration-service and key-transparency. API: `config.LoadWithFlags`, `config.AddAddressFlags`, `config.EnvName`, `config.FlagName`, `Config.Address`.
+- signald's own addresses resolve through the same layers (#60, #101): the listeners `server.httpListen` and `server.grpcListen`; the dialed endpoints `keyTransparency.remoteAddr`, `verification.remoteAddr`, `storageService.remoteUrl` and `svr2.remoteUrl`; and the advertised attachment upload address `attachments.tusUri`. These are optional, with an empty default, and empty disables the listener or remote path (`Config.Validate` still requires at least one of `server.httpListen` and `server.grpcListen`, and each must be `host:port`). The legacy `server.host`, `server.httpPort` and `server.grpcPort` keys still work: they are folded into the listen addresses only when no layer set the address itself, so a flag, environment variable or `httpListen`/`grpcListen` file key always wins. signald registers the matching flags (e.g. `--server-http-listen`) and `SIGNAL_SERVER_HTTPLISTEN`-style variables.
+- `sdk/go`: `Client.ConnectWebSocketSession` returns a channel closed when the session's read loop ends, so a caller can notice a dropped socket; `ConnectWebSocket` keeps its signature and discards the channel (#38).
+- `make gosec-tool` builds gosec from the `tools/gosec` module (#94).
+
 ### Changed
 
 - `make release-alpha` adopts the handbook template v2 (#59): explicit `VERSION=vX.Y.Z-alpha`, signed annotated tag through `agent-git.sh`, pushes only the release commit and that tag, fails closed, and refuses a version with no CHANGELOG section. The Makefile build variable `VERSION` is renamed `BUILD_VERSION`.
+- Go 1.27.2 (#94): `go.mod`, workflows and Dockerfiles move from 1.27.1 to 1.27.2, with `golang.org/x/crypto` v0.57.0, `x/term` v0.46.0, `x/net` v0.60.0, `x/sync` v0.23.0, `x/sys` v0.48.0 and `x/text` v0.42.0. gosec v2.29.0 is built against an `x/tools` that cannot read Go 1.27.2 export data, so `make gosec` now builds it from the `tools/gosec` tool module (gosec v2.29.0 with `x/tools` v0.51.0) into `bin/tools` and fails closed if that build fails. A caller-supplied `GOSEC` is run as-is and skips the build. The `GOSEC_VERSION` pin stays v2.29.0.
+- CI tool pins moved to upstream latest, in step with the ci-runner image (#88): golangci-lint v2.13.2 → v2.14.0, govulncheck v1.7.0 → v1.8.0, protoc-gen-go v1.36.11 → v1.36.12, Go 1.26.x → 1.27.1 (`go.mod`, workflows, Dockerfiles; superseded by 1.27.2, #94). gosec stays at v2.29.0, already the latest. The indirect `github.com/cockroachdb/swiss` moves to v0.0.0-20260820225851-333444432258, the first revision that builds on Go 1.27.
+- `github.com/spf13/viper` v1.21.0 is a new direct dependency, and `github.com/spf13/pflag` becomes direct (#60).
+- Listener fallbacks are gone from the binaries: cdsi, key-transparency, registration-service, storage-service and svr2 no longer substitute a hard-coded address for an empty one, and `health.RunSidecar` returns `health.ErrNoListenAddr` for an empty address instead of binding `0.0.0.0:8099` (#60). The defaults now live in `pkg/config`.
+- Removed `IncomingMessageEntity.Timestamp`: no client populates it and the Java `IncomingMessage` has no such field. The bounds check moved onto the message-list timestamp that reaches the client (#34).
+- `gosec` and `govulncheck` are pinned and read from the Makefile instead of installed at `@latest` (#51); the devcontainer reads every tool pin from the Makefile (#76). `protoc` and its plugins are pinned, `make proto` fails closed on a mismatch, and the tree is regenerated against the pin (#30).
 
-- CI tool pins moved to upstream latest, in step with the ci-runner image (#88): golangci-lint v2.13.2 → v2.14.0, govulncheck v1.7.0 → v1.8.0, protoc-gen-go v1.36.11 → v1.36.12, Go 1.26.x → 1.27.1 (`go.mod`, workflows, Dockerfiles). gosec stays at v2.29.0, already the latest. The indirect `github.com/cockroachdb/swiss` moves to v0.0.0-20260820225851-333444432258, the first revision that builds on Go 1.27.
+### Fixed
+
+- Message delivery over the WebSocket sends a serialized `textsecure.Envelope` protobuf in `WebSocketRequestMessage.body` rather than JSON; no real client could read a delivered message before (#20). `MarshalEnvelope` is the single encoder for all three delivery paths; an unmapped envelope type is a typed error instead of a silent downgrade to UNKNOWN, and reserved type 2 is no longer accepted inbound.
+- The delivered envelope carried `client_timestamp=0`, so libsignal rejected every message with `InvalidMessageStructureException`; it now takes the timestamp from the message list (#34).
+- Profile: `handleSetProfile` follows the Java reference — `{avatar:false, sameAvatar:true}` clears rather than keeps the avatar, the existing avatar is read at the version being written rather than via `GetLatest`, and an existing avatar is carried forward only when it starts with `profiles/` (#21). Residual same-version read-modify-write is tracked in #65 and missing CDN object deletion in #66.
+- Re-registering a verified session returns 409 `SESSION_ALREADY_VERIFIED` across REST and gRPC instead of a 429 cooldown (#22).
+- A challenge submission with no captcha provider configured returns 503 instead of dereferencing a nil verifier (#18).
+- The shipped config seeds the remote-config defaults the integration suite expects (#19, with the production-validation change under Security).
+- The desktop `Run` gains a context and a shutdown path, `DAOStore.Close` releases the store it opened, and a failed constructor or close is no longer silent (#55).
+- The desktop WebSocket manager reconnects on a dropped socket, with a backoff that doubles from 1s up to 30s and resets only after a session that lasted that long (#38).
+- `pkg/workers`: the cron test used `@every 100ms`, which robfig/cron rounds up to one second; it now uses the real granularity and a deadline that fits two periods (#79). Test only.
+
+### CI
+
+- The coverage gate (`make coverage`, new `coverage-gate` target) fails closed on a missing, empty, malformed or header-only profile and on an invalid `COVER_MIN` (#13).
+- `lint` and `gosec` analyse the build-tagged packages (#42), and both run a second pass under the `integration` tag (#44, #53); the integration harness verifies the devcontainer certificate instead of skipping TLS. `gosec` is pinned to v2.29.0 with PATH resolution enforced (#73) and bounded to a concurrency of 4.
+- The integration suite also runs when `pkg/**`, `cmd/**` or `sdk/**` change.
+- Integration and unit test fixes: harness defects that masked ten suite failures (#17), the cleanup test no longer races the sweeper (#49), a vacuous UUID-index test and five load-bearing waits in cdsi (#74), and per-binary `getUserStatus` assertions instead of a shared exit code (#75).
+- ci-template v1.15: every job starts at once, push on main only (#87); the label-triggered peer-review and automerge workflows were revised.
 
 ## [0.2.0-alpha] - 2026-08-19
 

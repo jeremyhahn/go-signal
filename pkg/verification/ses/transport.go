@@ -76,7 +76,7 @@ func NewTransport(cfg Config) (*Transport, error) {
 	if cfg.AccessKeyID == "" {
 		return nil, errors.New("ses: AccessKeyID is required")
 	}
-	if cfg.SecretAccessKey == nil || cfg.SecretAccessKey.Plaintext() == "" {
+	if cfg.SecretAccessKey == nil || cfg.SecretAccessKey.IsEmpty() {
 		return nil, errors.New("ses: SecretAccessKey is required")
 	}
 	if cfg.FromAddress == "" {
@@ -101,7 +101,7 @@ func NewTransport(cfg Config) (*Transport, error) {
 		subject:     subject,
 		signer: &sigV4{
 			accessKeyID:     cfg.AccessKeyID,
-			secretAccessKey: cfg.SecretAccessKey.Plaintext(),
+			secretAccessKey: cfg.SecretAccessKey,
 			sessionToken:    cfg.SessionToken,
 			region:          cfg.Region,
 			service:         sesService,
