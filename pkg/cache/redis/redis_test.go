@@ -15,7 +15,7 @@ import (
 
 func TestNew_ValidURL(t *testing.T) {
 	t.Parallel()
-	c, err := New(Config{URL: "redis://localhost:6379/0"})
+	c, err := New(t.Context(), Config{URL: "redis://localhost:6379/0"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -26,16 +26,16 @@ func TestNew_ValidURL(t *testing.T) {
 
 func TestNew_InvalidURL(t *testing.T) {
 	t.Parallel()
-	if _, err := New(Config{URL: "not a url"}); err == nil {
+	if _, err := New(t.Context(), Config{URL: "not a url"}); err == nil {
 		t.Fatal("expected error for invalid URL")
 	}
 }
 
 func TestNew_PasswordOverride(t *testing.T) {
 	t.Parallel()
-	c, err := New(Config{
+	c, err := New(t.Context(), Config{
 		URL:      "redis://localhost:6379/0",
-		Password: secrets.MustNewSecureString("secret"),
+		Password: secrets.MustNewSecureString(t.Context(), "secret"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func TestNew_PasswordOverride(t *testing.T) {
 // panic or clobber a password already carried in the connection URL.
 func TestNew_NilPasswordKeepsURLCredential(t *testing.T) {
 	t.Parallel()
-	c, err := New(Config{URL: "redis://:urlpass@localhost:6379/0"})
+	c, err := New(t.Context(), Config{URL: "redis://:urlpass@localhost:6379/0"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,9 +62,9 @@ func TestNew_NilPasswordKeepsURLCredential(t *testing.T) {
 // applying an empty AUTH password.
 func TestNew_DestroyedPasswordKeepsURLCredential(t *testing.T) {
 	t.Parallel()
-	pw := secrets.MustNewSecureString("secret")
+	pw := secrets.MustNewSecureString(t.Context(), "secret")
 	pw.Destroy()
-	c, err := New(Config{URL: "redis://:urlpass@localhost:6379/0", Password: pw})
+	c, err := New(t.Context(), Config{URL: "redis://:urlpass@localhost:6379/0", Password: pw})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestNew_DestroyedPasswordKeepsURLCredential(t *testing.T) {
 
 func TestNew_DBOverride(t *testing.T) {
 	t.Parallel()
-	c, err := New(Config{URL: "redis://localhost:6379/0", DB: 3})
+	c, err := New(t.Context(), Config{URL: "redis://localhost:6379/0", DB: 3})
 	if err != nil {
 		t.Fatal(err)
 	}

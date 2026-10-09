@@ -105,13 +105,16 @@ func NewDefaultDAOStore(dataDir string) (*DAOStore, error) {
 	return store, nil
 }
 
+// daoOpTimeout bounds a single store operation.
+const daoOpTimeout = 5 * time.Second
+
 func (s *DAOStore) ctx() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(context.Background(), 5*time.Second)
+	return context.WithTimeout(context.Background(), daoOpTimeout)
 }
 
-// GetCredentials loads stored credentials.
-func (s *DAOStore) GetCredentials() (*Credentials, error) {
-	ctx, cancel := s.ctx()
+// GetCredentials loads stored credentials, sealing the password under ctx.
+func (s *DAOStore) GetCredentials(ctx context.Context) (*Credentials, error) {
+	ctx, cancel := context.WithTimeout(ctx, daoOpTimeout)
 	defer cancel()
 
 	entity, err := s.factory.Settings.QueryOneByIndex(ctx, "Key", "credentials")
@@ -121,18 +124,18 @@ func (s *DAOStore) GetCredentials() (*Credentials, error) {
 
 	// Credentials are stored as JSON in the settings entity value.
 	var creds Credentials
-	if err := unmarshalCredentials(entity.Value, &creds); err != nil {
+	if err := unmarshalCredentials(ctx, entity.Value, &creds); err != nil {
 		return nil, err
 	}
 	return &creds, nil
 }
 
-// SaveCredentials persists credentials.
-func (s *DAOStore) SaveCredentials(creds *Credentials) error {
-	ctx, cancel := s.ctx()
+// SaveCredentials persists credentials, opening the password under ctx.
+func (s *DAOStore) SaveCredentials(ctx context.Context, creds *Credentials) error {
+	ctx, cancel := context.WithTimeout(ctx, daoOpTimeout)
 	defer cancel()
 
-	value, err := marshalCredentials(creds)
+	value, err := marshalCredentials(ctx, creds)
 	if err != nil {
 		return err
 	}
@@ -379,17 +382,17 @@ func (s *DAOStore) Factory() *daostore.Factory {
 // marshalCredentials serializes credentials to a string for storage.
 // The password is stored as plaintext in the DB (protected by OS-level
 // file permissions on PebbleDB's data directory).
-func marshalCredentials(creds *Credentials) (string, error) {
+func marshalCredentials(ctx context.Context, creds *Credentials) (string, error) {
 	pw := ""
 	if creds.Password != nil {
-		pw = creds.Password.Plaintext()
+		pw = creds.Password.Plaintext(ctx)
 	}
 	return fmt.Sprintf(`{"number":%q,"uuid":%q,"pni":%q,"password":%q,"deviceId":%d}`,
 		creds.Number, creds.UUID, creds.PNI, pw, creds.DeviceID), nil
 }
 
 // unmarshalCredentials deserializes credentials from storage.
-func unmarshalCredentials(value string, creds *Credentials) error {
+func unmarshalCredentials(ctx context.Context, value string, creds *Credentials) error {
 	type credJSON struct {
 		Number   string `json:"number"`
 		UUID     string `json:"uuid"`
@@ -406,7 +409,7 @@ func unmarshalCredentials(value string, creds *Credentials) error {
 	creds.PNI = c.PNI
 	creds.DeviceID = c.DeviceID
 	if c.Password != "" {
-		password, err := secrets.NewSecureString(c.Password)
+		password, err := secrets.NewSecureString(ctx, c.Password)
 		if err != nil {
 			return err
 		}

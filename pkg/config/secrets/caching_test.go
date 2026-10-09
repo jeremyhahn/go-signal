@@ -17,12 +17,12 @@ type stubResolver struct {
 }
 
 func (s *stubResolver) Scheme() string { return s.scheme }
-func (s *stubResolver) Resolve(_ context.Context, _ string) (*SecureString, error) {
+func (s *stubResolver) Resolve(ctx context.Context, _ string) (*SecureString, error) {
 	s.calls++
 	if s.err != nil {
 		return nil, s.err
 	}
-	return MustNewSecureString(s.value), nil
+	return MustNewSecureString(ctx, s.value), nil
 }
 
 func TestNewCachingResolver_RejectsBadInputs(t *testing.T) {
@@ -50,8 +50,8 @@ func TestCachingResolver_FirstResolveFetchesUnderlying(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if s.Plaintext() != "v1" {
-		t.Errorf("plaintext = %q", s.Plaintext())
+	if s.Plaintext(t.Context()) != "v1" {
+		t.Errorf("plaintext = %q", s.Plaintext(t.Context()))
 	}
 	if stub.calls != 1 {
 		t.Errorf("expected 1 underlying call; got %d", stub.calls)
@@ -87,8 +87,8 @@ func TestCachingResolver_TTLExpiryRefetches(t *testing.T) {
 	if stub.calls != 2 {
 		t.Errorf("expected re-fetch after TTL; calls=%d", stub.calls)
 	}
-	if got.Plaintext() != "v2" {
-		t.Errorf("post-rotation plaintext = %q", got.Plaintext())
+	if got.Plaintext(t.Context()) != "v2" {
+		t.Errorf("post-rotation plaintext = %q", got.Plaintext(t.Context()))
 	}
 }
 
@@ -102,8 +102,8 @@ func TestCachingResolver_InvalidateForcesRefetch(t *testing.T) {
 	if stub.calls != 2 {
 		t.Errorf("Invalidate should force re-fetch; calls=%d", stub.calls)
 	}
-	if got.Plaintext() != "v2" {
-		t.Errorf("post-invalidate plaintext = %q", got.Plaintext())
+	if got.Plaintext(t.Context()) != "v2" {
+		t.Errorf("post-invalidate plaintext = %q", got.Plaintext(t.Context()))
 	}
 }
 
@@ -119,8 +119,8 @@ func TestCachingResolver_UnderlyingErrorNotCached(t *testing.T) {
 	if err != nil {
 		t.Fatalf("retry after recovery: %v", err)
 	}
-	if got.Plaintext() != "v1" {
-		t.Errorf("recovered plaintext = %q", got.Plaintext())
+	if got.Plaintext(t.Context()) != "v1" {
+		t.Errorf("recovered plaintext = %q", got.Plaintext(t.Context()))
 	}
 }
 
@@ -142,7 +142,7 @@ func TestCachingResolver_SealFailure_CacheHit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Resolve: %v", err)
 	}
-	if got := first.Plaintext(); got != "cached-secret" {
+	if got := first.Plaintext(t.Context()); got != "cached-secret" {
 		t.Fatalf("first Resolve = %q", got)
 	}
 
@@ -171,7 +171,7 @@ func (p *prebuiltResolver) Resolve(_ context.Context, _ string) (*SecureString, 
 // Same on the fetch path: the cache keeps the fresh secret, but the caller's
 // copy failing to seal is an error, not an empty success.
 func TestCachingResolver_SealFailure_AfterFetch(t *testing.T) {
-	underlying := &prebuiltResolver{secret: MustNewSecureString("fresh-secret")}
+	underlying := &prebuiltResolver{secret: MustNewSecureString(t.Context(), "fresh-secret")}
 	c := NewCachingResolver(underlying, time.Minute)
 	failSealing(t)
 

@@ -209,9 +209,9 @@ func TestStorageServiceE2E_AdminDeleteViaSignaldClient(t *testing.T) {
 	_ = store.PutItem(ctx, "alice", &securestorage.StorageItem{Key: []byte("k"), Value: []byte("v")})
 	_ = store.PutManifest(ctx, "bob", &securestorage.StorageManifest{Version: 1, Value: []byte("bob-manifest")})
 
-	cli, err := storage.NewHTTP(storage.HTTPConfig{
+	cli, err := storage.NewHTTP(t.Context(), storage.HTTPConfig{
 		BaseURL:      srv.URL,
-		SharedSecret: secrets.MustNewSecureString(sharedSecret),
+		SharedSecret: secrets.MustNewSecureString(t.Context(), sharedSecret),
 		Timeout:      2 * time.Second,
 	})
 	if err != nil {

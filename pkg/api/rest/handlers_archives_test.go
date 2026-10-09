@@ -2520,7 +2520,7 @@ func TestHandleGetSVRBAuth_SuccessPath(t *testing.T) {
 	f, inj := newErrInjectRestServer(t)
 	inj.generateSVRBAuthResult = &backups.ExternalServiceCredentials{
 		Username: "svrb-user",
-		Password: secrets.MustNewSecureString("svrb-pass"),
+		Password: secrets.MustNewSecureString(t.Context(), "svrb-pass"),
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/archives/auth/svrb", nil)
@@ -2594,8 +2594,8 @@ func (n *noopBackupService) CreateTemporaryAttachmentUploadDescriptor(_ context.
 func (n *noopBackupService) GenerateReadAuth(_ context.Context, _ *backups.AuthenticatedUser, _ int) (map[string]string, error) {
 	return map[string]string{}, nil
 }
-func (n *noopBackupService) GenerateSVRBAuth(_ context.Context, _ *backups.AuthenticatedUser) (*backups.ExternalServiceCredentials, error) {
-	return &backups.ExternalServiceCredentials{Username: "u", Password: secrets.MustNewSecureString("p")}, nil
+func (n *noopBackupService) GenerateSVRBAuth(ctx context.Context, _ *backups.AuthenticatedUser) (*backups.ExternalServiceCredentials, error) {
+	return &backups.ExternalServiceCredentials{Username: "u", Password: secrets.MustNewSecureString(ctx, "p")}, nil
 }
 func (n *noopBackupService) GetCopyQuota(_ context.Context, _ *backups.AuthenticatedUser, params []backups.CopyParameters) (*backups.CopyQuota, error) {
 	// Return a quota with all items rejected (OutOfQuota) to exercise the non-success branch.
@@ -2688,7 +2688,7 @@ func TestHandleGetSVRBAuth_UnavailablePasswordFailsClosed(t *testing.T) {
 	f, inj := newErrInjectRestServer(t)
 	unavailable := &backups.ExternalServiceCredentials{
 		Username: "svrb-user",
-		Password: secrets.MustNewSecureString("svrb-pass"),
+		Password: secrets.MustNewSecureString(t.Context(), "svrb-pass"),
 	}
 	unavailable.Destroy()
 	inj.generateSVRBAuthResult = unavailable

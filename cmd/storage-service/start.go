@@ -49,7 +49,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	// idempotent and nil-safe.
 	defer cfg.Destroy()
 
-	if cfg.StorageService.SharedSecret.IsDestroyed() {
+	if cfg.StorageService.SharedSecret.IsDestroyed(ctx) {
 		return errors.New("storage-service: shared secret is required")
 	}
 
@@ -106,7 +106,7 @@ func buildManifestStore(ctx context.Context, cfg config.StorageConfig, logger *s
 	case "postgres":
 		logger.Info("storage-service: using postgres storage backend")
 		pgClient, err := pgstorage.New(ctx, pgstorage.Config{
-			DSN:             cfg.Postgres.DSN(),
+			DSN:             cfg.Postgres.DSN(ctx),
 			MaxConns:        int32(cfg.Postgres.MaxConns),
 			MinConns:        int32(cfg.Postgres.MinConns),
 			MaxConnLifetime: cfg.Postgres.MaxConnLifetime,
@@ -178,7 +178,7 @@ func validateBasicAuth(r *http.Request, secret *secrets.SecureString) (string, b
 		identity string
 		ok       bool
 	)
-	secret.WithBytes(func(key []byte) { identity, ok = validateBasicAuthKey(r, key) })
+	secret.WithBytes(r.Context(), func(key []byte) { identity, ok = validateBasicAuthKey(r, key) })
 	return identity, ok
 }
 

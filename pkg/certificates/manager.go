@@ -140,7 +140,7 @@ func (m *CertificatesManager) SetAuthServerSecret(params *zkgroup.ServerSecretPa
 // bytes. The pubKeyID is an opaque identifier included in the certificate
 // so clients can select the correct verification key. When set, delivery
 // certificate signing uses Ed25519 instead of HMAC-SHA256.
-func (m *CertificatesManager) SetEd25519SigningKey(privKey ed25519.PrivateKey, pubKeyID uint32) error {
+func (m *CertificatesManager) SetEd25519SigningKey(ctx context.Context, privKey ed25519.PrivateKey, pubKeyID uint32) error {
 	if len(privKey) != ed25519PrivKeySize {
 		return &Ed25519KeyError{Cause: &invalidKeyLengthError{
 			Got:  len(privKey),
@@ -149,7 +149,7 @@ func (m *CertificatesManager) SetEd25519SigningKey(privKey ed25519.PrivateKey, p
 	}
 	// NewSecret copies the bytes into an enclave and zeros the source slice
 	// on return; the sealed material can only be read back through Open.
-	sec, err := secure.NewSecret(privKey)
+	sec, err := secure.NewSecret(ctx, privKey)
 	if err != nil {
 		return &Ed25519KeyError{Cause: err}
 	}
@@ -172,11 +172,11 @@ func (m *CertificatesManager) SetEd25519SigningKey(privKey ed25519.PrivateKey, p
 // configured private key, or nil if no Ed25519 key has been configured.
 // The private key is only briefly unlocked to derive the public key and is
 // re-sealed immediately after use.
-func (m *CertificatesManager) Ed25519PublicKey() ed25519.PublicKey {
+func (m *CertificatesManager) Ed25519PublicKey(ctx context.Context) ed25519.PublicKey {
 	var pub ed25519.PublicKey
 	// Derive the public key from the locked bytes via a temporary copy; the
 	// copy is zeroed by useEd25519Key before this returns.
-	_, err := m.useEd25519Key(func(priv ed25519.PrivateKey) error {
+	_, err := m.useEd25519Key(ctx, func(priv ed25519.PrivateKey) error {
 		derived, ok := priv.Public().(ed25519.PublicKey)
 		if !ok {
 			return &Ed25519KeyError{Cause: errNotAnEd25519Key}
@@ -203,25 +203,31 @@ var errNotAnEd25519Key = errors.New("certificates: sealed key is not an Ed25519 
 // The copy exists because crypto/ed25519 registers a weak pointer on the key
 // (required by Go's FIPS140 cache) and so cannot be handed protected memory
 // directly.
-func (m *CertificatesManager) useEd25519Key(fn func(priv ed25519.PrivateKey) error) (bool, error) {
+func (m *CertificatesManager) useEd25519Key(ctx context.Context, fn func(priv ed25519.PrivateKey) error) (bool, error) {
 	m.keyMu.RLock()
 	defer m.keyMu.RUnlock()
 
 	if m.ed25519Secret == nil {
 		return false, nil
 	}
-	buf, err := m.ed25519Secret.Open()
+	buf, err := m.ed25519Secret.Open(ctx)
 	if err != nil {
 		return true, err
 	}
-	priv := make(ed25519.PrivateKey, len(buf.Bytes()))
-	copy(priv, buf.Bytes())
+	priv := make(ed25519.PrivateKey, buf.Size())
+	err = buf.WithBytes(func(b []byte) error {
+		copy(priv, b)
+		return nil
+	})
 	buf.Destroy()
 	defer func() {
 		for i := range priv {
 			priv[i] = 0
 		}
 	}()
+	if err != nil {
+		return true, err
+	}
 	return true, fn(priv)
 }
 
@@ -269,7 +275,7 @@ func (m *CertificatesManager) GetDeliveryCertificate(
 	}
 
 	// Sign with Ed25519 when configured; fall back to HMAC-SHA256 otherwise.
-	signer, err := m.signCertificate(&senderCert)
+	signer, err := m.signCertificate(ctx, &senderCert)
 	if err != nil {
 		return nil, &CertificateGenerationError{Operation: "sign", Cause: err}
 	}
@@ -334,7 +340,7 @@ func (m *CertificatesManager) GetGroupCredentials(
 		if m.authServerSecret != nil {
 			credential, err = m.issueAuthCredentialWithPni(uuid, pni, redemptionTime)
 		} else {
-			credential, err = m.generateGroupCredential(uuid, redemptionTime)
+			credential, err = m.generateGroupCredential(ctx, uuid, redemptionTime)
 		}
 
 		if err != nil {
@@ -396,7 +402,7 @@ func (m *CertificatesManager) GetExpiringProfileKeyCredential(
 		m.logger.WarnContext(ctx, "issuing stub profile key credential: authServerSecret not configured",
 			slog.String("aci", aciUUID),
 		)
-		return m.stubProfileKeyCredential(aciUUID, credentialExpirationTime)
+		return m.stubProfileKeyCredential(ctx, aciUUID, credentialExpirationTime)
 	}
 
 	parsed, err := uuid.Parse(aciUUID)
@@ -454,7 +460,7 @@ func (m *CertificatesManager) GetExpiringProfileKeyCredentialStub(
 		slog.String("aci", aciUUID),
 		slog.String("reason", "ProfileKeyCredentialRequest wire deserialization not yet available"),
 	)
-	return m.stubProfileKeyCredential(aciUUID, credentialExpirationTime)
+	return m.stubProfileKeyCredential(ctx, aciUUID, credentialExpirationTime)
 }
 
 // signCertificate signs the sender certificate fields. When an Ed25519 private
@@ -462,7 +468,7 @@ func (m *CertificatesManager) GetExpiringProfileKeyCredentialStub(
 // (producing a 64-byte signature). Otherwise HMAC-SHA256 is used as a fallback
 // (producing a 32-byte MAC). The Signer field of the certificate is not
 // included in the signed payload to avoid circular dependency.
-func (m *CertificatesManager) signCertificate(cert *SenderCertificate) ([]byte, error) {
+func (m *CertificatesManager) signCertificate(ctx context.Context, cert *SenderCertificate) ([]byte, error) {
 	// Create a signing payload without the signer field to avoid circular
 	// dependency in the signature.
 	payload := struct {
@@ -485,7 +491,7 @@ func (m *CertificatesManager) signCertificate(cert *SenderCertificate) ([]byte, 
 	}
 
 	var sig []byte
-	configured, err := m.useEd25519Key(func(priv ed25519.PrivateKey) error {
+	configured, err := m.useEd25519Key(ctx, func(priv ed25519.PrivateKey) error {
 		sig = ed25519.Sign(priv, data)
 		return nil
 	})
@@ -497,7 +503,7 @@ func (m *CertificatesManager) signCertificate(cert *SenderCertificate) ([]byte, 
 	}
 
 	// HMAC-SHA256 fallback for backwards compatibility.
-	keyBytes := m.signingKey.Bytes()
+	keyBytes := m.signingKey.Bytes(ctx)
 	defer func() {
 		for i := range keyBytes {
 			keyBytes[i] = 0
@@ -599,7 +605,7 @@ func (m *CertificatesManager) issueCallLinkAuthCredentials(accountUUID string, s
 // generateGroupCredential produces an HMAC-SHA256 credential binding the
 // account UUID to a specific redemption time. This is the fallback path used
 // when authServerSecret is not configured.
-func (m *CertificatesManager) generateGroupCredential(uuid string, redemptionTime int64) ([]byte, error) {
+func (m *CertificatesManager) generateGroupCredential(ctx context.Context, uuid string, redemptionTime int64) ([]byte, error) {
 	payload := struct {
 		UUID           string `json:"uuid"`
 		RedemptionTime int64  `json:"redemptionTime"`
@@ -613,7 +619,7 @@ func (m *CertificatesManager) generateGroupCredential(uuid string, redemptionTim
 		return nil, err
 	}
 
-	keyBytes := m.signingKey.Bytes()
+	keyBytes := m.signingKey.Bytes(ctx)
 	defer func() {
 		for i := range keyBytes {
 			keyBytes[i] = 0
@@ -629,6 +635,7 @@ func (m *CertificatesManager) generateGroupCredential(uuid string, redemptionTim
 // uses HMAC-SHA256 over the UUID and expiration to produce a deterministic
 // placeholder credential that has the correct wire shape.
 func (m *CertificatesManager) stubProfileKeyCredential(
+	ctx context.Context,
 	aciUUID string,
 	credentialExpirationTime zkgroup.Timestamp,
 ) (*ExpiringProfileKeyCredentialResponse, error) {
@@ -645,7 +652,7 @@ func (m *CertificatesManager) stubProfileKeyCredential(
 		return nil, &CertificateGenerationError{Operation: "stub-profile-key-credential", Cause: err}
 	}
 
-	keyBytes := m.signingKey.Bytes()
+	keyBytes := m.signingKey.Bytes(ctx)
 	defer func() {
 		for i := range keyBytes {
 			keyBytes[i] = 0

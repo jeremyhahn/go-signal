@@ -49,11 +49,11 @@ func TestRunStart_AbortedStartupWipesSharedSecrets(t *testing.T) {
 		Server:  config.ServerConfig{Host: "127.0.0.1", HTTPPort: 0},
 		Storage: config.StorageConfig{Backend: "file", File: config.FileConfig{DataDir: blocked}},
 		Attachments: config.AttachmentConfig{
-			TusSharedSecret: secrets.MustNewSecureString("tus-secret"),
+			TusSharedSecret: secrets.MustNewSecureString(t.Context(), "tus-secret"),
 		},
-		StorageService: config.StorageServiceConfig{SharedSecret: secrets.MustNewSecureString("storage-secret")},
-		CDSI:           config.CDSIConfig{SharedSecret: secrets.MustNewSecureString("cdsi-secret")},
-		SVR2:           config.SVR2Config{SharedSecret: secrets.MustNewSecureString("svr2-secret")},
+		StorageService: config.StorageServiceConfig{SharedSecret: secrets.MustNewSecureString(t.Context(), "storage-secret")},
+		CDSI:           config.CDSIConfig{SharedSecret: secrets.MustNewSecureString(t.Context(), "cdsi-secret")},
+		SVR2:           config.SVR2Config{SharedSecret: secrets.MustNewSecureString(t.Context(), "svr2-secret")},
 	}
 	secretsUnderTest := map[string]*secrets.SecureString{
 		"Attachments.TusSharedSecret": cfg.Attachments.TusSharedSecret,
@@ -70,7 +70,7 @@ func TestRunStart_AbortedStartupWipesSharedSecrets(t *testing.T) {
 	}
 
 	for name, ss := range secretsUnderTest {
-		if !ss.IsDestroyed() {
+		if !ss.IsDestroyed(t.Context()) {
 			t.Errorf("%s survived an aborted startup", name)
 		}
 	}

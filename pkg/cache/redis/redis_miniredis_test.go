@@ -501,7 +501,7 @@ func TestRedis_Close(t *testing.T) {
 
 func TestNew_TimeoutOverrides(t *testing.T) {
 	mr := miniredis.RunT(t)
-	c, err := New(Config{
+	c, err := New(t.Context(), Config{
 		URL:          "redis://" + mr.Addr() + "/0",
 		DialTimeout:  5 * time.Second,
 		ReadTimeout:  3 * time.Second,
@@ -526,7 +526,7 @@ func TestNew_TimeoutOverrides(t *testing.T) {
 func TestNew_DefaultTimeouts_NotOverridden(t *testing.T) {
 	mr := miniredis.RunT(t)
 	// Zero timeout values in Config must not overwrite the go-redis defaults.
-	c, err := New(Config{URL: "redis://" + mr.Addr() + "/0"})
+	c, err := New(t.Context(), Config{URL: "redis://" + mr.Addr() + "/0"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

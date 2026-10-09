@@ -45,7 +45,7 @@ func TestSVRCredentials_UnmarshalJSON_ValidDuplicatePasswordDecodes(t *testing.T
 			if err := json.Unmarshal([]byte(body), &creds); err != nil {
 				t.Fatalf("Unmarshal: %v", err)
 			}
-			if got := creds.Password.Plaintext(); got != want {
+			if got := creds.Password.Plaintext(t.Context()); got != want {
 				t.Errorf("password = %q, want %q", got, want)
 			}
 		})

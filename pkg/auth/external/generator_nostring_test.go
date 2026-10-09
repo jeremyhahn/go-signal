@@ -23,7 +23,7 @@ import (
 // a narrow, deterministic check: the two call shapes that reintroduce the
 // defect, in the one file that must not contain them.
 //
-// Reintroducing `Password.Plaintext()` or `hex.EncodeToString` in
+// Reintroducing `Password.Plaintext(t.Context())` or `hex.EncodeToString` in
 // generator.go makes this fail.
 func TestGenerator_CredentialNeverStagedInAGoString(t *testing.T) {
 	src, err := os.ReadFile("generator.go")
@@ -35,7 +35,7 @@ func TestGenerator_CredentialNeverStagedInAGoString(t *testing.T) {
 	code := regexp.MustCompile(`(?m)^\s*//.*$|/\*(?s:.*?)\*/`).ReplaceAll(src, nil)
 
 	banned := map[string]string{
-		".Plaintext()": "reveals the whole credential into an unwipeable Go string; " +
+		".Plaintext(t.Context())": "reveals the whole credential into an unwipeable Go string; " +
 			"parse and compare inside Password.WithBytes instead",
 		"hex.EncodeToString": "produces the signature as an unwipeable Go string; " +
 			"use hex.Encode into a byte buffer and wipe it",

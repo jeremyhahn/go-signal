@@ -50,7 +50,7 @@ func (s *Server) handleAttachmentUploadForm(w http.ResponseWriter, r *http.Reque
 
 	if s.tusGenerator != nil && s.tusURI != "" {
 		// External TUS server mode (Java parity).
-		creds, err := s.tusGenerator.Generate(attachmentKey)
+		creds, err := s.tusGenerator.Generate(r.Context(), attachmentKey)
 		if err != nil {
 			s.logger.Error("attachment credentials failed", "error", err.Error())
 			writeError(w, http.StatusInternalServerError, "internal server error")
@@ -65,7 +65,7 @@ func (s *Server) handleAttachmentUploadForm(w http.ResponseWriter, r *http.Reque
 		// spelling revealed the password into a Go string and then built two
 		// more — the `user:pass` concatenation and its base64 — none of which
 		// can be wiped, and all of which outlived the request.
-		auth := common.BasicAuthHeaderCredential(creds.Username, creds.Password)
+		auth := common.BasicAuthHeaderCredential(r.Context(), creds.Username, creds.Password)
 		creds.Destroy()
 		if auth == "" {
 			s.logger.Error("attachment credentials unavailable")

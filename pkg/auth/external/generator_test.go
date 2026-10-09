@@ -15,24 +15,24 @@ func fixedClock(now time.Time) func() time.Time {
 }
 
 func TestNewGenerator_RequiresKey(t *testing.T) {
-	if _, err := NewGenerator(GeneratorConfig{}); err == nil {
+	if _, err := NewGenerator(t.Context(), GeneratorConfig{}); err == nil {
 		t.Fatal("expected error when Key missing")
 	}
 }
 
 func TestGenerate_ProducesTokenWithoutPrependedUsername(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	g, _ := NewGenerator(GeneratorConfig{Key: secrets.MustNewSecureString("secret"), Clock: fixedClock(now)})
-	creds, err := g.Generate("attachments/abc")
+	g, _ := NewGenerator(t.Context(), GeneratorConfig{Key: secrets.MustNewSecureString(t.Context(), "secret"), Clock: fixedClock(now)})
+	creds, err := g.Generate(t.Context(), "attachments/abc")
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
 	if creds.Username != "attachments/abc" {
 		t.Errorf("Username = %q", creds.Username)
 	}
-	parts := strings.Split(creds.Password.Plaintext(), ":")
+	parts := strings.Split(creds.Password.Plaintext(t.Context()), ":")
 	if len(parts) != 2 {
-		t.Fatalf("password must be ts:sig; got %q (%d parts)", creds.Password.Plaintext(), len(parts))
+		t.Fatalf("password must be ts:sig; got %q (%d parts)", creds.Password.Plaintext(t.Context()), len(parts))
 	}
 	if parts[0] != "1700000000" {
 		t.Errorf("ts = %q, want 1700000000", parts[0])
@@ -44,13 +44,13 @@ func TestGenerate_ProducesTokenWithoutPrependedUsername(t *testing.T) {
 
 func TestGenerate_PrependedUsername(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	g, _ := NewGenerator(GeneratorConfig{
-		Key: secrets.MustNewSecureString("secret"), Clock: fixedClock(now), PrependUsername: true,
+	g, _ := NewGenerator(t.Context(), GeneratorConfig{
+		Key: secrets.MustNewSecureString(t.Context(), "secret"), Clock: fixedClock(now), PrependUsername: true,
 	})
-	creds, _ := g.Generate("uid")
-	parts := strings.Split(creds.Password.Plaintext(), ":")
+	creds, _ := g.Generate(t.Context(), "uid")
+	parts := strings.Split(creds.Password.Plaintext(t.Context()), ":")
 	if len(parts) != 3 {
-		t.Fatalf("password must be id:ts:sig; got %q", creds.Password.Plaintext())
+		t.Fatalf("password must be id:ts:sig; got %q", creds.Password.Plaintext(t.Context()))
 	}
 	if parts[0] != "uid" {
 		t.Errorf("password[0] = %q, want uid", parts[0])
@@ -58,17 +58,17 @@ func TestGenerate_PrependedUsername(t *testing.T) {
 }
 
 func TestGenerate_RejectsEmptyIdentity(t *testing.T) {
-	g, _ := NewGenerator(GeneratorConfig{Key: secrets.MustNewSecureString("k")})
-	if _, err := g.Generate(""); err == nil {
+	g, _ := NewGenerator(t.Context(), GeneratorConfig{Key: secrets.MustNewSecureString(t.Context(), "k")})
+	if _, err := g.Generate(t.Context(), ""); err == nil {
 		t.Fatal("expected error for empty identity")
 	}
 }
 
 func TestValidate_HappyPath(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	g, _ := NewGenerator(GeneratorConfig{Key: secrets.MustNewSecureString("secret"), Clock: fixedClock(now)})
-	creds, _ := g.Generate("attachments/abc")
-	issued, err := g.Validate(creds, 5*time.Minute)
+	g, _ := NewGenerator(t.Context(), GeneratorConfig{Key: secrets.MustNewSecureString(t.Context(), "secret"), Clock: fixedClock(now)})
+	creds, _ := g.Generate(t.Context(), "attachments/abc")
+	issued, err := g.Validate(t.Context(), creds, 5*time.Minute)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
@@ -79,53 +79,53 @@ func TestValidate_HappyPath(t *testing.T) {
 
 func TestValidate_RejectsExpired(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	g, _ := NewGenerator(GeneratorConfig{Key: secrets.MustNewSecureString("k"), Clock: fixedClock(now)})
-	creds, _ := g.Generate("uid")
+	g, _ := NewGenerator(t.Context(), GeneratorConfig{Key: secrets.MustNewSecureString(t.Context(), "k"), Clock: fixedClock(now)})
+	creds, _ := g.Generate(t.Context(), "uid")
 	// Move the clock forward past the window.
 	g.cfg.Clock = fixedClock(now.Add(10 * time.Minute))
-	if _, err := g.Validate(creds, time.Minute); err == nil {
+	if _, err := g.Validate(t.Context(), creds, time.Minute); err == nil {
 		t.Fatal("expected expiration error")
 	}
 }
 
 func TestValidate_RejectsSignatureTamper(t *testing.T) {
-	g, _ := NewGenerator(GeneratorConfig{Key: secrets.MustNewSecureString("k"), Clock: fixedClock(time.Unix(1, 0))})
-	creds, _ := g.Generate("uid")
-	parts := strings.Split(creds.Password.Plaintext(), ":")
+	g, _ := NewGenerator(t.Context(), GeneratorConfig{Key: secrets.MustNewSecureString(t.Context(), "k"), Clock: fixedClock(time.Unix(1, 0))})
+	creds, _ := g.Generate(t.Context(), "uid")
+	parts := strings.Split(creds.Password.Plaintext(t.Context()), ":")
 	// Flip the last hex char of the signature.
 	flipped := parts[0] + ":" + flipLastChar(parts[1])
-	bad := &Credentials{Username: creds.Username, Password: secrets.MustNewSecureString(flipped)}
-	if _, err := g.Validate(bad, 0); err == nil {
+	bad := &Credentials{Username: creds.Username, Password: secrets.MustNewSecureString(t.Context(), flipped)}
+	if _, err := g.Validate(t.Context(), bad, 0); err == nil {
 		t.Fatal("expected signature mismatch")
 	}
 }
 
 func TestValidate_RejectsMalformedPassword(t *testing.T) {
-	g, _ := NewGenerator(GeneratorConfig{Key: secrets.MustNewSecureString("k")})
-	bad := &Credentials{Username: "u", Password: secrets.MustNewSecureString("no-colon")}
-	if _, err := g.Validate(bad, 0); err == nil {
+	g, _ := NewGenerator(t.Context(), GeneratorConfig{Key: secrets.MustNewSecureString(t.Context(), "k")})
+	bad := &Credentials{Username: "u", Password: secrets.MustNewSecureString(t.Context(), "no-colon")}
+	if _, err := g.Validate(t.Context(), bad, 0); err == nil {
 		t.Fatal("expected malformed error")
 	}
 }
 
 func TestValidate_RejectsNilCredentials(t *testing.T) {
-	g, _ := NewGenerator(GeneratorConfig{Key: secrets.MustNewSecureString("k")})
-	if _, err := g.Validate(nil, 0); err == nil {
+	g, _ := NewGenerator(t.Context(), GeneratorConfig{Key: secrets.MustNewSecureString(t.Context(), "k")})
+	if _, err := g.Validate(t.Context(), nil, 0); err == nil {
 		t.Fatal("expected nil-creds error")
 	}
 }
 
 func TestValidate_PrependedUsername(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	g, _ := NewGenerator(GeneratorConfig{Key: secrets.MustNewSecureString("k"), Clock: fixedClock(now), PrependUsername: true})
-	creds, _ := g.Generate("uid")
-	if _, err := g.Validate(creds, time.Minute); err != nil {
+	g, _ := NewGenerator(t.Context(), GeneratorConfig{Key: secrets.MustNewSecureString(t.Context(), "k"), Clock: fixedClock(now), PrependUsername: true})
+	creds, _ := g.Generate(t.Context(), "uid")
+	if _, err := g.Validate(t.Context(), creds, time.Minute); err != nil {
 		t.Fatalf("Validate prepended: %v", err)
 	}
 	// Wrong username in the password must fail.
-	parts := strings.Split(creds.Password.Plaintext(), ":")
-	tampered := &Credentials{Username: creds.Username, Password: secrets.MustNewSecureString("other:" + parts[1] + ":" + parts[2])}
-	if _, err := g.Validate(tampered, time.Minute); err == nil {
+	parts := strings.Split(creds.Password.Plaintext(t.Context()), ":")
+	tampered := &Credentials{Username: creds.Username, Password: secrets.MustNewSecureString(t.Context(), "other:"+parts[1]+":"+parts[2])}
+	if _, err := g.Validate(t.Context(), tampered, time.Minute); err == nil {
 		t.Fatal("expected mismatch error for tampered identity")
 	}
 }
@@ -143,16 +143,16 @@ func flipLastChar(s string) string {
 }
 
 func TestNewGenerator_DefaultsClockToNow(t *testing.T) {
-	g, err := NewGenerator(GeneratorConfig{Key: secrets.MustNewSecureString("k")})
+	g, err := NewGenerator(t.Context(), GeneratorConfig{Key: secrets.MustNewSecureString(t.Context(), "k")})
 	if err != nil {
 		t.Fatalf("NewGenerator: %v", err)
 	}
-	creds, err := g.Generate("uid")
+	creds, err := g.Generate(t.Context(), "uid")
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
 	// Validate against the same generator within a permissive window.
-	if _, err := g.Validate(creds, time.Minute); err != nil {
+	if _, err := g.Validate(t.Context(), creds, time.Minute); err != nil {
 		t.Errorf("default clock round-trip failed: %v", err)
 	}
 }
@@ -161,23 +161,23 @@ func TestNewGenerator_DefaultsClockToNow(t *testing.T) {
 // written to a response cannot be recovered from the issuing struct, and it
 // must tolerate repeated and nil calls (handlers defer it).
 func TestCredentials_Destroy_WipesPassword(t *testing.T) {
-	g, _ := NewGenerator(GeneratorConfig{Key: secrets.MustNewSecureString("secret")})
-	creds, err := g.Generate("id")
+	g, _ := NewGenerator(t.Context(), GeneratorConfig{Key: secrets.MustNewSecureString(t.Context(), "secret")})
+	creds, err := g.Generate(t.Context(), "id")
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	if creds.Password.Plaintext() == "" {
+	if creds.Password.Plaintext(t.Context()) == "" {
 		t.Fatal("expected a non-empty password before Destroy")
 	}
 	creds.Destroy()
-	if got := creds.Password.Plaintext(); got != "" {
+	if got := creds.Password.Plaintext(t.Context()); got != "" {
 		t.Errorf("password survived Destroy: %q", got)
 	}
 }
 
 func TestCredentials_Destroy_IdempotentAndNilSafe(t *testing.T) {
-	g, _ := NewGenerator(GeneratorConfig{Key: secrets.MustNewSecureString("secret")})
-	creds, _ := g.Generate("id")
+	g, _ := NewGenerator(t.Context(), GeneratorConfig{Key: secrets.MustNewSecureString(t.Context(), "secret")})
+	creds, _ := g.Generate(t.Context(), "id")
 	creds.Destroy()
 	creds.Destroy()
 	(*Credentials)(nil).Destroy()
@@ -186,10 +186,10 @@ func TestCredentials_Destroy_IdempotentAndNilSafe(t *testing.T) {
 // A destroyed credential must fail validation rather than passing with an
 // empty password.
 func TestValidate_RejectsDestroyedCredentials(t *testing.T) {
-	g, _ := NewGenerator(GeneratorConfig{Key: secrets.MustNewSecureString("secret")})
-	creds, _ := g.Generate("id")
+	g, _ := NewGenerator(t.Context(), GeneratorConfig{Key: secrets.MustNewSecureString(t.Context(), "secret")})
+	creds, _ := g.Generate(t.Context(), "id")
 	creds.Destroy()
-	if _, err := g.Validate(creds, time.Hour); err == nil {
+	if _, err := g.Validate(t.Context(), creds, time.Hour); err == nil {
 		t.Error("expected error validating a destroyed credential")
 	}
 }

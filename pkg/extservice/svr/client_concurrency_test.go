@@ -33,7 +33,7 @@ func TestClose_ConcurrentWithRequests(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := NewHTTP(HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString("shared-secret")})
+	c, err := NewHTTP(t.Context(), HTTPConfig{BaseURL: srv.URL, SharedSecret: secrets.MustNewSecureString(t.Context(), "shared-secret")})
 	if err != nil {
 		t.Fatalf("NewHTTP: %v", err)
 	}

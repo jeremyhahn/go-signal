@@ -31,7 +31,7 @@ var updateProfileCmd = &cobra.Command{
 	Use:   "updateProfile",
 	Short: "Update your Signal profile",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -51,7 +51,7 @@ var getUserStatusCmd = &cobra.Command{
 	Short: "Check if users are registered on Signal",
 	Args:  cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}

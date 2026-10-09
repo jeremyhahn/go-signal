@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -24,11 +25,11 @@ type stubSDKStore struct {
 	msgsErr  error
 }
 
-func (s *stubSDKStore) GetCredentials() (*signal.Credentials, error) {
+func (s *stubSDKStore) GetCredentials(context.Context) (*signal.Credentials, error) {
 	return s.creds, s.credsErr
 }
 
-func (s *stubSDKStore) SaveCredentials(_ *signal.Credentials) error { return nil }
+func (s *stubSDKStore) SaveCredentials(_ context.Context, _ *signal.Credentials) error { return nil }
 
 func (s *stubSDKStore) GetContacts() ([]signal.Contact, error) {
 	return s.contacts, s.contErr
@@ -55,7 +56,7 @@ func (s *stubSDKStore) SaveMessage(_ *signal.Message) error { return nil }
 // at a dummy server URL. No real HTTP connections are made by these tests.
 func newWebUIClient(t *testing.T, store signal.Store) *signal.Client {
 	t.Helper()
-	client, err := signal.NewClient(signal.ClientConfig{
+	client, err := signal.NewClient(t.Context(), signal.ClientConfig{
 		ServerURL: "http://127.0.0.1:0",
 		DataDir:   t.TempDir(),
 		UserAgent: "test-agent",
@@ -73,7 +74,7 @@ func newWebUIClient(t *testing.T, store signal.Store) *signal.Client {
 // that call client.WhoAmI, client.Register, etc.
 func newWebUIClientWithServer(t *testing.T, srv *httptest.Server, store signal.Store) *signal.Client {
 	t.Helper()
-	client, err := signal.NewClient(signal.ClientConfig{
+	client, err := signal.NewClient(t.Context(), signal.ClientConfig{
 		ServerURL: srv.URL,
 		DataDir:   t.TempDir(),
 		UserAgent: "test-agent",

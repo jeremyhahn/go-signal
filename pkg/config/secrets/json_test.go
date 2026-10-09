@@ -178,10 +178,10 @@ func TestAppendUnquotedJSONString_RejectsMalformed(t *testing.T) {
 
 // The secret serialises itself without the plaintext becoming a Go string.
 func TestSecureString_AppendJSONString(t *testing.T) {
-	s := MustNewSecureString(`p@ss"w<o>rd`)
+	s := MustNewSecureString(t.Context(), `p@ss"w<o>rd`)
 	defer s.Destroy()
 
-	got, err := s.AppendJSONString([]byte(`{"password":`))
+	got, err := s.AppendJSONString(t.Context(), []byte(`{"password":`))
 	if err != nil {
 		t.Fatalf("AppendJSONString: %v", err)
 	}
@@ -194,9 +194,9 @@ func TestSecureString_AppendJSONString(t *testing.T) {
 // An unreadable secret must fail the caller rather than emit an empty
 // credential a client would treat as valid — and must append nothing.
 func TestSecureString_AppendJSONString_UnreadableFailsClosed(t *testing.T) {
-	destroyed := MustNewSecureString("x")
+	destroyed := MustNewSecureString(t.Context(), "x")
 	destroyed.Destroy()
-	absent, err := NewOptionalSecureString("")
+	absent, err := NewOptionalSecureString(t.Context(), "")
 	if err != nil {
 		t.Fatalf("NewOptionalSecureString: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestSecureString_AppendJSONString_UnreadableFailsClosed(t *testing.T) {
 	for name, s := range map[string]*SecureString{"nil": nilSecret, "destroyed": destroyed, "absent": absent} {
 		t.Run(name, func(t *testing.T) {
 			prefix := []byte(`{"password":`)
-			got, err := s.AppendJSONString(prefix)
+			got, err := s.AppendJSONString(t.Context(), prefix)
 			if err == nil {
 				t.Fatal("expected an error for an unreadable secret")
 			}

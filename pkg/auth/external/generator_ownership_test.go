@@ -27,7 +27,7 @@ const ownershipRaceRounds = 4000
 // Reverting NewGenerator to check-then-clone makes this fail.
 func TestNewGenerator_DestroyDuringOwnershipTransfer(t *testing.T) {
 	for round := range ownershipRaceRounds {
-		key := secrets.MustNewSecureString("shared-secret")
+		key := secrets.MustNewSecureString(t.Context(), "shared-secret")
 
 		var wg sync.WaitGroup
 		wg.Add(1)
@@ -39,9 +39,9 @@ func TestNewGenerator_DestroyDuringOwnershipTransfer(t *testing.T) {
 		}()
 
 		close(release)
-		g, err := NewGenerator(GeneratorConfig{Key: key})
+		g, err := NewGenerator(t.Context(), GeneratorConfig{Key: key})
 		if err == nil {
-			issued, genErr := g.Generate("acct")
+			issued, genErr := g.Generate(t.Context(), "acct")
 			if genErr != nil {
 				t.Fatalf("round %d: NewGenerator reported success but Generate failed: %v", round, genErr)
 			}
@@ -58,8 +58,8 @@ func TestNewGenerator_DestroyDuringOwnershipTransfer(t *testing.T) {
 // contract the race above depends on: the Generator holds its own enclave, so
 // the caller destroying its copy afterwards leaves the Generator signing.
 func TestNewGenerator_ClonesRatherThanValidatesCallerKey(t *testing.T) {
-	key := secrets.MustNewSecureString("shared-secret")
-	g, err := NewGenerator(GeneratorConfig{Key: key})
+	key := secrets.MustNewSecureString(t.Context(), "shared-secret")
+	g, err := NewGenerator(t.Context(), GeneratorConfig{Key: key})
 	if err != nil {
 		t.Fatalf("NewGenerator: %v", err)
 	}
@@ -67,12 +67,12 @@ func TestNewGenerator_ClonesRatherThanValidatesCallerKey(t *testing.T) {
 
 	key.Destroy()
 
-	creds, err := g.Generate("acct")
+	creds, err := g.Generate(t.Context(), "acct")
 	if err != nil {
 		t.Fatalf("Generate after the caller destroyed its own key: %v", err)
 	}
 	defer creds.Destroy()
-	if creds.Password.IsDestroyed() {
+	if creds.Password.IsDestroyed(t.Context()) {
 		t.Fatal("Generate returned an unset password")
 	}
 }
@@ -81,10 +81,10 @@ func TestNewGenerator_ClonesRatherThanValidatesCallerKey(t *testing.T) {
 // already gone when the constructor is called yields an error and no
 // Generator, rather than one that fails at first use.
 func TestNewGenerator_DestroyedKeyIsRejected(t *testing.T) {
-	key := secrets.MustNewSecureString("shared-secret")
+	key := secrets.MustNewSecureString(t.Context(), "shared-secret")
 	key.Destroy()
 
-	g, err := NewGenerator(GeneratorConfig{Key: key})
+	g, err := NewGenerator(t.Context(), GeneratorConfig{Key: key})
 	if err == nil {
 		t.Fatal("NewGenerator accepted a destroyed key")
 	}

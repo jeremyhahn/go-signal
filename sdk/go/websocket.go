@@ -26,7 +26,7 @@ import (
 // persistent connection must wait on it: without it there is no way to notice
 // a dropped socket, so a reconnecting client silently stops receiving.
 func (c *Client) ConnectWebSocketSession(ctx context.Context, handler func(msg ReceivedMessage)) (<-chan struct{}, error) {
-	creds, err := c.store.GetCredentials()
+	creds, err := c.store.GetCredentials(ctx)
 	if err != nil || creds == nil {
 		return nil, signalerrors.New(signalerrors.ErrUnauthenticated, "no credentials for WebSocket connection")
 	}
@@ -44,8 +44,8 @@ func (c *Client) ConnectWebSocketSession(ctx context.Context, handler func(msg R
 
 	// Build TLS config with custom CA if needed.
 	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
-	if c.config.CACert != nil && !c.config.CACert.IsDestroyed() {
-		caBytes := c.config.CACert.Bytes()
+	if c.config.CACert != nil && !c.config.CACert.IsDestroyed(ctx) {
+		caBytes := c.config.CACert.Bytes(ctx)
 		if caBytes != nil {
 			pool := x509.NewCertPool()
 			pool.AppendCertsFromPEM(caBytes)
@@ -64,7 +64,7 @@ func (c *Client) ConnectWebSocketSession(ctx context.Context, handler func(msg R
 	username := fmt.Sprintf("%s.%d", creds.UUID, creds.DeviceID)
 	pw := ""
 	if creds.Password != nil {
-		pw = creds.Password.Plaintext()
+		pw = creds.Password.Plaintext(ctx)
 	}
 	opts := &websocket.DialOptions{
 		HTTPClient: httpClient,

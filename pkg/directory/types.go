@@ -1,6 +1,7 @@
 package directory
 
 import (
+	"context"
 	"encoding/json"
 
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
@@ -10,11 +11,11 @@ import (
 // discovery service.
 //
 // Password is the CDS bearer credential and is held in protected memory
-// between issuance and serialization. The client is the intended bearer, so
-// MarshalJSON deliberately opens the secret and emits the plaintext — the
-// protection here is memory residency, not egress. That is why this type
-// carries an explicit marshaller instead of relying on SecureString's
-// default, which redacts.
+// between issuance and the response that hands it to its bearer. The type has
+// no JSON form of its own: opening the secret takes a context, which a
+// marshaller has no way to receive, so the REST layer reveals it under the
+// request's context and writes the wire shape itself. Marshalled directly,
+// Password falls back to SecureString's redacting marshaller.
 type DirectoryCredentials struct {
 	Username string
 	Password *secrets.SecureString
@@ -34,7 +35,7 @@ var _ secrets.JSONAppender = DirectoryCredentials{}
 // This, not MarshalJSON, is the production path: writeJSON prefers it so the
 // plaintext lands in exactly one buffer with exactly one owner. See the
 // JSONAppender doc for why a json.Marshaler cannot be made safe here.
-func (c DirectoryCredentials) AppendJSON(dst []byte) ([]byte, error) {
+func (c DirectoryCredentials) AppendJSON(ctx context.Context, dst []byte) ([]byte, error) {
 	// The password is written straight from protected memory into the output
 	// buffer and never becomes a Go string. The previous spelling —
 	// Reveal() into a string, then json.Marshal a struct — put the plaintext
@@ -63,7 +64,7 @@ func (c DirectoryCredentials) AppendJSON(dst []byte) ([]byte, error) {
 	// dst is returned even on failure rather than wiped here: it belongs to
 	// the caller, may already hold unrelated bytes, and a partial body still
 	// needs wiping — which the caller does on every path.
-	dst, err = c.Password.AppendJSONString(dst)
+	dst, err = c.Password.AppendJSONString(ctx, dst)
 	if err != nil {
 		return dst, err
 	}
@@ -88,7 +89,7 @@ func (c DirectoryCredentials) AppendJSON(dst []byte) ([]byte, error) {
 // instead of failing loudly. Wire correctness with one unwiped buffer beats a
 // silent protocol break.
 func (c DirectoryCredentials) MarshalJSON() ([]byte, error) {
-	return c.AppendJSON(nil)
+	return c.AppendJSON(context.Background(), nil)
 }
 
 // UnmarshalJSON implements encoding/json.Unmarshaler so a credential that
@@ -116,7 +117,7 @@ func (c *DirectoryCredentials) UnmarshalJSON(data []byte) error {
 	// Seal before touching the receiver: decoding into a value that already
 	// holds a password must not abandon that protected allocation, and must
 	// not clear it if sealing fails.
-	sealed, err := secrets.NewSecureStringFromBytes(raw.Password.Bytes())
+	sealed, err := secrets.NewSecureStringFromBytes(context.Background(), raw.Password.Bytes())
 	if err != nil {
 		return err
 	}

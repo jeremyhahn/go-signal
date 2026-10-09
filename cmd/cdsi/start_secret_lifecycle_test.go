@@ -25,7 +25,7 @@ func TestRunStart_AbortedStartupWipesSharedSecret(t *testing.T) {
 
 	cfg = &config.Config{
 		CDSI: config.CDSIConfig{
-			SharedSecret: secrets.MustNewSecureString("cdsi-secret"),
+			SharedSecret: secrets.MustNewSecureString(t.Context(), "cdsi-secret"),
 			// SignaldDirectoryAddr deliberately empty: runStart aborts here.
 		},
 	}
@@ -37,7 +37,7 @@ func TestRunStart_AbortedStartupWipesSharedSecret(t *testing.T) {
 	if err := runStart(cmd, nil); err == nil {
 		t.Fatal("expected runStart to abort on the missing directory address")
 	}
-	if !secret.IsDestroyed() {
+	if !secret.IsDestroyed(t.Context()) {
 		t.Error("CDSI.SharedSecret survived an aborted startup")
 	}
 }
@@ -50,7 +50,7 @@ func TestRunStart_MissingSecretStillWipesTheConfig(t *testing.T) {
 	t.Cleanup(func() { cfg = saved })
 
 	cfg = &config.Config{
-		SVR2: config.SVR2Config{SharedSecret: secrets.MustNewSecureString("svr2-secret")},
+		SVR2: config.SVR2Config{SharedSecret: secrets.MustNewSecureString(t.Context(), "svr2-secret")},
 	}
 	other := cfg.SVR2.SharedSecret
 
@@ -60,7 +60,7 @@ func TestRunStart_MissingSecretStillWipesTheConfig(t *testing.T) {
 	if err := runStart(cmd, nil); err == nil {
 		t.Fatal("expected runStart to abort on the missing shared secret")
 	}
-	if !other.IsDestroyed() {
+	if !other.IsDestroyed(t.Context()) {
 		t.Error("SVR2.SharedSecret survived an aborted startup")
 	}
 }

@@ -59,8 +59,8 @@ type HCaptchaConfig struct {
 
 // NewHCaptchaVerifier returns a configured HCaptchaVerifier. It returns
 // HCaptchaConfigError if SecretKey is empty.
-func NewHCaptchaVerifier(cfg HCaptchaConfig) (*HCaptchaVerifier, error) {
-	if cfg.SecretKey == nil || cfg.SecretKey.IsDestroyed() {
+func NewHCaptchaVerifier(ctx context.Context, cfg HCaptchaConfig) (*HCaptchaVerifier, error) {
+	if cfg.SecretKey == nil || cfg.SecretKey.IsDestroyed(ctx) {
 		return nil, &HCaptchaConfigError{Message: "secretKey is required"}
 	}
 
@@ -115,7 +115,7 @@ func normalizeSiteKeys(in map[Action][]string) map[Action][]string {
 // a failed CAPTCHA challenge is reported through VerifyResult.Success == false.
 func (v *HCaptchaVerifier) Verify(ctx context.Context, token string, remoteIP string, _ string) (*VerifyResult, error) {
 	form := url.Values{}
-	form.Set("secret", v.secretKey.Plaintext())
+	form.Set("secret", v.secretKey.Plaintext(ctx))
 	form.Set("response", token)
 	if remoteIP != "" {
 		form.Set("remoteip", remoteIP)

@@ -34,7 +34,7 @@ type cryptoState struct {
 // When CryptoStores is set in the config, the provided stores are used
 // directly (e.g., DAO-backed stores for the desktop client). Otherwise,
 // file-based stores are created in DataDir.
-func (c *Client) initCrypto() error {
+func (c *Client) initCrypto(ctx context.Context) error {
 	if c.crypto != nil {
 		return nil
 	}
@@ -80,7 +80,7 @@ func (c *Client) initCrypto() error {
 	var identityKeyPair *identity.KeyPair
 	var regID uint32 = 1
 
-	creds, _ := c.store.GetCredentials()
+	creds, _ := c.store.GetCredentials(ctx)
 	if creds != nil {
 		regID = creds.DeviceID
 	}
@@ -110,7 +110,7 @@ func (c *Client) initCrypto() error {
 // ensureSession fetches a pre-key bundle from the server and establishes
 // an encrypted session if one doesn't already exist.
 func (c *Client) ensureSession(ctx context.Context, recipientUUID string, deviceID uint32) error {
-	if err := c.initCrypto(); err != nil {
+	if err := c.initCrypto(ctx); err != nil {
 		return err
 	}
 
@@ -226,8 +226,8 @@ func (c *Client) ensureSession(ctx context.Context, recipientUUID string, device
 // from the persisted credentials. session.NewCipher needs both the local and
 // the remote address since libsignal v4 — the local address is used to
 // stamp identity-key material into the session record.
-func (c *Client) localAddress() (*protocol.SignalAddress, error) {
-	creds, err := c.store.GetCredentials()
+func (c *Client) localAddress(ctx context.Context) (*protocol.SignalAddress, error) {
+	creds, err := c.store.GetCredentials(ctx)
 	if err != nil {
 		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "read credentials", err)
 	}
@@ -239,12 +239,12 @@ func (c *Client) localAddress() (*protocol.SignalAddress, error) {
 
 // encryptMessage encrypts plaintext for the given recipient using
 // the established Signal Protocol session.
-func (c *Client) encryptMessage(recipientUUID string, deviceID uint32, plaintext []byte) (protocol.CiphertextMessage, error) {
-	if err := c.initCrypto(); err != nil {
+func (c *Client) encryptMessage(ctx context.Context, recipientUUID string, deviceID uint32, plaintext []byte) (protocol.CiphertextMessage, error) {
+	if err := c.initCrypto(ctx); err != nil {
 		return nil, err
 	}
 
-	localAddr, err := c.localAddress()
+	localAddr, err := c.localAddress(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -269,12 +269,12 @@ func (c *Client) encryptMessage(recipientUUID string, deviceID uint32, plaintext
 }
 
 // decryptMessage decrypts an incoming Signal Protocol message.
-func (c *Client) decryptMessage(senderUUID string, deviceID uint32, msgType int, content []byte) ([]byte, error) {
-	if err := c.initCrypto(); err != nil {
+func (c *Client) decryptMessage(ctx context.Context, senderUUID string, deviceID uint32, msgType int, content []byte) ([]byte, error) {
+	if err := c.initCrypto(ctx); err != nil {
 		return nil, err
 	}
 
-	localAddr, err := c.localAddress()
+	localAddr, err := c.localAddress(ctx)
 	if err != nil {
 		return nil, err
 	}

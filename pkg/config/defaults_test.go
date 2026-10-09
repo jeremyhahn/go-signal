@@ -70,7 +70,7 @@ func TestAddressDefaults_DocumentedValues(t *testing.T) {
 // TestLoad_AppliesAddressDefaults verifies a file that sets no address
 // resolves every listener to its defaults-layer value.
 func TestLoad_AppliesAddressDefaults(t *testing.T) {
-	cfg, err := Load(writeYAML(t, validYAML()))
+	cfg, err := Load(t.Context(), writeYAML(t, validYAML()))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestLoad_FileOverridesAddressDefaults(t *testing.T) {
 	for _, d := range addressDefaults {
 		t.Run(string(d.key), func(t *testing.T) {
 			const override = "127.0.0.1:19999"
-			cfg, err := Load(writeYAML(t, yamlFor(t, string(d.key), override)))
+			cfg, err := Load(t.Context(), writeYAML(t, yamlFor(t, string(d.key), override)))
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
@@ -116,7 +116,7 @@ func TestLoad_RejectsEmptyAddress(t *testing.T) {
 			continue
 		}
 		t.Run(string(d.key), func(t *testing.T) {
-			cfg, err := Load(writeYAML(t, yamlFor(t, string(d.key), "")))
+			cfg, err := Load(t.Context(), writeYAML(t, yamlFor(t, string(d.key), "")))
 			if cfg != nil {
 				t.Fatal("Load returned a Config alongside an error")
 			}
@@ -165,7 +165,7 @@ func TestLoad_OptionalAddressMayBeEmpty(t *testing.T) {
 			continue
 		}
 		t.Run(string(d.key), func(t *testing.T) {
-			cfg, err := Load(writeYAML(t, yamlFor(t, string(d.key), "")))
+			cfg, err := Load(t.Context(), writeYAML(t, yamlFor(t, string(d.key), "")))
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
@@ -180,7 +180,7 @@ func TestLoad_OptionalAddressMayBeEmpty(t *testing.T) {
 // host and port keys resolve to the listen addresses, and that any
 // explicit listen address, from any layer, wins over them.
 func TestLoad_LegacyServerKeysFoldIntoListenAddresses(t *testing.T) {
-	cfg, err := Load(writeYAML(t, validYAML()))
+	cfg, err := Load(t.Context(), writeYAML(t, validYAML()))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestLoad_LegacyServerKeysFoldIntoListenAddresses(t *testing.T) {
 	}
 
 	t.Setenv(EnvName(KeyServerHTTPListen), "127.0.0.1:10010")
-	cfg, err = Load(writeYAML(t, validYAML()))
+	cfg, err = Load(t.Context(), writeYAML(t, validYAML()))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestLoad_LegacyServerKeysFoldIntoListenAddresses(t *testing.T) {
 // rule, and that none at all is rejected.
 func TestLoad_OnlyGRPCListenSatisfiesServerValidation(t *testing.T) {
 	body := "server:\n  grpcListen: \"127.0.0.1:10011\"\nstorage:\n  backend: memory\n"
-	cfg, err := Load(writeYAML(t, body))
+	cfg, err := Load(t.Context(), writeYAML(t, body))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestLoad_OnlyGRPCListenSatisfiesServerValidation(t *testing.T) {
 		t.Errorf("httpListen = %q, want empty", cfg.Server.HTTPListen)
 	}
 	var vErr *ConfigValidationError
-	if _, err := Load(writeYAML(t, "storage:\n  backend: memory\n")); !errors.As(err, &vErr) || vErr.Field != "server" {
+	if _, err := Load(t.Context(), writeYAML(t, "storage:\n  backend: memory\n")); !errors.As(err, &vErr) || vErr.Field != "server" {
 		t.Fatalf("err = %v, want *ConfigValidationError for server", err)
 	}
 }
@@ -221,7 +221,7 @@ func TestLoad_OnlyGRPCListenSatisfiesServerValidation(t *testing.T) {
 func TestLoad_RejectsMalformedServerListen(t *testing.T) {
 	for _, key := range []AddressKey{KeyServerHTTPListen, KeyServerGRPCListen} {
 		t.Run(string(key), func(t *testing.T) {
-			_, err := Load(writeYAML(t, yamlFor(t, string(key), "not-an-address")))
+			_, err := Load(t.Context(), writeYAML(t, yamlFor(t, string(key), "not-an-address")))
 			var vErr *ConfigValidationError
 			if !errors.As(err, &vErr) || vErr.Field != string(key) {
 				t.Fatalf("err = %v, want *ConfigValidationError for %s", err, key)

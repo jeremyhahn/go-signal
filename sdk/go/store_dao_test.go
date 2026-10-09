@@ -115,11 +115,11 @@ func TestDAOStore_CredentialsRoundTrip(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	// No credentials initially -- returns error (not found).
-	creds, _ := store.GetCredentials()
+	creds, _ := store.GetCredentials(t.Context())
 	assert.Nil(t, creds)
 
 	// Save credentials.
-	err = store.SaveCredentials(&Credentials{
+	err = store.SaveCredentials(t.Context(), &Credentials{
 		Number:   "+15555550100",
 		UUID:     "test-uuid",
 		DeviceID: 1,
@@ -128,13 +128,13 @@ func TestDAOStore_CredentialsRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	// Load credentials.
-	creds, err = store.GetCredentials()
+	creds, err = store.GetCredentials(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, creds)
 	assert.Equal(t, "+15555550100", creds.Number)
 	assert.Equal(t, "test-uuid", creds.UUID)
 	assert.Equal(t, uint32(1), creds.DeviceID)
-	assert.Equal(t, "test-password", creds.Password.Plaintext())
+	assert.Equal(t, "test-password", creds.Password.Plaintext(t.Context()))
 }
 
 func TestDAOStore_SaveCredentials_UpdateExisting(t *testing.T) {
@@ -144,7 +144,7 @@ func TestDAOStore_SaveCredentials_UpdateExisting(t *testing.T) {
 	defer func() { _ = store.Close() }()
 
 	// First save — creates the settings entity.
-	require.NoError(t, store.SaveCredentials(&Credentials{
+	require.NoError(t, store.SaveCredentials(t.Context(), &Credentials{
 		Number:   "+15555550100",
 		UUID:     "first-uuid",
 		DeviceID: 1,
@@ -152,14 +152,14 @@ func TestDAOStore_SaveCredentials_UpdateExisting(t *testing.T) {
 	}))
 
 	// Second save — updates the existing entity (covers the "existing != nil" branch).
-	require.NoError(t, store.SaveCredentials(&Credentials{
+	require.NoError(t, store.SaveCredentials(t.Context(), &Credentials{
 		Number:   "+15555550200",
 		UUID:     "second-uuid",
 		DeviceID: 2,
 		Password: mustSecurePassword("pw2"),
 	}))
 
-	got, err := store.GetCredentials()
+	got, err := store.GetCredentials(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, "second-uuid", got.UUID)
@@ -323,7 +323,7 @@ func TestDAOStore_DeleteStickerPack_Idempotent(t *testing.T) {
 
 func TestUnmarshalCredentials_InvalidJSON(t *testing.T) {
 	var creds Credentials
-	if err := unmarshalCredentials("not-json", &creds); err == nil {
+	if err := unmarshalCredentials(t.Context(), "not-json", &creds); err == nil {
 		t.Fatal("expected an error for malformed credential JSON")
 	}
 }
@@ -335,13 +335,13 @@ func TestUnmarshalCredentials_DestroysReplacedPassword(t *testing.T) {
 	first := creds.Password
 
 	value := `{"number":"+15551234567","uuid":"u","pni":"p","password":"new-password","deviceId":2}`
-	if err := unmarshalCredentials(value, creds); err != nil {
+	if err := unmarshalCredentials(t.Context(), value, creds); err != nil {
 		t.Fatalf("unmarshalCredentials: %v", err)
 	}
-	if got := creds.Password.Plaintext(); got != "new-password" {
+	if got := creds.Password.Plaintext(t.Context()); got != "new-password" {
 		t.Errorf("password = %q, want %q", got, "new-password")
 	}
-	if !first.IsDestroyed() {
+	if !first.IsDestroyed(t.Context()) {
 		t.Error("the replaced password must be wiped, not abandoned")
 	}
 	if creds.DeviceID != 2 {
@@ -353,7 +353,7 @@ func TestUnmarshalCredentials_DestroysReplacedPassword(t *testing.T) {
 func TestUnmarshalCredentials_NoPassword(t *testing.T) {
 	var creds Credentials
 	value := `{"number":"+15551234567","uuid":"u","pni":"p","password":"","deviceId":1}`
-	if err := unmarshalCredentials(value, &creds); err != nil {
+	if err := unmarshalCredentials(t.Context(), value, &creds); err != nil {
 		t.Fatalf("unmarshalCredentials: %v", err)
 	}
 	if creds.Password != nil {

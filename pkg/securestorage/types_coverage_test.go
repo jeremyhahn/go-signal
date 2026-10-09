@@ -19,12 +19,12 @@ func TestStorageCredentials_DestroyIsNilSafeAndIdempotent(t *testing.T) {
 
 	creds := &StorageCredentials{
 		Username: "u",
-		Password: secrets.MustNewSecureString("p"),
+		Password: secrets.MustNewSecureString(t.Context(), "p"),
 	}
 	creds.Destroy()
 	creds.Destroy() // second call must be a no-op, not a panic
 
-	if !creds.Password.IsDestroyed() {
+	if !creds.Password.IsDestroyed(t.Context()) {
 		t.Error("password survived Destroy")
 	}
 }
@@ -35,7 +35,7 @@ func TestStorageCredentials_DestroyIsNilSafeAndIdempotent(t *testing.T) {
 func TestStorageCredentials_UnmarshalRejectsMalformedJSON(t *testing.T) {
 	creds := StorageCredentials{
 		Username: "original",
-		Password: secrets.MustNewSecureString("original-password"),
+		Password: secrets.MustNewSecureString(t.Context(), "original-password"),
 	}
 	defer creds.Destroy()
 
@@ -44,7 +44,7 @@ func TestStorageCredentials_UnmarshalRejectsMalformedJSON(t *testing.T) {
 	}
 	// The receiver keeps what it had: a failed decode must not wipe a live
 	// credential on its way out.
-	if got := creds.Password.Plaintext(); got != "original-password" {
+	if got := creds.Password.Plaintext(t.Context()); got != "original-password" {
 		t.Errorf("a failed decode disturbed the receiver: password = %q", got)
 	}
 	if creds.Username != "original" {
@@ -59,13 +59,13 @@ func TestStorageCredentials_UnmarshalRejectsMalformedJSON(t *testing.T) {
 func TestGetAuth_HMACPathSealFailureFailsClosed(t *testing.T) {
 	m := NewSecureStorageManager(slog.Default())
 	defer m.Destroy()
-	if err := m.SetSharedSecret(secrets.MustNewSecureString("shared-secret")); err != nil {
+	if err := m.SetSharedSecret(t.Context(), secrets.MustNewSecureString(t.Context(), "shared-secret")); err != nil {
 		t.Fatalf("SetSharedSecret: %v", err)
 	}
 
 	injected := errors.New("no protected memory available")
 	original := newSecureStringBytes
-	newSecureStringBytes = func([]byte) (*secrets.SecureString, error) { return nil, injected }
+	newSecureStringBytes = func(context.Context, []byte) (*secrets.SecureString, error) { return nil, injected }
 	t.Cleanup(func() { newSecureStringBytes = original })
 
 	creds, err := m.GetAuth(context.Background(), "acct")
@@ -93,7 +93,7 @@ func TestGetAuth_StubPathSealFailureFailsClosed(t *testing.T) {
 	// The stub path seals from bytes now (uuid.New().MarshalText), so this is
 	// the seam it actually goes through.
 	original := newSecureStringBytes
-	newSecureStringBytes = func([]byte) (*secrets.SecureString, error) { return nil, injected }
+	newSecureStringBytes = func(context.Context, []byte) (*secrets.SecureString, error) { return nil, injected }
 	t.Cleanup(func() { newSecureStringBytes = original })
 
 	creds, err := m.GetAuth(context.Background(), "acct")

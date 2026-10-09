@@ -24,7 +24,7 @@ var startChangeNumberCmd = &cobra.Command{
 	Short: "Start changing your phone number",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -54,7 +54,7 @@ var finishChangeNumberCmd = &cobra.Command{
 			return &UsageError{Message: "--verification-code is required"}
 		}
 
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}

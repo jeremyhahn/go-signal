@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -52,7 +53,7 @@ server:
   httpPort: "not-a-number"
 `)
 
-	cfg, err := Load(path)
+	cfg, err := Load(t.Context(), path)
 	if err == nil {
 		t.Fatal("Load accepted a malformed config")
 	}
@@ -64,11 +65,11 @@ server:
 	if c == nil {
 		t.Fatal("a failed parse abandoned the Config it had already built — nothing was wiped")
 	}
-	for name, ss := range map[string]interface{ IsDestroyed() bool }{
+	for name, ss := range map[string]interface{ IsDestroyed(context.Context) bool }{
 		"cdsi.sharedSecret":           c.CDSI.SharedSecret,
 		"storageService.sharedSecret": c.StorageService.SharedSecret,
 	} {
-		if ss != nil && !ss.IsDestroyed() {
+		if ss != nil && !ss.IsDestroyed(t.Context()) {
 			t.Errorf("%s survived a failed parse", name)
 		}
 	}
@@ -89,7 +90,7 @@ cdsi:
   sharedSecret: "cdsi-shared-secret"
 `)
 
-	cfg, err := Load(path)
+	cfg, err := Load(t.Context(), path)
 	if err == nil {
 		t.Fatal("Load accepted a config that should fail validation")
 	}
@@ -101,7 +102,7 @@ cdsi:
 	if c == nil {
 		t.Fatal("a failed validation abandoned the Config it had built — nothing was wiped")
 	}
-	if ss := c.CDSI.SharedSecret; ss != nil && !ss.IsDestroyed() {
+	if ss := c.CDSI.SharedSecret; ss != nil && !ss.IsDestroyed(t.Context()) {
 		t.Error("cdsi.sharedSecret survived a failed validation")
 	}
 }
@@ -117,7 +118,7 @@ cdsi:
   sharedSecret: "cdsi-shared-secret"
 `)
 
-	cfg, err := Load(path)
+	cfg, err := Load(t.Context(), path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -126,10 +127,10 @@ cdsi:
 	if *captured != nil {
 		t.Fatal("a successful load wiped the Config it returned")
 	}
-	if cfg.CDSI.SharedSecret.IsDestroyed() {
+	if cfg.CDSI.SharedSecret.IsDestroyed(t.Context()) {
 		t.Error("cdsi.sharedSecret was wiped on the success path")
 	}
-	if got := cfg.CDSI.SharedSecret.Plaintext(); got != "cdsi-shared-secret" {
+	if got := cfg.CDSI.SharedSecret.Plaintext(t.Context()); got != "cdsi-shared-secret" {
 		t.Errorf("cdsi.sharedSecret = %q, want %q", got, "cdsi-shared-secret")
 	}
 }
@@ -140,7 +141,7 @@ cdsi:
 func TestLoad_ReadFailureWipesNothing(t *testing.T) {
 	captured := captureDestroy(t)
 
-	cfg, err := Load(filepath.Join(t.TempDir(), "does-not-exist.yaml"))
+	cfg, err := Load(t.Context(), filepath.Join(t.TempDir(), "does-not-exist.yaml"))
 	if err == nil {
 		t.Fatal("Load accepted a missing file")
 	}

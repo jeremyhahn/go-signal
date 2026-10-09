@@ -7,6 +7,7 @@
 package backups
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 
@@ -259,7 +260,7 @@ type RecalculationResult struct {
 //
 // Password is a bearer credential, so it is held in protected memory from
 // issuance until a handler serialises it onto the response. Handlers read it
-// with Password.Reveal() at that single boundary — an unavailable credential
+// with Password.Reveal(ctx) at that single boundary — an unavailable credential
 // is an error, not an empty password — and Destroy the credential
 // afterwards.
 type ExternalServiceCredentials struct {
@@ -281,7 +282,7 @@ var _ secrets.JSONAppender = ExternalServiceCredentials{}
 // string and filling a response struct, which left the plaintext in memory
 // that cannot be wiped. The wire form is unchanged, byte for byte; only the
 // memory it is assembled in has changed.
-func (c ExternalServiceCredentials) AppendJSON(dst []byte) ([]byte, error) {
+func (c ExternalServiceCredentials) AppendJSON(ctx context.Context, dst []byte) ([]byte, error) {
 	user, err := json.Marshal(c.Username)
 	if err != nil {
 		return dst, err
@@ -297,7 +298,7 @@ func (c ExternalServiceCredentials) AppendJSON(dst []byte) ([]byte, error) {
 	// Reveal semantics are preserved: an unavailable credential fails the
 	// response rather than handing the client an empty password it would
 	// treat as usable. writeJSON turns this into a 500.
-	dst, err = c.Password.AppendJSONString(dst)
+	dst, err = c.Password.AppendJSONString(ctx, dst)
 	if err != nil {
 		return dst, err
 	}
@@ -313,7 +314,7 @@ func (c ExternalServiceCredentials) AppendJSON(dst []byte) ([]byte, error) {
 // This exists so a value nested in another struct still marshals to the right
 // wire form instead of falling back to SecureString's redacting default.
 func (c ExternalServiceCredentials) MarshalJSON() ([]byte, error) {
-	return c.AppendJSON(nil)
+	return c.AppendJSON(context.Background(), nil)
 }
 
 // Destroy wipes the protected password. Safe on nil and idempotent.

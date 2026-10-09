@@ -1047,7 +1047,7 @@ func TestRedactQueryParams_EmptyString(t *testing.T) {
 // only checked for valid JSON would pass either way.
 type appenderProbe struct{ marshalCalled *bool }
 
-func (p appenderProbe) AppendJSON(dst []byte) ([]byte, error) {
+func (p appenderProbe) AppendJSON(ctx context.Context, dst []byte) ([]byte, error) {
 	return append(dst, `{"via":"appender"}`...), nil
 }
 
@@ -1087,7 +1087,7 @@ func TestWriteJSON_FallsBackToMarshalForOrdinaryPayloads(t *testing.T) {
 // path too, and must not emit the partial body as if it were a response.
 type failingAppender struct{ partial *[]byte }
 
-func (f failingAppender) AppendJSON(dst []byte) ([]byte, error) {
+func (f failingAppender) AppendJSON(ctx context.Context, dst []byte) ([]byte, error) {
 	dst = append(dst, `{"username":"u","password":"secr`...)
 	*f.partial = dst
 	return dst, errors.New("credential unavailable")

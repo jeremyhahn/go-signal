@@ -19,7 +19,7 @@ func newTestManager(signingKey []byte) *CertificatesManager {
 	logger := slog.New(slog.NewTextHandler(
 		discardWriter{}, &slog.HandlerOptions{Level: slog.LevelDebug},
 	))
-	return NewCertificatesManager(secrets.MustNewSecureString(string(signingKey)), logger)
+	return NewCertificatesManager(secrets.MustNewSecureString(context.Background(), string(signingKey)), logger)
 }
 
 // discardWriter is an io.Writer that discards all output.
@@ -36,11 +36,11 @@ func TestNewCertificatesManager(t *testing.T) {
 			return
 		}
 		// Verify the signing key is accessible and non-destroyed.
-		if m.signingKey == nil || m.signingKey.IsDestroyed() {
+		if m.signingKey == nil || m.signingKey.IsDestroyed(t.Context()) {
 			t.Error("expected signing key to be set and accessible")
 		}
-		if m.signingKey.Plaintext() != string(key) {
-			t.Errorf("signingKey mismatch: got %q", m.signingKey.Plaintext())
+		if m.signingKey.Plaintext(t.Context()) != string(key) {
+			t.Errorf("signingKey mismatch: got %q", m.signingKey.Plaintext(t.Context()))
 		}
 	})
 
@@ -398,12 +398,12 @@ func TestSignCertificate(t *testing.T) {
 			IdentityKey:    []byte{1, 2, 3},
 		}
 
-		sig1, err := m.signCertificate(cert)
+		sig1, err := m.signCertificate(t.Context(), cert)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		sig2, err := m.signCertificate(cert)
+		sig2, err := m.signCertificate(t.Context(), cert)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -431,12 +431,12 @@ func TestSignCertificate(t *testing.T) {
 			IdentityKey:    []byte{1},
 		}
 
-		sig1, err := m.signCertificate(cert1)
+		sig1, err := m.signCertificate(t.Context(), cert1)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		sig2, err := m.signCertificate(cert2)
+		sig2, err := m.signCertificate(t.Context(), cert2)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -452,7 +452,7 @@ func TestGenerateGroupCredential(t *testing.T) {
 		key := []byte("group-cred-key")
 		m := newTestManager(key)
 
-		cred, err := m.generateGroupCredential("uuid-1", 86400)
+		cred, err := m.generateGroupCredential(t.Context(), "uuid-1", 86400)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -465,12 +465,12 @@ func TestGenerateGroupCredential(t *testing.T) {
 		key := []byte("group-cred-key")
 		m := newTestManager(key)
 
-		cred1, err := m.generateGroupCredential("uuid-1", 86400)
+		cred1, err := m.generateGroupCredential(t.Context(), "uuid-1", 86400)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		cred2, err := m.generateGroupCredential("uuid-1", 86400)
+		cred2, err := m.generateGroupCredential(t.Context(), "uuid-1", 86400)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -484,12 +484,12 @@ func TestGenerateGroupCredential(t *testing.T) {
 		key := []byte("group-cred-key")
 		m := newTestManager(key)
 
-		cred1, err := m.generateGroupCredential("uuid-1", 86400)
+		cred1, err := m.generateGroupCredential(t.Context(), "uuid-1", 86400)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		cred2, err := m.generateGroupCredential("uuid-1", 172800)
+		cred2, err := m.generateGroupCredential(t.Context(), "uuid-1", 172800)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

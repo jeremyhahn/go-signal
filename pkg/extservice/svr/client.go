@@ -73,18 +73,18 @@ type HTTPClient struct {
 // checking cfg.SharedSecret and cloning it afterwards leaves a window in which
 // the caller destroys its own copy between the two, and the constructor
 // reports success holding a secret that can never sign a request.
-func NewHTTP(cfg HTTPConfig) (*HTTPClient, error) {
+func NewHTTP(ctx context.Context, cfg HTTPConfig) (*HTTPClient, error) {
 	if cfg.BaseURL == "" {
 		return nil, signalerrors.New(signalerrors.ErrInvalidArgument, "svr: BaseURL is required")
 	}
 	// An allocation failure is distinct from an absent secret; reporting it as
 	// "SharedSecret is required" would hide a protected-memory failure behind
 	// a configuration error.
-	secret, err := cloneSecret(cfg.SharedSecret)
+	secret, err := cloneSecret(cfg.SharedSecret, ctx)
 	if err != nil {
 		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "svr: protecting the shared secret", err)
 	}
-	if secret.IsDestroyed() {
+	if secret.IsDestroyed(ctx) {
 		// An unset clone holds nothing to wipe today; destroying it anyway
 		// keeps the ownership contract total on the error path.
 		secret.Destroy()
@@ -114,7 +114,7 @@ func NewHTTP(cfg HTTPConfig) (*HTTPClient, error) {
 // RemoveData issues DELETE /v1/delete with HTTP Basic auth derived
 // from identity. Non-2xx and non-404 responses become a typed error.
 func (c *HTTPClient) RemoveData(ctx context.Context, identity string) error {
-	authHeader := common.BasicAuthHeaderSecret(identity, c.secret)
+	authHeader := common.BasicAuthHeaderSecret(ctx, identity, c.secret)
 	if authHeader == "" {
 		return signalerrors.New(signalerrors.ErrInvalidArgument, "svr: client has been closed")
 	}

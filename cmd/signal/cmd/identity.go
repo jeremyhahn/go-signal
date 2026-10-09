@@ -16,7 +16,7 @@ var listIdentitiesCmd = &cobra.Command{
 	Use:   "listIdentities",
 	Short: "List known identity keys",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -42,7 +42,7 @@ var trustCmd = &cobra.Command{
 	Short: "Trust a contact's identity key",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}

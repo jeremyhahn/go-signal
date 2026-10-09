@@ -133,7 +133,7 @@ func TestSignCertificate_WithoutE164(t *testing.T) {
 		IdentityKey:    []byte{10, 20, 30},
 	}
 
-	sig, err := m.signCertificate(cert)
+	sig, err := m.signCertificate(t.Context(), cert)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestSignCertificate_SignatureLength(t *testing.T) {
 		IdentityKey:    []byte{1},
 	}
 
-	sig, err := m.signCertificate(cert)
+	sig, err := m.signCertificate(t.Context(), cert)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -184,12 +184,12 @@ func TestSignCertificate_SignatureLength(t *testing.T) {
 func TestGenerateGroupCredential_DifferentUUIDs(t *testing.T) {
 	m := newTestManager([]byte("uuid-diff-key"))
 
-	cred1, err := m.generateGroupCredential("uuid-a", 86400)
+	cred1, err := m.generateGroupCredential(t.Context(), "uuid-a", 86400)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	cred2, err := m.generateGroupCredential("uuid-b", 86400)
+	cred2, err := m.generateGroupCredential(t.Context(), "uuid-b", 86400)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestGenerateGroupCredential_VerifyHMAC(t *testing.T) {
 	key := []byte("verify-hmac-key")
 	m := newTestManager(key)
 
-	cred, err := m.generateGroupCredential("uuid-verify", 172800)
+	cred, err := m.generateGroupCredential(t.Context(), "uuid-verify", 172800)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -351,7 +351,7 @@ func TestSignCertificate_MarshalError(t *testing.T) {
 		IdentityKey:    []byte{1},
 	}
 
-	_, err := m.signCertificate(cert)
+	_, err := m.signCertificate(t.Context(), cert)
 	if err == nil {
 		t.Fatal("expected error from signCertificate when marshal fails")
 	}
@@ -371,7 +371,7 @@ func TestGenerateGroupCredential_MarshalError(t *testing.T) {
 	}
 
 	m := newTestManager([]byte("key"))
-	_, err := m.generateGroupCredential("uuid", 86400)
+	_, err := m.generateGroupCredential(t.Context(), "uuid", 86400)
 	if err == nil {
 		t.Fatal("expected error from generateGroupCredential when marshal fails")
 	}

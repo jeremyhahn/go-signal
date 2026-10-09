@@ -116,7 +116,7 @@ func (s *Server) handleSetProfile(w http.ResponseWriter, r *http.Request) {
 	switch change {
 	case avatarUpdate:
 		var err error
-		attrs, err = s.buildAvatarUploadAttributes()
+		attrs, err = s.buildAvatarUploadAttributes(r.Context())
 		switch {
 		case errors.Is(err, errAvatarCDNNotConfigured):
 			s.logger.Error("avatar upload requested but CDN is not configured",
@@ -276,8 +276,8 @@ func (e *avatarCDNNotConfiguredError) Error() string { return "avatar CDN not co
 // profile-avatar upload, signed with the configured CDN credentials. It fails
 // (errAvatarCDNNotConfigured) when the CDN is not configured rather than
 // returning a non-functional placeholder signature.
-func (s *Server) buildAvatarUploadAttributes() (ProfileAvatarUploadAttributes, error) {
-	if !s.avatarCDN.Enabled() {
+func (s *Server) buildAvatarUploadAttributes(ctx context.Context) (ProfileAvatarUploadAttributes, error) {
+	if !s.avatarCDN.Enabled(ctx) {
 		return ProfileAvatarUploadAttributes{}, errAvatarCDNNotConfigured
 	}
 
@@ -307,7 +307,7 @@ func (s *Server) buildAvatarUploadAttributes() (ProfileAvatarUploadAttributes, e
 	// an enclave failure between that check and this read must fail the
 	// request rather than sign the policy with an empty key and hand the
 	// client an upload form S3 will reject.
-	secretKey, err := s.avatarCDN.SecretKey.Reveal()
+	secretKey, err := s.avatarCDN.SecretKey.Reveal(ctx)
 	if err != nil {
 		return ProfileAvatarUploadAttributes{}, err
 	}

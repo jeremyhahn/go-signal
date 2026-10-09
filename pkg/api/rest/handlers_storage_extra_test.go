@@ -56,11 +56,11 @@ func (s *stubSecureStorageService) Read(_ context.Context, _ string, _ [][]byte)
 	return s.items, nil
 }
 
-func (s *stubSecureStorageService) GetAuth(_ context.Context, accountUUID string) (*securestorage.StorageCredentials, error) {
+func (s *stubSecureStorageService) GetAuth(ctx context.Context, accountUUID string) (*securestorage.StorageCredentials, error) {
 	if s.authErr != nil {
 		return nil, s.authErr
 	}
-	return &securestorage.StorageCredentials{Username: accountUUID, Password: secrets.MustNewSecureString("pwd")}, nil
+	return &securestorage.StorageCredentials{Username: accountUUID, Password: secrets.MustNewSecureString(ctx, "pwd")}, nil
 }
 
 // compile-time interface check.

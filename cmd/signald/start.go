@@ -116,19 +116,19 @@ func stringSetToMap(in []string) map[string]struct{} {
 // carrying captcha.TestTokenPrefix. It needs no secret key, and it can never
 // reach a production deployment: validateProduction refuses to boot unless
 // the provider is hcaptcha or recaptcha.
-func buildCaptchaChecker(cfg config.CaptchaConfig) (*captcha.Checker, error) {
+func buildCaptchaChecker(ctx context.Context, cfg config.CaptchaConfig) (*captcha.Checker, error) {
 	if cfg.Provider == "test" {
 		return &captcha.Checker{Providers: map[string]captcha.CaptchaVerifier{
 			"test": captcha.NewTestVerifier(captcha.TestVerifierConfig{}),
 		}}, nil
 	}
-	if cfg.SecretKey == nil || cfg.SecretKey.Plaintext() == "" {
+	if cfg.SecretKey == nil || cfg.SecretKey.IsEmpty(ctx) {
 		return nil, nil
 	}
 	allowlist := siteKeysByActionFromConfig(cfg.SiteKeysByAction)
 	switch cfg.Provider {
 	case "hcaptcha":
-		v, err := captcha.NewHCaptchaVerifier(captcha.HCaptchaConfig{
+		v, err := captcha.NewHCaptchaVerifier(ctx, captcha.HCaptchaConfig{
 			SecretKey:        cfg.SecretKey,
 			SiteKeysByAction: allowlist,
 		})
@@ -137,7 +137,7 @@ func buildCaptchaChecker(cfg config.CaptchaConfig) (*captcha.Checker, error) {
 		}
 		return &captcha.Checker{Providers: map[string]captcha.CaptchaVerifier{"hcaptcha": v}}, nil
 	case "recaptcha":
-		v, err := captcha.NewReCAPTCHAVerifier(captcha.ReCAPTCHAConfig{
+		v, err := captcha.NewReCAPTCHAVerifier(ctx, captcha.ReCAPTCHAConfig{
 			SecretKey:        cfg.SecretKey,
 			SiteKeysByAction: allowlist,
 		})
@@ -180,14 +180,14 @@ func siteKeysByActionFromConfig(in map[string][]string) map[captcha.Action][]str
 // supplied. Either or both may be absent — missing legs fall through to
 // NoOpProvider so the message-delivery code path can keep calling Send
 // uniformly.
-func buildPushManager(cfg config.PushConfig, logger *slog.Logger) (*push.PushManager, error) {
+func buildPushManager(ctx context.Context, cfg config.PushConfig, logger *slog.Logger) (*push.PushManager, error) {
 	mgrCfg := push.PushManagerConfig{Logger: logger}
 	if cfg.APN.TeamID != "" && cfg.APN.KeyID != "" && cfg.APN.BundleID != "" && cfg.APN.PrivateKey != nil {
 		provider, err := push.NewAPNsProvider(push.APNsConfig{
 			BundleID:      cfg.APN.BundleID,
 			TeamID:        cfg.APN.TeamID,
 			KeyID:         cfg.APN.KeyID,
-			SigningKeyPEM: []byte(cfg.APN.PrivateKey.Plaintext()),
+			SigningKeyPEM: []byte(cfg.APN.PrivateKey.Plaintext(ctx)),
 			Sandbox:       cfg.APN.Sandbox,
 		})
 		if err != nil {
@@ -196,10 +196,10 @@ func buildPushManager(cfg config.PushConfig, logger *slog.Logger) (*push.PushMan
 		mgrCfg.APNs = provider
 		logger.Info("APNs push provider configured", slog.Bool("sandbox", cfg.APN.Sandbox))
 	}
-	if cfg.FCM.Credentials != nil && cfg.FCM.Credentials.Plaintext() != "" {
+	if cfg.FCM.Credentials != nil && cfg.FCM.Credentials.Plaintext(ctx) != "" {
 		provider, err := push.NewFCMProvider(push.FCMConfig{
 			ProjectID:          cfg.FCM.ProjectID,
-			ServiceAccountJSON: []byte(cfg.FCM.Credentials.Plaintext()),
+			ServiceAccountJSON: []byte(cfg.FCM.Credentials.Plaintext(ctx)),
 		})
 		if err != nil {
 			return nil, &StartupError{Stage: "fcm", Cause: err}
@@ -361,15 +361,15 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// Resolve the certificate signing key from config. Prefer the dedicated
 	// zkConfig.signingKey field; fall back to zkConfig.serverSecret if absent.
 	var signingKey *secrets.SecureString
-	if cfg.ZKConfig.SigningKey != nil && !cfg.ZKConfig.SigningKey.IsDestroyed() {
+	if cfg.ZKConfig.SigningKey != nil && !cfg.ZKConfig.SigningKey.IsDestroyed(ctx) {
 		signingKey = cfg.ZKConfig.SigningKey
-	} else if cfg.ZKConfig.ServerSecret != nil && !cfg.ZKConfig.ServerSecret.IsDestroyed() {
+	} else if cfg.ZKConfig.ServerSecret != nil && !cfg.ZKConfig.ServerSecret.IsDestroyed(ctx) {
 		signingKey = cfg.ZKConfig.ServerSecret
 	} else {
 		// Fallback: generate a random ephemeral signing key for development.
 		// In production, set zkConfig.signingKey in the YAML configuration.
 		slog.WarnContext(ctx, "no signing key configured; generating ephemeral key — certificates will not survive restarts")
-		ephemeral, err := secrets.NewSecureString(generateEphemeralKey())
+		ephemeral, err := secrets.NewSecureString(ctx, generateEphemeralKey())
 		if err != nil {
 			return &StartupError{Stage: "signing key protection", Cause: err}
 		}
@@ -447,7 +447,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	case "postgres":
 		slog.InfoContext(ctx, "using postgres storage backend")
 		pgClient, err := pgstorage.New(ctx, pgstorage.Config{
-			DSN:             cfg.Storage.Postgres.DSN(),
+			DSN:             cfg.Storage.Postgres.DSN(ctx),
 			MaxConns:        int32(cfg.Storage.Postgres.MaxConns),
 			MinConns:        int32(cfg.Storage.Postgres.MinConns),
 			MaxConnLifetime: cfg.Storage.Postgres.MaxConnLifetime,
@@ -529,7 +529,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		// The password stays in protected memory end to end: the cache
 		// client takes the SecureString itself and only opens it when it
 		// builds the go-redis options.
-		redisClient, err := cacheredis.New(cacheredis.Config{
+		redisClient, err := cacheredis.New(ctx, cacheredis.Config{
 			URL:      cfg.Cache.Redis.URL,
 			Password: cfg.Cache.Redis.Password,
 			DB:       cfg.Cache.Redis.DB,
@@ -571,7 +571,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	accountsMgr := accounts.NewAccountsManager(accountStore, 6)
 	directoryBus := accounts.NewDirectoryEventBus()
 	accountsMgr.SetDirectoryEventBus(directoryBus)
-	captchaChecker, err := buildCaptchaChecker(cfg.Captcha)
+	captchaChecker, err := buildCaptchaChecker(ctx, cfg.Captcha)
 	if err != nil {
 		return &StartupError{Stage: "captcha checker init", Cause: err}
 	}
@@ -618,7 +618,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	apnJobsMgr := jobs.NewManager(jobsStore, logger)
 	// Create an independent copy of the signing key so that certificates
 	// manager holds its own SecureString and cannot alias the config value.
-	signingKeyCopy, err := secrets.NewSecureString(signingKey.Plaintext())
+	signingKeyCopy, err := secrets.NewSecureString(ctx, signingKey.Plaintext(ctx))
 	if err != nil {
 		return &StartupError{Stage: "signing key protection", Cause: err}
 	}
@@ -629,8 +629,8 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// This enables zkgroup-native AuthCredentialWithPni group credentials and
 	// ExpiringProfileKeyCredential issuance.
 	var authSecret *zkgroup.ServerSecretParams
-	if cfg.ZKConfig.ServerSecret != nil && !cfg.ZKConfig.ServerSecret.IsDestroyed() {
-		serverSecretBytes := cfg.ZKConfig.ServerSecret.Bytes()
+	if cfg.ZKConfig.ServerSecret != nil && !cfg.ZKConfig.ServerSecret.IsDestroyed(ctx) {
+		serverSecretBytes := cfg.ZKConfig.ServerSecret.Bytes(ctx)
 		var randomness zkgroup.RandomnessBytes
 		copy(randomness[:], serverSecretBytes)
 		for i := range serverSecretBytes {
@@ -664,7 +664,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// here we derive one deterministically from the signing key via SHA-256 so
 	// that certificates survive restarts when the signing key is stable.
 	{
-		keyBytes := signingKey.Bytes()
+		keyBytes := signingKey.Bytes(ctx)
 		if len(keyBytes) > 0 {
 			seed := sha256.Sum256(keyBytes)
 			for i := range keyBytes {
@@ -682,7 +682,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 			for i := 0; i < 4 && i < len(pubHex); i++ {
 				pubKeyID = (pubKeyID << 8) | uint32(pubHex[i])
 			}
-			if err := certificatesMgr.SetEd25519SigningKey(privKey, pubKeyID); err != nil {
+			if err := certificatesMgr.SetEd25519SigningKey(ctx, privKey, pubKeyID); err != nil {
 				slog.WarnContext(ctx, "failed to set Ed25519 signing key; delivery certificates will use HMAC-SHA256",
 					slog.String("error", err.Error()),
 				)
@@ -718,9 +718,9 @@ func runStart(cmd *cobra.Command, args []string) error {
 	recoveryPasswordsMgr := recoverypassword.NewManager(recoveryPasswordStore, 0, logger)
 	cdnAccessKey := ""
 	if cfg.CDN.AccessKey != nil {
-		cdnAccessKey = cfg.CDN.AccessKey.Plaintext()
+		cdnAccessKey = cfg.CDN.AccessKey.Plaintext(ctx)
 	}
-	stickersMgr := stickers.NewStickersManager(stickers.ManagerConfig{
+	stickersMgr := stickers.NewStickersManager(ctx, stickers.ManagerConfig{
 		Logger: logger,
 		// CDN config doubles as the S3 credentials for sticker uploads —
 		// Java's StickerController shares the same access key + region
@@ -740,12 +740,12 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// rather than falling through to the legacy random-UUID stub: a deployment
 	// that configured CDSI must not come up silently issuing credentials cdsi
 	// will reject.
-	if err := directoryMgr.SetSharedSecret(cfg.CDSI.SharedSecret); err != nil {
+	if err := directoryMgr.SetSharedSecret(ctx, cfg.CDSI.SharedSecret); err != nil {
 		return &StartupError{Stage: "CDSI shared secret protection", Cause: err}
 	}
 	secureStorageMgr := securestorage.NewSecureStorageManager(logger)
 	defer secureStorageMgr.Destroy()
-	if err := secureStorageMgr.SetSharedSecret(cfg.StorageService.SharedSecret); err != nil {
+	if err := secureStorageMgr.SetSharedSecret(ctx, cfg.StorageService.SharedSecret); err != nil {
 		return &StartupError{Stage: "storage-service shared secret protection", Cause: err}
 	}
 	// Enable the in-process storage-service (contact/settings sync) in
@@ -846,7 +846,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 			slog.String("endpoint", cfg.Verification.RemoteAddr))
 	} else {
 		verificationStore := verification.NewMemoryVerificationSessionStore()
-		verificationTransport, vtErr := verificationfactory.Build(cfg.Verification, logger)
+		verificationTransport, vtErr := verificationfactory.Build(ctx, cfg.Verification, logger)
 		if vtErr != nil {
 			return &StartupError{Stage: "verification transport", Cause: vtErr}
 		}
@@ -874,8 +874,8 @@ func runStart(cmd *cobra.Command, args []string) error {
 
 	// Initialize calling subsystem.
 	var callingZKParams *zkgroup.GenericServerSecretParams
-	if cfg.CallingZKConfig.ServerSecret != nil && !cfg.CallingZKConfig.ServerSecret.IsDestroyed() {
-		serverSecretBytes := cfg.CallingZKConfig.ServerSecret.Bytes()
+	if cfg.CallingZKConfig.ServerSecret != nil && !cfg.CallingZKConfig.ServerSecret.IsDestroyed(ctx) {
+		serverSecretBytes := cfg.CallingZKConfig.ServerSecret.Bytes(ctx)
 		var randomness zkgroup.RandomnessBytes
 		copy(randomness[:], serverSecretBytes)
 		// Wipe the copy immediately after use.
@@ -893,7 +893,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// Initialize TURN credential provider.
 	var turnProvider calling.TurnCredentialProvider
 	cfCfg := cfg.Turn.Cloudflare
-	if cfCfg.Endpoint != "" && cfCfg.APIToken != nil && !cfCfg.APIToken.IsDestroyed() {
+	if cfCfg.Endpoint != "" && cfCfg.APIToken != nil && !cfCfg.APIToken.IsDestroyed(ctx) {
 		reqTTL, _ := time.ParseDuration(cfCfg.RequestedCredentialTTL)
 		if reqTTL == 0 {
 			reqTTL = 86400 * time.Second
@@ -966,7 +966,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// provider's secrets are absent (typical for dev), the manager falls back
 	// to NoOpProvider — the call site below treats that as "push disabled" and
 	// only the WebSocket fast-path / cross-instance notify runs.
-	pushMgr, err := buildPushManager(cfg.Push, logger)
+	pushMgr, err := buildPushManager(ctx, cfg.Push, logger)
 	if err != nil {
 		return &StartupError{Stage: "push manager init", Cause: err}
 	}
@@ -1194,7 +1194,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	var tusGenerator *external.Generator
 	defer func() { tusGenerator.Destroy() }()
 	if cfg.Attachments.TusURI != "" && !cfg.Attachments.TusSharedSecret.IsAbsent() {
-		gen, err := external.NewGenerator(external.GeneratorConfig{
+		gen, err := external.NewGenerator(ctx, external.GeneratorConfig{
 			Key: cfg.Attachments.TusSharedSecret,
 		})
 		if err != nil {

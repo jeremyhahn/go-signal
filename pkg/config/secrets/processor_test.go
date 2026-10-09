@@ -193,7 +193,7 @@ func TestConfigProcessor_Process_SecureStringField_ResolvedURI(t *testing.T) {
 	registry.Register(&mockResolver{scheme: "kms", resolved: "kms-resolved-secret"})
 
 	cfg := &testSecureConfig{
-		Password: MustNewSecureString("kms://signal/password"),
+		Password: MustNewSecureString(t.Context(), "kms://signal/password"),
 	}
 	defer cfg.Password.Destroy()
 
@@ -202,14 +202,14 @@ func TestConfigProcessor_Process_SecureStringField_ResolvedURI(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NotNil(t, cfg.Password)
-	assert.Equal(t, "kms-resolved-secret", cfg.Password.Plaintext())
+	assert.Equal(t, "kms-resolved-secret", cfg.Password.Plaintext(t.Context()))
 }
 
 func TestConfigProcessor_Process_SecureStringField_PlainValue_Unchanged(t *testing.T) {
 	registry := NewResolverRegistry()
 
 	cfg := &testSecureConfig{
-		Password: MustNewSecureString("plain-secret"),
+		Password: MustNewSecureString(t.Context(), "plain-secret"),
 	}
 	defer cfg.Password.Destroy()
 
@@ -217,7 +217,7 @@ func TestConfigProcessor_Process_SecureStringField_PlainValue_Unchanged(t *testi
 	err := processor.Process(context.Background(), cfg)
 	require.NoError(t, err)
 
-	assert.Equal(t, "plain-secret", cfg.Password.Plaintext())
+	assert.Equal(t, "plain-secret", cfg.Password.Plaintext(t.Context()))
 }
 
 func TestConfigProcessor_Process_SecureStringField_NilField_Skipped(t *testing.T) {
@@ -242,7 +242,7 @@ func TestConfigProcessor_Process_SecureStringField_ResolutionError(t *testing.T)
 	})
 
 	cfg := &testSecureConfig{
-		Password: MustNewSecureString("kms://fail"),
+		Password: MustNewSecureString(t.Context(), "kms://fail"),
 	}
 	if cfg.Password != nil {
 		defer cfg.Password.Destroy()
@@ -262,7 +262,7 @@ func TestConfigProcessor_Process_SecureStringField_EmptyPlaintext_Skipped(t *tes
 
 	// A *SecureString created from empty string should be skipped by processor.
 	cfg := &testSecureConfig{
-		Password: MustNewSecureString(""),
+		Password: MustNewSecureString(t.Context(), ""),
 	}
 	defer cfg.Password.Destroy()
 
@@ -277,7 +277,7 @@ func TestConfigProcessor_Process_SecureStringField_NestedStruct(t *testing.T) {
 
 	cfg := &testSecureConfig{
 		Nested: testSecureNestedConfig{
-			Secret: MustNewSecureString("kms://signal/nested"),
+			Secret: MustNewSecureString(t.Context(), "kms://signal/nested"),
 			Label:  "label",
 		},
 	}
@@ -287,7 +287,7 @@ func TestConfigProcessor_Process_SecureStringField_NestedStruct(t *testing.T) {
 	err := processor.Process(context.Background(), cfg)
 	require.NoError(t, err)
 
-	assert.Equal(t, "nested-kms-secret", cfg.Nested.Secret.Plaintext())
+	assert.Equal(t, "nested-kms-secret", cfg.Nested.Secret.Plaintext(t.Context()))
 	assert.Equal(t, "label", cfg.Nested.Label)
 }
 
@@ -305,6 +305,6 @@ func TestConfigProcessor_SkipsUnsettableFields(t *testing.T) {
 	}
 
 	p := NewConfigProcessor(NewResolverRegistry())
-	cfg := &outer{Inner: inner{secret: MustNewSecureString("unreachable"), token: "unreachable"}}
+	cfg := &outer{Inner: inner{secret: MustNewSecureString(t.Context(), "unreachable"), token: "unreachable"}}
 	require.NoError(t, p.Process(context.Background(), cfg))
 }

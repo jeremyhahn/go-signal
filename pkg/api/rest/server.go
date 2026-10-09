@@ -153,8 +153,8 @@ type AvatarCDNConfig struct {
 }
 
 // Enabled reports whether enough is configured to sign avatar uploads.
-func (c AvatarCDNConfig) Enabled() bool {
-	return c.Bucket != "" && c.Region != "" && c.AccessKey != "" && !c.SecretKey.IsDestroyed()
+func (c AvatarCDNConfig) Enabled(ctx context.Context) bool {
+	return c.Bucket != "" && c.Region != "" && c.AccessKey != "" && !c.SecretKey.IsDestroyed(ctx)
 }
 
 // ServerConfig holds the configuration required to create a new Server.

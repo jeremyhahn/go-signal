@@ -20,14 +20,14 @@ func TestGenerate_WireFormUnchangedByProtectedKey(t *testing.T) {
 	const key, identity = "shared-secret", "+15550100"
 	now := time.Unix(1700000000, 0)
 
-	g, err := NewGenerator(GeneratorConfig{
-		Key:   secrets.MustNewSecureString(key),
+	g, err := NewGenerator(t.Context(), GeneratorConfig{
+		Key:   secrets.MustNewSecureString(t.Context(), key),
 		Clock: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatalf("NewGenerator: %v", err)
 	}
-	creds, err := g.Generate(identity)
+	creds, err := g.Generate(t.Context(), identity)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestGenerate_WireFormUnchangedByProtectedKey(t *testing.T) {
 	if creds.Username != identity {
 		t.Errorf("username = %q, want %q", creds.Username, identity)
 	}
-	if got := creds.Password.Plaintext(); got != want {
+	if got := creds.Password.Plaintext(t.Context()); got != want {
 		t.Errorf("password = %q, want %q", got, want)
 	}
 }
@@ -49,15 +49,15 @@ func TestGenerate_WireFormUnchangedWithPrependUsername(t *testing.T) {
 	const key, identity = "shared-secret", "+15550100"
 	now := time.Unix(1700000000, 0)
 
-	g, err := NewGenerator(GeneratorConfig{
-		Key:             secrets.MustNewSecureString(key),
+	g, err := NewGenerator(t.Context(), GeneratorConfig{
+		Key:             secrets.MustNewSecureString(t.Context(), key),
 		PrependUsername: true,
 		Clock:           func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatalf("NewGenerator: %v", err)
 	}
-	creds, err := g.Generate(identity)
+	creds, err := g.Generate(t.Context(), identity)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -67,23 +67,23 @@ func TestGenerate_WireFormUnchangedWithPrependUsername(t *testing.T) {
 	mac.Write([]byte(identity + ":" + ts))
 	want := identity + ":" + ts + ":" + hex.EncodeToString(mac.Sum(nil))
 
-	if got := creds.Password.Plaintext(); got != want {
+	if got := creds.Password.Plaintext(t.Context()); got != want {
 		t.Errorf("password = %q, want %q", got, want)
 	}
 }
 
 func TestNewGenerator_RejectsUnsetAndDestroyedKeys(t *testing.T) {
-	destroyed := secrets.MustNewSecureString("k")
+	destroyed := secrets.MustNewSecureString(t.Context(), "k")
 	destroyed.Destroy()
 
 	cases := map[string]*secrets.SecureString{
 		"nil":       nil,
-		"unset":     secrets.MustNewSecureString(""),
+		"unset":     secrets.MustNewSecureString(t.Context(), ""),
 		"destroyed": destroyed,
 	}
 	for name, key := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := NewGenerator(GeneratorConfig{Key: key}); err == nil {
+			if _, err := NewGenerator(t.Context(), GeneratorConfig{Key: key}); err == nil {
 				t.Error("expected NewGenerator to reject the key")
 			}
 		})
@@ -94,19 +94,19 @@ func TestNewGenerator_RejectsUnsetAndDestroyedKeys(t *testing.T) {
 // generator must not reach back into the caller's secret, which in signald is
 // the process config wiped separately by cfg.Destroy.
 func TestNewGenerator_ClonesTheKey(t *testing.T) {
-	key := secrets.MustNewSecureString("shared-secret")
+	key := secrets.MustNewSecureString(t.Context(), "shared-secret")
 	defer key.Destroy()
 
-	g, err := NewGenerator(GeneratorConfig{Key: key})
+	g, err := NewGenerator(t.Context(), GeneratorConfig{Key: key})
 	if err != nil {
 		t.Fatalf("NewGenerator: %v", err)
 	}
 	g.Destroy()
 
-	if key.IsDestroyed() {
+	if key.IsDestroyed(t.Context()) {
 		t.Error("Generator.Destroy wiped the caller's key")
 	}
-	if got := key.Plaintext(); got != "shared-secret" {
+	if got := key.Plaintext(t.Context()); got != "shared-secret" {
 		t.Errorf("caller's key = %q, want %q", got, "shared-secret")
 	}
 }
@@ -114,8 +114,8 @@ func TestNewGenerator_ClonesTheKey(t *testing.T) {
 // TestGenerator_DestroyingTheCallersKeyLeavesTheGeneratorWorking is the other
 // half of the ownership contract — signald calls cfg.Destroy() at shutdown.
 func TestGenerator_DestroyingTheCallersKeyLeavesTheGeneratorWorking(t *testing.T) {
-	key := secrets.MustNewSecureString("shared-secret")
-	g, err := NewGenerator(GeneratorConfig{Key: key, Clock: func() time.Time { return time.Unix(1, 0) }})
+	key := secrets.MustNewSecureString(t.Context(), "shared-secret")
+	g, err := NewGenerator(t.Context(), GeneratorConfig{Key: key, Clock: func() time.Time { return time.Unix(1, 0) }})
 	if err != nil {
 		t.Fatalf("NewGenerator: %v", err)
 	}
@@ -123,23 +123,23 @@ func TestGenerator_DestroyingTheCallersKeyLeavesTheGeneratorWorking(t *testing.T
 
 	key.Destroy()
 
-	creds, err := g.Generate("alice")
+	creds, err := g.Generate(t.Context(), "alice")
 	if err != nil {
 		t.Fatalf("Generate after the caller destroyed its key: %v", err)
 	}
-	if _, err := g.Validate(creds, 0); err != nil {
+	if _, err := g.Validate(t.Context(), creds, 0); err != nil {
 		t.Errorf("Validate: %v", err)
 	}
 }
 
 func TestGenerator_GenerateFailsClosedAfterDestroy(t *testing.T) {
-	g, err := NewGenerator(GeneratorConfig{Key: secrets.MustNewSecureString("k")})
+	g, err := NewGenerator(t.Context(), GeneratorConfig{Key: secrets.MustNewSecureString(t.Context(), "k")})
 	if err != nil {
 		t.Fatalf("NewGenerator: %v", err)
 	}
 	g.Destroy()
 
-	creds, err := g.Generate("alice")
+	creds, err := g.Generate(t.Context(), "alice")
 	if err == nil {
 		t.Fatalf("expected an error after Destroy, got credentials %+v", creds)
 	}
@@ -149,18 +149,18 @@ func TestGenerator_GenerateFailsClosedAfterDestroy(t *testing.T) {
 }
 
 func TestGenerator_ValidateFailsClosedAfterDestroy(t *testing.T) {
-	g, err := NewGenerator(GeneratorConfig{Key: secrets.MustNewSecureString("k")})
+	g, err := NewGenerator(t.Context(), GeneratorConfig{Key: secrets.MustNewSecureString(t.Context(), "k")})
 	if err != nil {
 		t.Fatalf("NewGenerator: %v", err)
 	}
-	creds, err := g.Generate("alice")
+	creds, err := g.Generate(t.Context(), "alice")
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
 
 	g.Destroy()
 
-	if _, err := g.Validate(creds, 0); err == nil {
+	if _, err := g.Validate(t.Context(), creds, 0); err == nil {
 		t.Error("expected Validate to reject a credential once the key is wiped")
 	}
 }
@@ -169,7 +169,7 @@ func TestGenerator_DestroyIsIdempotentAndNilSafe(t *testing.T) {
 	var nilGen *Generator
 	nilGen.Destroy() // must not panic
 
-	g, err := NewGenerator(GeneratorConfig{Key: secrets.MustNewSecureString("k")})
+	g, err := NewGenerator(t.Context(), GeneratorConfig{Key: secrets.MustNewSecureString(t.Context(), "k")})
 	if err != nil {
 		t.Fatalf("NewGenerator: %v", err)
 	}
@@ -189,10 +189,10 @@ func TestGenerator_DestroyIsIdempotentAndNilSafe(t *testing.T) {
 //
 // Reverting the check to ask the clone makes this fail with MissingKeyError.
 func TestNewGenerator_ConfiguredButUnreadableKeyIsUnusableNotMissing(t *testing.T) {
-	key := secrets.MustNewSecureString("shared-secret")
+	key := secrets.MustNewSecureString(t.Context(), "shared-secret")
 	key.Destroy() // configured, then unreadable
 
-	_, err := NewGenerator(GeneratorConfig{Key: key})
+	_, err := NewGenerator(t.Context(), GeneratorConfig{Key: key})
 
 	var unusable *UnusableKeyError
 	if !errors.As(err, &unusable) {
@@ -207,7 +207,7 @@ func TestNewGenerator_ConfiguredButUnreadableKeyIsUnusableNotMissing(t *testing.
 // The genuinely-absent case must still report MissingKeyError, or the fix
 // would collapse both facts into the other one.
 func TestNewGenerator_AbsentKeyIsMissing(t *testing.T) {
-	_, err := NewGenerator(GeneratorConfig{Key: secrets.MustNewSecureString("")})
+	_, err := NewGenerator(t.Context(), GeneratorConfig{Key: secrets.MustNewSecureString(t.Context(), "")})
 
 	var missing *MissingKeyError
 	if !errors.As(err, &missing) {
@@ -220,7 +220,7 @@ func TestNewGenerator_AbsentKeyIsMissing(t *testing.T) {
 }
 
 func TestNewGenerator_NilKeyIsMissing(t *testing.T) {
-	_, err := NewGenerator(GeneratorConfig{})
+	_, err := NewGenerator(t.Context(), GeneratorConfig{})
 
 	var missing *MissingKeyError
 	if !errors.As(err, &missing) {

@@ -107,7 +107,7 @@ func TestConnectWebSocket_WithCredentials_HTTPS(t *testing.T) {
 		DataDir:   t.TempDir(),
 		Store:     ms,
 	}
-	c, err := NewClient(cfg)
+	c, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

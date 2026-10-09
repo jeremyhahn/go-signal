@@ -18,7 +18,7 @@ func TestWithBytes_ConcurrentRevealsAndDestroy(t *testing.T) {
 		readers   = 24
 		perReader = 40
 	)
-	s := MustNewSecureString("shared-secret")
+	s := MustNewSecureString(t.Context(), "shared-secret")
 
 	var (
 		wg               sync.WaitGroup
@@ -35,7 +35,7 @@ func TestWithBytes_ConcurrentRevealsAndDestroy(t *testing.T) {
 			<-start
 			for range perReader {
 				var got string
-				ok := s.WithBytes(func(b []byte) { got = string(b) })
+				ok := s.WithBytes(t.Context(), func(b []byte) { got = string(b) })
 				mu.Lock()
 				switch {
 				case ok && got == "shared-secret":
@@ -70,7 +70,7 @@ func TestWithBytes_ConcurrentRevealsAndDestroy(t *testing.T) {
 	}
 	// Destroy landing at any point is fine, but every reveal after it must
 	// fail closed — so the secret must be gone by the end.
-	if !s.IsDestroyed() {
+	if !s.IsDestroyed(t.Context()) {
 		t.Error("secret is still readable after Destroy")
 	}
 }
@@ -79,7 +79,7 @@ func TestWithBytes_ConcurrentRevealsAndDestroy(t *testing.T) {
 // lifecycle creates: a shutdown path and a component's own Close both calling
 // Destroy at once.
 func TestDestroy_ConcurrentDestroysWipeExactlyOnce(t *testing.T) {
-	s := MustNewSecureString("shared-secret")
+	s := MustNewSecureString(t.Context(), "shared-secret")
 
 	var wg sync.WaitGroup
 	start := make(chan struct{})
@@ -94,10 +94,10 @@ func TestDestroy_ConcurrentDestroysWipeExactlyOnce(t *testing.T) {
 	close(start)
 	wg.Wait()
 
-	if !s.IsDestroyed() {
+	if !s.IsDestroyed(t.Context()) {
 		t.Error("secret survived concurrent Destroy calls")
 	}
-	if got := s.Plaintext(); got != "" {
+	if got := s.Plaintext(t.Context()); got != "" {
 		t.Errorf("Plaintext() = %q after Destroy, want empty", got)
 	}
 }
@@ -106,7 +106,7 @@ func TestDestroy_ConcurrentDestroysWipeExactlyOnce(t *testing.T) {
 // reveals through WithBytes and is called on component-construction paths that
 // can overlap a shutdown.
 func TestClone_ConcurrentWithDestroy(t *testing.T) {
-	s := MustNewSecureString("shared-secret")
+	s := MustNewSecureString(t.Context(), "shared-secret")
 
 	var (
 		wg     sync.WaitGroup
@@ -125,7 +125,7 @@ func TestClone_ConcurrentWithDestroy(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			c, err := s.Clone()
+			c, err := s.Clone(t.Context())
 			if err != nil {
 				t.Errorf("Clone: %v", err)
 				return
@@ -146,10 +146,10 @@ func TestClone_ConcurrentWithDestroy(t *testing.T) {
 
 	// Each clone is either a faithful copy or unset — never partial.
 	for i, c := range clones {
-		if c.IsDestroyed() {
+		if c.IsDestroyed(t.Context()) {
 			continue
 		}
-		if got := c.Plaintext(); got != "shared-secret" {
+		if got := c.Plaintext(t.Context()); got != "shared-secret" {
 			t.Errorf("clone %d = %q, want %q or unset", i, got, "shared-secret")
 		}
 	}

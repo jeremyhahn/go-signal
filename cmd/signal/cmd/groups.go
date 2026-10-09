@@ -28,7 +28,7 @@ var listGroupsCmd = &cobra.Command{
 	Use:   "listGroups",
 	Short: "List groups",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -62,7 +62,7 @@ var updateGroupCmd = &cobra.Command{
 		description, _ := cmd.Flags().GetString("description")
 		members, _ := cmd.Flags().GetStringSlice("member")
 
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -112,7 +112,7 @@ var quitGroupCmd = &cobra.Command{
 			return &UsageError{Message: "group ID is required (--group-id)"}
 		}
 
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -135,7 +135,7 @@ var joinGroupCmd = &cobra.Command{
 			return &UsageError{Message: "group invite URI is required (--uri)"}
 		}
 
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}

@@ -8,6 +8,7 @@ package common
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -64,9 +65,9 @@ func BasicAuthHeader(identity string, sharedSecret []byte) string {
 // Returns "" when the password is unset or destroyed, so a wiped credential
 // fails closed instead of producing a header with an empty password that the
 // far side would simply reject.
-func BasicAuthHeaderCredential(identity string, password *secrets.SecureString) string {
+func BasicAuthHeaderCredential(ctx context.Context, identity string, password *secrets.SecureString) string {
 	var header string
-	password.WithBytes(func(pw []byte) {
+	password.WithBytes(ctx, func(pw []byte) {
 		// `identity + ":" + password` put the finished credential in a Go
 		// string that cannot be wiped and that the runtime is free to copy,
 		// and base64.StdEncoding.EncodeToString added a second one.
@@ -141,9 +142,9 @@ func ValidateBasicAuth(authHeader string, sharedSecret []byte) (string, bool) {
 //
 // Returns "" when the secret is unset or destroyed — the caller must treat
 // that as a failure to authenticate rather than sending an unsigned header.
-func BasicAuthHeaderSecret(identity string, sharedSecret *secrets.SecureString) string {
+func BasicAuthHeaderSecret(ctx context.Context, identity string, sharedSecret *secrets.SecureString) string {
 	var header string
-	sharedSecret.WithBytes(func(key []byte) {
+	sharedSecret.WithBytes(ctx, func(key []byte) {
 		header = BasicAuthHeader(identity, key)
 	})
 	return header
@@ -155,12 +156,12 @@ func BasicAuthHeaderSecret(identity string, sharedSecret *secrets.SecureString) 
 //
 // Returns ("", false) when the secret is unset or destroyed, so a wiped
 // secret fails closed instead of authenticating anything.
-func ValidateBasicAuthSecret(authHeader string, sharedSecret *secrets.SecureString) (string, bool) {
+func ValidateBasicAuthSecret(ctx context.Context, authHeader string, sharedSecret *secrets.SecureString) (string, bool) {
 	var (
 		username string
 		ok       bool
 	)
-	sharedSecret.WithBytes(func(key []byte) {
+	sharedSecret.WithBytes(ctx, func(key []byte) {
 		username, ok = ValidateBasicAuth(authHeader, key)
 	})
 	return username, ok

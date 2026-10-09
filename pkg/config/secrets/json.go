@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -30,7 +31,7 @@ type JSONAppender interface {
 	// default. The output is written to HTTP responses, and an implementation
 	// that stopped escaping would reintroduce the cross-site-scripting surface
 	// that encoding/json's default removes.
-	AppendJSON(dst []byte) ([]byte, error)
+	AppendJSON(ctx context.Context, dst []byte) ([]byte, error)
 }
 
 // AppendJSONString appends the protected value to dst as a JSON string
@@ -57,9 +58,9 @@ type JSONAppender interface {
 // caller owns wiping it. Reports an error, and appends nothing, when the secret
 // is nil, unset, destroyed or unopenable — a credential that cannot be read must
 // fail the response rather than emit an empty one a client would treat as valid.
-func (s *SecureString) AppendJSONString(dst []byte) ([]byte, error) {
+func (s *SecureString) AppendJSONString(ctx context.Context, dst []byte) ([]byte, error) {
 	var out []byte
-	ran := s.WithBytes(func(b []byte) {
+	ran := s.WithBytes(ctx, func(b []byte) {
 		out = appendJSONStringFromBytes(dst, b)
 	})
 	if !ran {

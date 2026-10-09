@@ -114,7 +114,7 @@ func TestClient_DeleteLocalData_RemovesDirectory(t *testing.T) {
 		DataDir:   dir,
 		Store:     &stubStore{},
 	}
-	c, err := NewClient(cfg)
+	c, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestClient_DeleteLocalData_AlreadyAbsent(t *testing.T) {
 		DataDir:   nonExistent,
 		Store:     &stubStore{},
 	}
-	c, err := NewClient(cfg)
+	c, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestClient_DeleteLocalData_EmptyDir(t *testing.T) {
 		DataDir:   dir,
 		Store:     &stubStore{},
 	}
-	c, err := NewClient(cfg)
+	c, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

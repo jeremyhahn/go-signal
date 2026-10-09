@@ -8,9 +8,9 @@ import (
 
 func TestPostgresConfig_DSN_URLWins(t *testing.T) {
 	cfg := PostgresConfig{
-		URL: secrets.MustNewSecureString("postgres://user:pass@remote:5432/mydb?sslmode=require"),
+		URL: secrets.MustNewSecureString(t.Context(), "postgres://user:pass@remote:5432/mydb?sslmode=require"),
 	}
-	got := cfg.DSN()
+	got := cfg.DSN(t.Context())
 	want := "postgres://user:pass@remote:5432/mydb?sslmode=require"
 	if got != want {
 		t.Errorf("DSN() with URL = %q, want %q", got, want)
@@ -23,10 +23,10 @@ func TestPostgresConfig_DSN_StructFields(t *testing.T) {
 		Port:     5432,
 		Database: "signaldb",
 		User:     "siguser",
-		Password: secrets.MustNewSecureString("s3cr3t"),
+		Password: secrets.MustNewSecureString(t.Context(), "s3cr3t"),
 		SSLMode:  "require",
 	}
-	got := cfg.DSN()
+	got := cfg.DSN(t.Context())
 	want := "postgres://siguser:s3cr3t@db.example.com:5432/signaldb?sslmode=require"
 	if got != want {
 		t.Errorf("DSN() = %q, want %q", got, want)
@@ -38,7 +38,7 @@ func TestPostgresConfig_DSN_DefaultsHostPort(t *testing.T) {
 		Database: "mydb",
 		User:     "admin",
 	}
-	got := cfg.DSN()
+	got := cfg.DSN(t.Context())
 	// Host defaults to "localhost", port to 5432, sslMode to "disable".
 	want := "postgres://admin:@localhost:5432/mydb?sslmode=disable"
 	if got != want {
@@ -53,7 +53,7 @@ func TestPostgresConfig_DSN_DefaultSSLMode(t *testing.T) {
 		Database: "db",
 		User:     "u",
 	}
-	got := cfg.DSN()
+	got := cfg.DSN(t.Context())
 	want := "postgres://u:@localhost:5432/db?sslmode=disable"
 	if got != want {
 		t.Errorf("DSN() = %q, want %q", got, want)
@@ -69,7 +69,7 @@ func TestPostgresConfig_DSN_NilURLFallsBackToFields(t *testing.T) {
 		User:     "testuser",
 		SSLMode:  "verify-full",
 	}
-	got := cfg.DSN()
+	got := cfg.DSN(t.Context())
 	want := "postgres://testuser:@pg:5433/testdb?sslmode=verify-full"
 	if got != want {
 		t.Errorf("DSN() = %q, want %q", got, want)
@@ -80,14 +80,14 @@ func TestPostgresConfig_DSN_EmptyURLPlaintextFallsBackToFields(t *testing.T) {
 	// A SecureString created from empty string returns "" from Plaintext(),
 	// so DSN should fall back to the structured fields.
 	cfg := PostgresConfig{
-		URL:      secrets.MustNewSecureString(""),
+		URL:      secrets.MustNewSecureString(t.Context(), ""),
 		Host:     "fallback",
 		Port:     5432,
 		Database: "fb",
 		User:     "fbuser",
 		SSLMode:  "disable",
 	}
-	got := cfg.DSN()
+	got := cfg.DSN(t.Context())
 	want := "postgres://fbuser:@fallback:5432/fb?sslmode=disable"
 	if got != want {
 		t.Errorf("DSN() = %q, want %q", got, want)
@@ -103,7 +103,7 @@ func TestPostgresConfig_DSN_NilPassword(t *testing.T) {
 		Password: nil,
 		SSLMode:  "disable",
 	}
-	got := cfg.DSN()
+	got := cfg.DSN(t.Context())
 	want := "postgres://user:@localhost:5432/db?sslmode=disable"
 	if got != want {
 		t.Errorf("DSN() = %q, want %q", got, want)
@@ -117,10 +117,10 @@ func TestPostgresConfig_DSN_SpecialCharsInPassword(t *testing.T) {
 		Port:     5432,
 		Database: "db",
 		User:     "user",
-		Password: secrets.MustNewSecureString("p@ss w0rd!"),
+		Password: secrets.MustNewSecureString(t.Context(), "p@ss w0rd!"),
 		SSLMode:  "disable",
 	}
-	got := cfg.DSN()
+	got := cfg.DSN(t.Context())
 	// url.QueryEscape("p@ss w0rd!") == "p%40ss+w0rd%21"
 	if got == "" {
 		t.Fatal("expected non-empty DSN")

@@ -400,7 +400,7 @@ func newTestServerWithVerification(t *testing.T) (*Server, *noopVerificationTran
 	}
 	profilesMgr := profiles.NewProfilesManager(profileStore)
 
-	stickersMgr := stickers.NewStickersManager(stickers.ManagerConfig{Logger: logger})
+	stickersMgr := stickers.NewStickersManager(t.Context(), stickers.ManagerConfig{Logger: logger})
 	directoryMgr := directory.NewDirectoryManager(logger)
 	secureStorageMgr := securestorage.NewSecureStorageManager(logger)
 	svrMgr := securevaluerecovery.NewSVRManager(logger)
@@ -414,7 +414,7 @@ func newTestServerWithVerification(t *testing.T) (*Server, *noopVerificationTran
 	})
 	ktMgr := keytransparency.NewKeyTransparencyManager(logger)
 	captchaMgr := captcha.NewCaptchaManager(logger)
-	certsMgr := certificates.NewCertificatesManager(secrets.MustNewSecureString("test-signing-key-32bytes-xxxxxx"), logger)
+	certsMgr := certificates.NewCertificatesManager(secrets.MustNewSecureString(t.Context(), "test-signing-key-32bytes-xxxxxx"), logger)
 
 	usernameStore := &memUsernameStore{
 		hashToUUID:   make(map[string]string),
@@ -491,7 +491,7 @@ func buildTestServerWithVerificationMgr(t *testing.T, verificationMgr *sessionsh
 	}
 	profilesMgr := profiles.NewProfilesManager(profileStore)
 
-	stickersMgr := stickers.NewStickersManager(stickers.ManagerConfig{Logger: logger})
+	stickersMgr := stickers.NewStickersManager(t.Context(), stickers.ManagerConfig{Logger: logger})
 	directoryMgr := directory.NewDirectoryManager(logger)
 	secureStorageMgr := securestorage.NewSecureStorageManager(logger)
 	svrMgr := securevaluerecovery.NewSVRManager(logger)
@@ -505,7 +505,7 @@ func buildTestServerWithVerificationMgr(t *testing.T, verificationMgr *sessionsh
 	})
 	ktMgr := keytransparency.NewKeyTransparencyManager(logger)
 	captchaMgr := captcha.NewCaptchaManager(logger)
-	certsMgr := certificates.NewCertificatesManager(secrets.MustNewSecureString("test-signing-key-32bytes-xxxxxx"), logger)
+	certsMgr := certificates.NewCertificatesManager(secrets.MustNewSecureString(t.Context(), "test-signing-key-32bytes-xxxxxx"), logger)
 
 	usernameStore := &memUsernameStore{
 		hashToUUID:   make(map[string]string),

@@ -21,7 +21,7 @@ import (
 func newTestCertsMgr(t *testing.T) *certificates.CertificatesManager {
 	t.Helper()
 	return certificates.NewCertificatesManager(
-		secrets.MustNewSecureString("test-signing-key"),
+		secrets.MustNewSecureString(t.Context(), "test-signing-key"),
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 }
@@ -43,7 +43,7 @@ func TestCertificateRotationWorker_InstallsFreshKey(t *testing.T) {
 	if err := w.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	pub := mgr.Ed25519PublicKey()
+	pub := mgr.Ed25519PublicKey(t.Context())
 	if len(pub) == 0 {
 		t.Error("Ed25519 public key not installed after rotation")
 	}
@@ -61,7 +61,7 @@ func TestCertificateRotationWorker_AvoidsReservedKeyIDs(t *testing.T) {
 	if err := w.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if len(mgr.Ed25519PublicKey()) == 0 {
+	if len(mgr.Ed25519PublicKey(t.Context())) == 0 {
 		t.Error("key not installed")
 	}
 }
@@ -73,7 +73,7 @@ func TestCertificateRotationWorker_RefusesPreEpochClock(t *testing.T) {
 	if err := w.Run(context.Background()); err == nil {
 		t.Error("expected error when clock is before certKeyIDEpoch")
 	}
-	if len(mgr.Ed25519PublicKey()) != 0 {
+	if len(mgr.Ed25519PublicKey(t.Context())) != 0 {
 		t.Error("key should not be installed when keyId derivation fails")
 	}
 }
@@ -118,7 +118,7 @@ func TestCertificateRotationWorker_DeterministicWithFixedRandomness(t *testing.T
 	if err := w.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	pubA := mgr.Ed25519PublicKey()
+	pubA := mgr.Ed25519PublicKey(t.Context())
 
 	// Second run with the same seed → same public key.
 	mgr2 := newTestCertsMgr(t)
@@ -126,7 +126,7 @@ func TestCertificateRotationWorker_DeterministicWithFixedRandomness(t *testing.T
 	w2.randSource = &recordingReader{data: bytes.Repeat([]byte{0x42}, 32)}
 	w2.nowFn = w.nowFn
 	_ = w2.Run(context.Background())
-	pubB := mgr2.Ed25519PublicKey()
+	pubB := mgr2.Ed25519PublicKey(t.Context())
 
 	if !bytes.Equal(pubA, pubB) {
 		t.Error("ed25519 keypair generation is not deterministic with fixed randomness")
@@ -330,7 +330,7 @@ func TestCertificateRotationWorker_AvoidsAdjacentReservedKeyIDs(t *testing.T) {
 	// Smoke-check the install succeeded; the precise keyID is an
 	// internal detail, but a successful install implies the bump
 	// loop terminated cleanly without leaving us on a reserved ID.
-	if len(mgr.Ed25519PublicKey()) == 0 {
+	if len(mgr.Ed25519PublicKey(t.Context())) == 0 {
 		t.Error("key not installed; bump loop likely fell through on a reserved ID")
 	}
 }

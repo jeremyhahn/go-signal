@@ -39,12 +39,12 @@ func TestSVRCredentials_AppendJSON_ByteIdenticalToTheOldStructPath(t *testing.T)
 	}
 	for _, pw := range passwords {
 		t.Run(pw, func(t *testing.T) {
-			c := &SVRCredentials{Username: "acct-uuid", Password: secrets.MustNewSecureString(pw)}
+			c := &SVRCredentials{Username: "acct-uuid", Password: secrets.MustNewSecureString(t.Context(), pw)}
 			defer c.Destroy()
 
 			// Through the production path (AppendJSON), and through the
 			// Marshaler that delegates to it — both must match the oracle.
-			got, err := c.AppendJSON(nil)
+			got, err := c.AppendJSON(t.Context(), nil)
 			if err != nil {
 				t.Fatalf("AppendJSON: %v", err)
 			}
@@ -69,10 +69,10 @@ func TestSVRCredentials_AppendJSON_ByteIdenticalToTheOldStructPath(t *testing.T)
 // AppendJSON must APPEND, not overwrite: it writes into a buffer the caller
 // owns and may already have written into.
 func TestSVRCredentials_AppendJSON_AppendsToExistingBuffer(t *testing.T) {
-	c := &SVRCredentials{Username: "u", Password: secrets.MustNewSecureString("pw")}
+	c := &SVRCredentials{Username: "u", Password: secrets.MustNewSecureString(t.Context(), "pw")}
 	defer c.Destroy()
 
-	got, err := c.AppendJSON([]byte("PREFIX"))
+	got, err := c.AppendJSON(t.Context(), []byte("PREFIX"))
 	if err != nil {
 		t.Fatalf("AppendJSON: %v", err)
 	}
@@ -84,9 +84,9 @@ func TestSVRCredentials_AppendJSON_AppendsToExistingBuffer(t *testing.T) {
 // An unavailable credential must fail the response rather than emit an empty
 // password the client would treat as usable.
 func TestSVRCredentials_AppendJSON_DestroyedPasswordFailsClosed(t *testing.T) {
-	c := &SVRCredentials{Username: "u", Password: secrets.MustNewSecureString("pw")}
+	c := &SVRCredentials{Username: "u", Password: secrets.MustNewSecureString(t.Context(), "pw")}
 	c.Destroy()
-	if _, err := c.AppendJSON(nil); err == nil {
+	if _, err := c.AppendJSON(t.Context(), nil); err == nil {
 		t.Error("destroyed password serialised without error; a client would receive an empty credential")
 	}
 }

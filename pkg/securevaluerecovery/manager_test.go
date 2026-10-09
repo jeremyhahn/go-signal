@@ -2,6 +2,7 @@ package securevaluerecovery
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"testing"
 )
@@ -38,7 +39,7 @@ func TestGetAuth_ReturnsCredentials(t *testing.T) {
 	if creds.Username != "user-uuid-1" {
 		t.Errorf("got username %q, want %q", creds.Username, "user-uuid-1")
 	}
-	if creds.Password.Plaintext() == "" {
+	if creds.Password.Plaintext(t.Context()) == "" {
 		t.Fatal("expected non-empty password")
 	}
 }
@@ -53,7 +54,7 @@ func TestGetAuth_UniquePasswords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if creds1.Password.Plaintext() == creds2.Password.Plaintext() {
+	if creds1.Password.Plaintext(t.Context()) == creds2.Password.Plaintext(t.Context()) {
 		t.Error("expected unique passwords for each call")
 	}
 }
@@ -79,16 +80,21 @@ func TestGetAuth_PreservesAccountUUID(t *testing.T) {
 	}
 }
 
+// Sealing the issued password runs under the caller's context, so a caller
+// that has already given up gets an error, not a credential.
 func TestGetAuth_CancelledContext(t *testing.T) {
 	m := NewSVRManager(testLogger())
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	creds, err := m.GetAuth(ctx, "user-1", "backup")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected a cancelled context to fail issuance")
 	}
-	if creds.Username != "user-1" {
-		t.Errorf("got username %q, want %q", creds.Username, "user-1")
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("error = %v, want it to wrap context.Canceled", err)
+	}
+	if creds != nil {
+		t.Error("a failed issuance must not return a credential")
 	}
 }
 

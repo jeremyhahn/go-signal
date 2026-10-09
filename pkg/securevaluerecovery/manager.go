@@ -22,7 +22,7 @@ func NewSVRManager(logger *slog.Logger) *SVRManager {
 // GetAuth returns stub credentials for the given SVR service name (backup or
 // svr).
 func (m *SVRManager) GetAuth(ctx context.Context, accountUUID, name string) (*SVRCredentials, error) {
-	password, err := secrets.NewSecureString(uuid.NewString())
+	password, err := secrets.NewSecureString(ctx, uuid.NewString())
 	if err != nil {
 		return nil, err
 	}

@@ -5,6 +5,7 @@ package websocket
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
@@ -116,7 +117,7 @@ func (h *Handler) HandleAuthenticated(w http.ResponseWriter, r *http.Request) {
 	// Seal the session credential before the upgrade: once the connection is
 	// hijacked there is no HTTP status left to report a failure with, and a
 	// session must never run with an unprotected (or unset) password.
-	sessionPassword, err := secrets.NewSecureString(password)
+	sessionPassword, err := secrets.NewSecureString(r.Context(), password)
 	if err != nil {
 		h.logger.Error("failed to protect session credential", slog.String("error", err.Error()))
 		http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -156,7 +157,7 @@ func (h *Handler) HandleAuthenticated(w http.ResponseWriter, r *http.Request) {
 
 	// The read pump blocks until the connection closes.
 	session.ReadPump(func(msg *signalws.WebSocketMessage) {
-		h.handleIncomingMessage(session, msg)
+		h.handleIncomingMessage(r.Context(), session, msg)
 	})
 }
 
@@ -185,7 +186,7 @@ func (h *Handler) HandleUnauthenticated(w http.ResponseWriter, r *http.Request) 
 
 	// The unauthenticated socket handles WebSocket-wrapped HTTP requests.
 	session.ReadPump(func(msg *signalws.WebSocketMessage) {
-		h.handleIncomingMessage(session, msg)
+		h.handleIncomingMessage(r.Context(), session, msg)
 	})
 }
 
@@ -299,7 +300,7 @@ func (h *Handler) flushPendingMessages(r *http.Request, session *signalws.Sessio
 
 // handleIncomingMessage processes an incoming WebSocket message from an
 // authenticated client.
-func (h *Handler) handleIncomingMessage(session *signalws.Session, msg *signalws.WebSocketMessage) {
+func (h *Handler) handleIncomingMessage(ctx context.Context, session *signalws.Session, msg *signalws.WebSocketMessage) {
 	if msg.Type == "response" {
 		// Client is acknowledging a server-sent message.
 		h.logger.Debug("received message ack",
@@ -350,7 +351,7 @@ func (h *Handler) handleIncomingMessage(session *signalws.Session, msg *signalws
 		// Route the request through the HTTP handler chain, mirroring the
 		// Java Signal-Server's WebSocketResourceProvider which forwards all
 		// WebSocket requests to the same REST handlers.
-		h.routeToHTTP(session, msg)
+		h.routeToHTTP(ctx, session, msg)
 	}
 }
 
@@ -385,7 +386,7 @@ func (h *Handler) extractCredentials(r *http.Request) (string, string, bool) {
 // mirroring the Java Signal-Server's WebSocketResourceProvider. This allows
 // WebSocket clients to invoke any REST endpoint (e.g. PUT /v1/messages/{dest}
 // for typing indicators) without duplicating handler logic.
-func (h *Handler) routeToHTTP(session *signalws.Session, msg *signalws.WebSocketMessage) {
+func (h *Handler) routeToHTTP(ctx context.Context, session *signalws.Session, msg *signalws.WebSocketMessage) {
 	if h.httpHandler == nil {
 		h.logger.Warn("no HTTP handler configured for WebSocket routing",
 			slog.String("uuid", session.UUID),
@@ -462,8 +463,8 @@ func (h *Handler) routeToHTTP(session *signalws.Session, msg *signalws.WebSocket
 
 	// Set Basic Auth using the session's credentials so that the REST auth
 	// middleware can authenticate the request.
-	if session.AuthToken != nil && !session.AuthToken.IsDestroyed() {
-		httpReq.SetBasicAuth(session.UUID, session.AuthToken.Plaintext())
+	if session.AuthToken != nil && !session.AuthToken.IsDestroyed(ctx) {
+		httpReq.SetBasicAuth(session.UUID, session.AuthToken.Plaintext(ctx))
 	}
 
 	// Set content type if not already set and there's a body.

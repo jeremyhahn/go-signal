@@ -20,7 +20,7 @@ func testCaptchaToken(t *testing.T) string {
 }
 
 func TestBuildCaptchaChecker_TestProviderNeedsNoSecret(t *testing.T) {
-	checker, err := buildCaptchaChecker(config.CaptchaConfig{Provider: "test"})
+	checker, err := buildCaptchaChecker(t.Context(), config.CaptchaConfig{Provider: "test"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestBuildCaptchaChecker_TestProviderNeedsNoSecret(t *testing.T) {
 // A token without the test prefix must still be rejected — the test provider
 // accepts a known prefix, not everything.
 func TestBuildCaptchaChecker_TestProviderRejectsUnknownToken(t *testing.T) {
-	checker, err := buildCaptchaChecker(config.CaptchaConfig{Provider: "test"})
+	checker, err := buildCaptchaChecker(t.Context(), config.CaptchaConfig{Provider: "test"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestBuildCaptchaChecker_TestProviderRejectsUnknownToken(t *testing.T) {
 // No provider named yields no Checker; the REST layer turns that into a 503
 // rather than accepting an unverifiable token.
 func TestBuildCaptchaChecker_NoProviderYieldsNilChecker(t *testing.T) {
-	checker, err := buildCaptchaChecker(config.CaptchaConfig{})
+	checker, err := buildCaptchaChecker(t.Context(), config.CaptchaConfig{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -67,13 +67,13 @@ func TestBuildCaptchaChecker_NoProviderYieldsNilChecker(t *testing.T) {
 }
 
 func TestBuildCaptchaChecker_UnknownProviderIsAStartupError(t *testing.T) {
-	secret, err := secrets.NewSecureString("s3cret")
+	secret, err := secrets.NewSecureString(t.Context(), "s3cret")
 	if err != nil {
 		t.Fatalf("NewSecureString: %v", err)
 	}
 	defer secret.Destroy()
 
-	if _, err := buildCaptchaChecker(config.CaptchaConfig{
+	if _, err := buildCaptchaChecker(t.Context(), config.CaptchaConfig{
 		Provider:  "nonesuch",
 		SecretKey: secret,
 	}); err == nil {
@@ -94,7 +94,7 @@ func TestProductionConfigRejectsTestCaptchaProvider(t *testing.T) {
 	cfg.Storage.Backend = "postgres"
 	cfg.Captcha.Provider = "test"
 
-	err := cfg.Validate()
+	err := cfg.Validate(t.Context())
 
 	var prodErr *config.ProductionValidationError
 	if !errors.As(err, &prodErr) {

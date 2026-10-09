@@ -30,7 +30,7 @@ var listStickerPacksCmd = &cobra.Command{
 	Use:   "listStickerPacks",
 	Short: "List installed sticker packs",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -65,7 +65,7 @@ before upload. The pack key is printed on success; persist it or hand out
 the share URL — Signal stores no copy server-side.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -112,7 +112,7 @@ the URL once.`,
 			return err
 		}
 
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -166,7 +166,7 @@ sticker image.`,
 			return &UsageError{Message: "--pack-id is required"}
 		}
 
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}

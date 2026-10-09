@@ -26,7 +26,7 @@ var submitChallengeCmd = &cobra.Command{
 		if challengeToken == "" {
 			return &UsageError{Message: "--challenge is required"}
 		}
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}

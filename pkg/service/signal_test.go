@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"log/slog"
 	"testing"
 
@@ -31,7 +32,7 @@ func buildTestServiceConfig() ServiceConfig {
 	profStore := newMockProfileStore()
 	profMgr := profiles.NewProfilesManager(profStore)
 
-	signingKey := secrets.MustNewSecureString("signal-test-key-32bytes-padding!!")
+	signingKey := secrets.MustNewSecureString(context.Background(), "signal-test-key-32bytes-padding!!")
 	certMgr := certificates.NewCertificatesManager(signingKey, slog.Default())
 
 	provStore := newMockProvisioningStore()

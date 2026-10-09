@@ -16,11 +16,11 @@ type mockResolver struct {
 }
 
 func (m *mockResolver) Scheme() string { return m.scheme }
-func (m *mockResolver) Resolve(_ context.Context, _ string) (*SecureString, error) {
+func (m *mockResolver) Resolve(ctx context.Context, _ string) (*SecureString, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
-	return MustNewSecureString(m.resolved), nil
+	return MustNewSecureString(ctx, m.resolved), nil
 }
 
 func TestResolverRegistry_Resolve_RegisteredScheme(t *testing.T) {
@@ -31,7 +31,7 @@ func TestResolverRegistry_Resolve_RegisteredScheme(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	defer result.Destroy()
-	assert.Equal(t, "secret-value", result.Plaintext())
+	assert.Equal(t, "secret-value", result.Plaintext(t.Context()))
 }
 
 func TestResolverRegistry_Resolve_UnregisteredScheme(t *testing.T) {
@@ -52,7 +52,7 @@ func TestResolverRegistry_Resolve_PlainValue(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	defer result.Destroy()
-	assert.Equal(t, "just-a-plain-value", result.Plaintext())
+	assert.Equal(t, "just-a-plain-value", result.Plaintext(t.Context()))
 }
 
 func TestResolverRegistry_Resolve_EmptyValue(t *testing.T) {
@@ -62,7 +62,7 @@ func TestResolverRegistry_Resolve_EmptyValue(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	defer result.Destroy()
-	assert.Equal(t, "", result.Plaintext())
+	assert.Equal(t, "", result.Plaintext(t.Context()))
 }
 
 func TestResolverRegistry_HasResolver(t *testing.T) {
@@ -82,7 +82,7 @@ func TestResolverRegistry_Register_OverwritesPrevious(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	defer result.Destroy()
-	assert.Equal(t, "second", result.Plaintext())
+	assert.Equal(t, "second", result.Plaintext(t.Context()))
 }
 
 func TestResolverRegistry_Resolve_ResolverError(t *testing.T) {
@@ -111,7 +111,7 @@ func TestResolverRegistry_Resolve_ReturnsSecureString(t *testing.T) {
 
 	// String() must never expose the plaintext.
 	assert.Equal(t, redacted, result.String())
-	assert.Equal(t, "sensitive-data", result.Plaintext())
+	assert.Equal(t, "sensitive-data", result.Plaintext(t.Context()))
 }
 
 func TestParseScheme(t *testing.T) {

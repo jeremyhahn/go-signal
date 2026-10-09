@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -13,7 +14,7 @@ import (
 func failClone(t *testing.T, injected error) {
 	t.Helper()
 	original := cloneSecret
-	cloneSecret = func(*secrets.SecureString) (*secrets.SecureString, error) { return nil, injected }
+	cloneSecret = func(*secrets.SecureString, context.Context) (*secrets.SecureString, error) { return nil, injected }
 	t.Cleanup(func() { cloneSecret = original })
 }
 
@@ -27,13 +28,13 @@ func failClone(t *testing.T, injected error) {
 // configuration errors would never recover. The two are now distinct: the
 // allocation failure is an internal error carrying its cause.
 func TestNewHTTP_CloneFailureIsReportedNotMistakenForAMissingSecret(t *testing.T) {
-	secret := secrets.MustNewSecureString("shared-secret")
+	secret := secrets.MustNewSecureString(t.Context(), "shared-secret")
 	defer secret.Destroy()
 
 	injected := errors.New("no protected memory available")
 	failClone(t, injected)
 
-	c, err := NewHTTP(HTTPConfig{BaseURL: "https://storage.example", SharedSecret: secret})
+	c, err := NewHTTP(t.Context(), HTTPConfig{BaseURL: "https://storage.example", SharedSecret: secret})
 	if err == nil {
 		t.Fatal("NewHTTP returned a client it could not protect a secret for")
 	}
@@ -45,7 +46,7 @@ func TestNewHTTP_CloneFailureIsReportedNotMistakenForAMissingSecret(t *testing.T
 	}
 
 	// The caller's secret is untouched, so a retry is possible.
-	if secret.IsDestroyed() {
+	if secret.IsDestroyed(t.Context()) {
 		t.Error("a failed NewHTTP destroyed the caller's secret")
 	}
 }

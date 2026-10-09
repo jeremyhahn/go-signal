@@ -34,11 +34,10 @@ func (s *Server) handleGetSVRAuth(w http.ResponseWriter, r *http.Request, name s
 		return
 	}
 
-	// The credential is marshalled into the response body (writeJSON opens
-	// the secret for exactly that), then wiped — its protected copy does not
+	// Written to the response, then wiped — its protected copy does not
 	// outlive the request.
 	defer creds.Destroy()
-	writeJSON(w, http.StatusOK, creds)
+	writeJSONContext(r.Context(), w, http.StatusOK, *creds)
 }
 
 // handleCheckSVRBackupAuth handles POST /v2/backup/auth/check and validates

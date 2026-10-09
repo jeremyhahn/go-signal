@@ -405,6 +405,10 @@ func optionalAuthMiddleware(am service.AccountService, resolveDest func(*http.Re
 // writeJSON marshals v as JSON and writes it to the response with the given
 // status code. If marshaling fails, a 500 Internal Server Error is written.
 func writeJSON(w http.ResponseWriter, status int, v any) {
+	writeJSONContext(context.Background(), w, status, v)
+}
+
+func writeJSONContext(ctx context.Context, w http.ResponseWriter, status int, v any) {
 	// Encode through secrets.JSONAppender when the payload offers it, so the
 	// plaintext lands in a buffer THIS function owns. json.Marshal on a
 	// credential cannot achieve that: the type's MarshalJSON must return a
@@ -416,7 +420,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 		err  error
 	)
 	if a, ok := v.(secrets.JSONAppender); ok {
-		data, err = a.AppendJSON(nil)
+		data, err = a.AppendJSON(ctx, nil)
 	} else {
 		data, err = json.Marshal(v)
 	}

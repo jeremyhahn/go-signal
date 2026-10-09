@@ -12,7 +12,7 @@ func TestNewStickersService_InterfaceSatisfaction(t *testing.T) {
 }
 
 func newTestStickersService() StickersService {
-	mgr := stickers.NewStickersManager(stickers.ManagerConfig{})
+	mgr := stickers.NewStickersManager(context.Background(), stickers.ManagerConfig{})
 	return NewStickersService(mgr)
 }
 

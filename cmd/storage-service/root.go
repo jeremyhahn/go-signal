@@ -26,7 +26,7 @@ var rootCmd = &cobra.Command{
 		if cmd.Name() == "version" {
 			return nil
 		}
-		loaded, err := config.LoadWithFlags(cfgPath, cmd.Flags())
+		loaded, err := config.LoadWithFlags(cmd.Context(), cfgPath, cmd.Flags())
 		if err != nil {
 			return signalerrors.Wrap(signalerrors.ErrInternal, "loading configuration", err)
 		}

@@ -221,10 +221,10 @@ type capturingDirectoryService struct {
 }
 
 func (d *capturingDirectoryService) GetAuthToken(
-	_ context.Context,
+	ctx context.Context,
 	accountUUID string,
 ) (*directory.DirectoryCredentials, error) {
-	password, err := secrets.NewSecureString("cds-password")
+	password, err := secrets.NewSecureString(ctx, "cds-password")
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +261,7 @@ func TestHandleGetDirectoryAuth_DestroysCredentialAfterResponse(t *testing.T) {
 	if svc.issued == nil {
 		t.Fatal("handler did not request a credential")
 	}
-	if !svc.issued.Password.IsDestroyed() {
+	if !svc.issued.Password.IsDestroyed(t.Context()) {
 		t.Error("credential must be wiped once the response is written")
 	}
 }
@@ -300,10 +300,10 @@ func TestHandleGetDirectoryAuth_SealFailureIsNotIssued(t *testing.T) {
 type wipedDirectoryService struct{}
 
 func (wipedDirectoryService) GetAuthToken(
-	_ context.Context,
+	ctx context.Context,
 	accountUUID string,
 ) (*directory.DirectoryCredentials, error) {
-	password, err := secrets.NewSecureString("cds-password")
+	password, err := secrets.NewSecureString(ctx, "cds-password")
 	if err != nil {
 		return nil, err
 	}

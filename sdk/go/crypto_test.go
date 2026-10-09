@@ -47,20 +47,20 @@ func TestInitCrypto_InjectedStores(t *testing.T) {
 		Store:        &stubStore{},
 		CryptoStores: cs,
 	}
-	c, err := NewClient(cfg)
+	c, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
 	defer func() { _ = c.Close() }()
 
-	if err := c.initCrypto(); err != nil {
+	if err := c.initCrypto(t.Context()); err != nil {
 		t.Fatalf("initCrypto with injected stores: %v", err)
 	}
 	if c.crypto == nil {
 		t.Error("expected crypto state to be initialized")
 	}
 	// Second call is idempotent.
-	if err := c.initCrypto(); err != nil {
+	if err := c.initCrypto(t.Context()); err != nil {
 		t.Fatalf("initCrypto second call: %v", err)
 	}
 }
@@ -68,7 +68,7 @@ func TestInitCrypto_InjectedStores(t *testing.T) {
 func TestInitCrypto_FileBasedStores(t *testing.T) {
 	// Without CryptoStores, initCrypto creates file-based stores in DataDir.
 	c := newTestClient(t, "http://localhost", &stubStore{})
-	if err := c.initCrypto(); err != nil {
+	if err := c.initCrypto(t.Context()); err != nil {
 		t.Fatalf("initCrypto with file stores: %v", err)
 	}
 	if c.crypto == nil {
@@ -78,11 +78,11 @@ func TestInitCrypto_FileBasedStores(t *testing.T) {
 
 func TestInitCrypto_Idempotent(t *testing.T) {
 	c := newTestClient(t, "http://localhost", &stubStore{})
-	if err := c.initCrypto(); err != nil {
+	if err := c.initCrypto(t.Context()); err != nil {
 		t.Fatalf("first initCrypto: %v", err)
 	}
 	first := c.crypto
-	if err := c.initCrypto(); err != nil {
+	if err := c.initCrypto(t.Context()); err != nil {
 		t.Fatalf("second initCrypto: %v", err)
 	}
 	if c.crypto != first {
@@ -100,7 +100,7 @@ func TestLocalAddress_WithUUID(t *testing.T) {
 	ms := &mockStore{credentials: creds}
 	c := newTestClient(t, "http://localhost", ms)
 
-	addr, err := c.localAddress()
+	addr, err := c.localAddress(t.Context())
 	if err != nil {
 		t.Fatalf("localAddress: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestLocalAddress_WithUUID(t *testing.T) {
 func TestLocalAddress_NoCredentials(t *testing.T) {
 	// stubStore returns nil credentials.
 	c := newTestClient(t, "http://localhost", &stubStore{})
-	_, err := c.localAddress()
+	_, err := c.localAddress(t.Context())
 	if err == nil {
 		t.Fatal("expected error when no credentials")
 	}
@@ -124,7 +124,7 @@ func TestLocalAddress_NoCredentials(t *testing.T) {
 func TestLocalAddress_NoUUID(t *testing.T) {
 	ms := &mockStore{credentials: &Credentials{Number: "+15550000001", DeviceID: 1}}
 	c := newTestClient(t, "http://localhost", ms)
-	_, err := c.localAddress()
+	_, err := c.localAddress(t.Context())
 	if err == nil {
 		t.Fatal("expected error when UUID is empty")
 	}
@@ -144,7 +144,7 @@ func TestEnsureSession_NoDevicesInBundle(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestClient(t, srv.URL, &stubStore{})
-	if err := c.initCrypto(); err != nil {
+	if err := c.initCrypto(t.Context()); err != nil {
 		t.Fatalf("initCrypto: %v", err)
 	}
 	err := c.ensureSession(context.Background(), "recipient-uuid", 1)
@@ -160,7 +160,7 @@ func TestEnsureSession_ServerError(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestClient(t, srv.URL, &stubStore{})
-	if err := c.initCrypto(); err != nil {
+	if err := c.initCrypto(t.Context()); err != nil {
 		t.Fatalf("initCrypto: %v", err)
 	}
 	err := c.ensureSession(context.Background(), "recipient-uuid", 1)
@@ -206,13 +206,13 @@ func TestEnsureSession_AlreadyExists(t *testing.T) {
 		Store:        &stubStore{},
 		CryptoStores: cs,
 	}
-	c, err := NewClient(cfg)
+	c, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
 	defer func() { _ = c.Close() }()
 
-	if err := c.initCrypto(); err != nil {
+	if err := c.initCrypto(t.Context()); err != nil {
 		t.Fatalf("initCrypto: %v", err)
 	}
 
@@ -235,24 +235,24 @@ func TestEncryptMessage_WithoutSession(t *testing.T) {
 	ms := &mockStore{credentials: creds}
 	c := newTestClient(t, "http://localhost", ms)
 
-	if err := c.initCrypto(); err != nil {
+	if err := c.initCrypto(t.Context()); err != nil {
 		t.Fatalf("initCrypto: %v", err)
 	}
 
 	// Recover any panic from cipher.Encrypt so the test doesn't fail — the goal is
 	// statement coverage of the setup stmts in encryptMessage, not the encrypt result.
 	defer func() { _ = recover() }()
-	_, _ = c.encryptMessage("no-session-recipient", 1, []byte("hello"))
+	_, _ = c.encryptMessage(t.Context(), "no-session-recipient", 1, []byte("hello"))
 }
 
 func TestEncryptMessage_WithoutCredentials(t *testing.T) {
 	// localAddress() returns an error when no credentials exist.
 	// This covers the localAddress error return in encryptMessage.
 	c := newTestClient(t, "http://localhost", &stubStore{})
-	if err := c.initCrypto(); err != nil {
+	if err := c.initCrypto(t.Context()); err != nil {
 		t.Fatalf("initCrypto: %v", err)
 	}
-	_, err := c.encryptMessage("recipient", 1, []byte("hi"))
+	_, err := c.encryptMessage(t.Context(), "recipient", 1, []byte("hi"))
 	if err == nil {
 		t.Fatal("expected error: no credentials to build local address")
 	}
@@ -271,13 +271,13 @@ func TestEncryptMessage_InitCryptoFails(t *testing.T) {
 		DataDir:   dir,
 		Store:     &stubStore{},
 	}
-	c, err := NewClient(cfg)
+	c, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
 	defer func() { _ = c.Close() }()
 
-	_, err = c.encryptMessage("recipient", 1, []byte("hello"))
+	_, err = c.encryptMessage(t.Context(), "recipient", 1, []byte("hello"))
 	if err == nil {
 		t.Fatal("expected error when initCrypto fails")
 	}
@@ -291,11 +291,11 @@ func TestDecryptMessage_DefaultMsgType(t *testing.T) {
 	creds := &Credentials{UUID: "my-uuid", DeviceID: 1, Password: mustSecurePassword("pw")}
 	ms := &mockStore{credentials: creds}
 	c := newTestClient(t, "http://localhost", ms)
-	if err := c.initCrypto(); err != nil {
+	if err := c.initCrypto(t.Context()); err != nil {
 		t.Fatalf("initCrypto: %v", err)
 	}
 	content := []byte("raw content")
-	result, err := c.decryptMessage("sender-uuid", 1, 0, content)
+	result, err := c.decryptMessage(t.Context(), "sender-uuid", 1, 0, content)
 	if err != nil {
 		t.Fatalf("decryptMessage default: %v", err)
 	}
@@ -308,10 +308,10 @@ func TestDecryptMessage_LocalAddressError(t *testing.T) {
 	// No credentials → localAddress() returns an error, which decryptMessage
 	// propagates, covering the localAddress-error early-return branch.
 	c := newTestClient(t, "http://localhost", &stubStore{})
-	if err := c.initCrypto(); err != nil {
+	if err := c.initCrypto(t.Context()); err != nil {
 		t.Fatalf("initCrypto: %v", err)
 	}
-	_, err := c.decryptMessage("sender-uuid", 1, 0, []byte("content"))
+	_, err := c.decryptMessage(t.Context(), "sender-uuid", 1, 0, []byte("content"))
 	if err == nil {
 		t.Fatal("expected error: no credentials for localAddress")
 	}
@@ -329,13 +329,13 @@ func TestDecryptMessage_InitCryptoFails(t *testing.T) {
 		DataDir:   dir,
 		Store:     &stubStore{},
 	}
-	c, err := NewClient(cfg)
+	c, err := NewClient(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
 	defer func() { _ = c.Close() }()
 
-	_, err = c.decryptMessage("sender-uuid", 1, 0, []byte("hello"))
+	_, err = c.decryptMessage(t.Context(), "sender-uuid", 1, 0, []byte("hello"))
 	if err == nil {
 		t.Fatal("expected error when initCrypto fails")
 	}

@@ -16,7 +16,7 @@ import (
 // --------------------------------------------------------------------------
 
 func TestNewHCaptchaVerifier_Success(t *testing.T) {
-	v, err := NewHCaptchaVerifier(HCaptchaConfig{SecretKey: secrets.MustNewSecureString("secret")})
+	v, err := NewHCaptchaVerifier(t.Context(), HCaptchaConfig{SecretKey: secrets.MustNewSecureString(t.Context(), "secret")})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -26,7 +26,7 @@ func TestNewHCaptchaVerifier_Success(t *testing.T) {
 }
 
 func TestNewHCaptchaVerifier_EmptySecretKey(t *testing.T) {
-	_, err := NewHCaptchaVerifier(HCaptchaConfig{})
+	_, err := NewHCaptchaVerifier(t.Context(), HCaptchaConfig{})
 	if err == nil {
 		t.Fatal("expected error for empty secret key")
 	}
@@ -37,7 +37,7 @@ func TestNewHCaptchaVerifier_EmptySecretKey(t *testing.T) {
 }
 
 func TestNewHCaptchaVerifier_UsesDefaultEndpoint(t *testing.T) {
-	v, err := NewHCaptchaVerifier(HCaptchaConfig{SecretKey: secrets.MustNewSecureString("s")})
+	v, err := NewHCaptchaVerifier(t.Context(), HCaptchaConfig{SecretKey: secrets.MustNewSecureString(t.Context(), "s")})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestNewHCaptchaVerifier_UsesDefaultEndpoint(t *testing.T) {
 }
 
 func TestNewHCaptchaVerifier_CustomEndpointUsed(t *testing.T) {
-	v, err := NewHCaptchaVerifier(HCaptchaConfig{SecretKey: secrets.MustNewSecureString("s"), Endpoint: "http://test"})
+	v, err := NewHCaptchaVerifier(t.Context(), HCaptchaConfig{SecretKey: secrets.MustNewSecureString(t.Context(), "s"), Endpoint: "http://test"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestNewHCaptchaVerifier_CustomEndpointUsed(t *testing.T) {
 
 func TestNewHCaptchaVerifier_CustomHTTPClient(t *testing.T) {
 	client := &http.Client{}
-	v, err := NewHCaptchaVerifier(HCaptchaConfig{SecretKey: secrets.MustNewSecureString("s"), HTTPClient: client})
+	v, err := NewHCaptchaVerifier(t.Context(), HCaptchaConfig{SecretKey: secrets.MustNewSecureString(t.Context(), "s"), HTTPClient: client})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -82,8 +82,8 @@ func TestHCaptchaVerifier_Verify_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	v, _ := NewHCaptchaVerifier(HCaptchaConfig{
-		SecretKey:  secrets.MustNewSecureString("secret"),
+	v, _ := NewHCaptchaVerifier(t.Context(), HCaptchaConfig{
+		SecretKey:  secrets.MustNewSecureString(t.Context(), "secret"),
 		Endpoint:   srv.URL,
 		HTTPClient: srv.Client(),
 	})
@@ -115,8 +115,8 @@ func TestHCaptchaVerifier_Verify_Failure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	v, _ := NewHCaptchaVerifier(HCaptchaConfig{
-		SecretKey:  secrets.MustNewSecureString("secret"),
+	v, _ := NewHCaptchaVerifier(t.Context(), HCaptchaConfig{
+		SecretKey:  secrets.MustNewSecureString(t.Context(), "secret"),
 		Endpoint:   srv.URL,
 		HTTPClient: srv.Client(),
 	})
@@ -145,8 +145,8 @@ func TestHCaptchaVerifier_Verify_NetworkError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
 	srv.Close()
 
-	v, _ := NewHCaptchaVerifier(HCaptchaConfig{
-		SecretKey:  secrets.MustNewSecureString("secret"),
+	v, _ := NewHCaptchaVerifier(t.Context(), HCaptchaConfig{
+		SecretKey:  secrets.MustNewSecureString(t.Context(), "secret"),
 		Endpoint:   srv.URL,
 		HTTPClient: srv.Client(),
 	})
@@ -174,8 +174,8 @@ func TestHCaptchaVerifier_Verify_ParseError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	v, _ := NewHCaptchaVerifier(HCaptchaConfig{
-		SecretKey:  secrets.MustNewSecureString("secret"),
+	v, _ := NewHCaptchaVerifier(t.Context(), HCaptchaConfig{
+		SecretKey:  secrets.MustNewSecureString(t.Context(), "secret"),
 		Endpoint:   srv.URL,
 		HTTPClient: srv.Client(),
 	})
@@ -204,8 +204,8 @@ func TestHCaptchaVerifier_Verify_ContextCancelled(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	v, _ := NewHCaptchaVerifier(HCaptchaConfig{
-		SecretKey:  secrets.MustNewSecureString("secret"),
+	v, _ := NewHCaptchaVerifier(t.Context(), HCaptchaConfig{
+		SecretKey:  secrets.MustNewSecureString(t.Context(), "secret"),
 		Endpoint:   srv.URL,
 		HTTPClient: srv.Client(),
 	})
@@ -236,8 +236,8 @@ func TestHCaptchaVerifier_Verify_OmitsBlankRemoteIP(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	v, _ := NewHCaptchaVerifier(HCaptchaConfig{
-		SecretKey:  secrets.MustNewSecureString("secret"),
+	v, _ := NewHCaptchaVerifier(t.Context(), HCaptchaConfig{
+		SecretKey:  secrets.MustNewSecureString(t.Context(), "secret"),
 		Endpoint:   srv.URL,
 		HTTPClient: srv.Client(),
 	})

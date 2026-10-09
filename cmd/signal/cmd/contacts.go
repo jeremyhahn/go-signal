@@ -32,7 +32,7 @@ var listContactsCmd = &cobra.Command{
 	Use:   "listContacts",
 	Short: "List contacts",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -66,7 +66,7 @@ var updateContactCmd = &cobra.Command{
 	Short: "Add or update a contact",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -85,7 +85,7 @@ var removeContactCmd = &cobra.Command{
 	Short: "Remove a contact",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -99,7 +99,7 @@ var blockCmd = &cobra.Command{
 	Short: "Block a contact",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -113,7 +113,7 @@ var unblockCmd = &cobra.Command{
 	Short: "Unblock a contact",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}

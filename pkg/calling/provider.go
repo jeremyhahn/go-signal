@@ -153,7 +153,7 @@ func (p *CloudflareTurnProvider) callCloudflare(ctx context.Context, out *cloudf
 		return &CloudflareRequestError{Cause: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+p.apiToken.Plaintext())
+	req.Header.Set("Authorization", "Bearer "+p.apiToken.Plaintext(ctx))
 
 	resp, err := p.client.Do(req)
 	if err != nil {

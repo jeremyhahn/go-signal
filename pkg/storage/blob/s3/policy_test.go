@@ -98,12 +98,12 @@ func TestPolicySigner_Sign_HappyPathDeterministic(t *testing.T) {
 	policy := "test-policy-bytes"
 	encoded := base64.StdEncoding.EncodeToString([]byte(policy))
 
-	s := &PolicySigner{SecretAccessKey: secrets.MustNewSecureString("secret"), Region: "us-east-1"}
-	sig1, err := s.Sign(fixedTime(), encoded)
+	s := &PolicySigner{SecretAccessKey: secrets.MustNewSecureString(t.Context(), "secret"), Region: "us-east-1"}
+	sig1, err := s.Sign(t.Context(), fixedTime(), encoded)
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
 	}
-	sig2, err := s.Sign(fixedTime(), encoded)
+	sig2, err := s.Sign(t.Context(), fixedTime(), encoded)
 	if err != nil {
 		t.Fatalf("Sign 2: %v", err)
 	}
@@ -116,27 +116,28 @@ func TestPolicySigner_Sign_HappyPathDeterministic(t *testing.T) {
 }
 
 func TestPolicySigner_Sign_DifferentDatesDifferentSignatures(t *testing.T) {
-	s := &PolicySigner{SecretAccessKey: secrets.MustNewSecureString("secret"), Region: "us-east-1"}
-	day1, _ := s.Sign(fixedTime(), "policy")
-	day2, _ := s.Sign(fixedTime().Add(48*time.Hour), "policy")
+	s := &PolicySigner{SecretAccessKey: secrets.MustNewSecureString(t.Context(), "secret"), Region: "us-east-1"}
+	day1, _ := s.Sign(t.Context(), fixedTime(), "policy")
+	day2, _ := s.Sign(t.Context(), fixedTime().Add(48*time.Hour), "policy")
 	if day1 == day2 {
 		t.Error("different dates must produce different signatures")
 	}
 }
 
 func TestPolicySigner_Sign_RequiresFields(t *testing.T) {
-	if _, err := (&PolicySigner{Region: "r"}).Sign(fixedTime(), "policy"); err == nil {
+	if _, err := (&PolicySigner{Region: "r"}).Sign(t.Context(), fixedTime(), "policy"); err == nil {
 		t.Error("expected error for missing secret")
 	}
-	if _, err := (&PolicySigner{SecretAccessKey: secrets.MustNewSecureString("s")}).Sign(fixedTime(), "policy"); err == nil {
+	if _, err := (&PolicySigner{SecretAccessKey: secrets.MustNewSecureString(t.Context(), "s")}).Sign(t.Context(), fixedTime(), "policy"); err == nil {
 		t.Error("expected error for missing region")
 	}
 }
 
 func TestFormatForm_HappyPath(t *testing.T) {
 	form, err := FormatForm(
+		t.Context(),
 		&PolicyGenerator{Region: "us-east-1", Bucket: "b", AccessKeyID: "AKID"},
-		&PolicySigner{SecretAccessKey: secrets.MustNewSecureString("secret"), Region: "us-east-1"},
+		&PolicySigner{SecretAccessKey: secrets.MustNewSecureString(t.Context(), "secret"), Region: "us-east-1"},
 		fixedTime(),
 		"stickers/x/manifest.proto",
 		10_000,
@@ -168,8 +169,9 @@ func TestFormatForm_HappyPath(t *testing.T) {
 
 func TestFormatForm_GeneratorErrorPropagates(t *testing.T) {
 	_, err := FormatForm(
+		t.Context(),
 		&PolicyGenerator{}, // missing fields
-		&PolicySigner{SecretAccessKey: secrets.MustNewSecureString("s"), Region: "r"},
+		&PolicySigner{SecretAccessKey: secrets.MustNewSecureString(t.Context(), "s"), Region: "r"},
 		fixedTime(), "k", 1,
 	)
 	if err == nil {
@@ -179,6 +181,7 @@ func TestFormatForm_GeneratorErrorPropagates(t *testing.T) {
 
 func TestFormatForm_SignerErrorPropagates(t *testing.T) {
 	_, err := FormatForm(
+		t.Context(),
 		&PolicyGenerator{Region: "r", Bucket: "b", AccessKeyID: "k"},
 		&PolicySigner{}, // missing fields
 		fixedTime(), "k", 1,

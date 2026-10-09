@@ -660,7 +660,7 @@ func (s *Server) handleGetSVRBAuth(w http.ResponseWriter, r *http.Request) {
 	// an empty password the client would treat as usable: AppendJSONString
 	// errors, and writeJSON turns that into a 500.
 	defer creds.Destroy()
-	writeJSON(w, http.StatusOK, *creds)
+	writeJSONContext(r.Context(), w, http.StatusOK, *creds)
 }
 
 // --- helpers ----------------------------------------------------------------

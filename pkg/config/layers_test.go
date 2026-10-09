@@ -111,7 +111,7 @@ func TestLoadWithFlags_Precedence(t *testing.T) {
 					if tc.flag {
 						args = []string{"--" + FlagName(d.key) + "=" + flagVal}
 					}
-					cfg, err := LoadWithFlags(writeYAML(t, body), addressFlags(t, args...))
+					cfg, err := LoadWithFlags(t.Context(), writeYAML(t, body), addressFlags(t, args...))
 					if err != nil {
 						t.Fatalf("LoadWithFlags: %v", err)
 					}
@@ -129,7 +129,7 @@ func TestLoadWithFlags_Precedence(t *testing.T) {
 func TestLoad_EnvOverridesWithoutFlags(t *testing.T) {
 	const envVal = "127.0.0.1:10004"
 	t.Setenv(EnvName(KeyHealthListen), envVal)
-	cfg, err := Load(writeYAML(t, yamlFor(t, string(KeyHealthListen), "127.0.0.1:10005")))
+	cfg, err := Load(t.Context(), writeYAML(t, yamlFor(t, string(KeyHealthListen), "127.0.0.1:10005")))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestLoad_EnvOverridesWithoutFlags(t *testing.T) {
 func TestLoad_EmptyEnvIsUnset(t *testing.T) {
 	const fileVal = "127.0.0.1:10006"
 	t.Setenv(EnvName(KeyCDSIWSListen), "")
-	cfg, err := Load(writeYAML(t, yamlFor(t, string(KeyCDSIWSListen), fileVal)))
+	cfg, err := Load(t.Context(), writeYAML(t, yamlFor(t, string(KeyCDSIWSListen), fileVal)))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestLoad_EmptyEnvIsUnset(t *testing.T) {
 // displayed default is the defaults-layer value.
 func TestLoadWithFlags_UnchangedFlagKeepsLowerLayer(t *testing.T) {
 	const fileVal = "127.0.0.1:10007"
-	cfg, err := LoadWithFlags(writeYAML(t, yamlFor(t, string(KeySVR2WSListen), fileVal)), addressFlags(t))
+	cfg, err := LoadWithFlags(t.Context(), writeYAML(t, yamlFor(t, string(KeySVR2WSListen), fileVal)), addressFlags(t))
 	if err != nil {
 		t.Fatalf("LoadWithFlags: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestLoadWithFlags_UnchangedFlagKeepsLowerLayer(t *testing.T) {
 // an empty address fails closed.
 func TestLoadWithFlags_EmptyFlagRejected(t *testing.T) {
 	fs := addressFlags(t, "--"+FlagName(KeyHealthListen)+"=")
-	cfg, err := LoadWithFlags(writeYAML(t, validYAML()), fs)
+	cfg, err := LoadWithFlags(t.Context(), writeYAML(t, validYAML()), fs)
 	if cfg != nil {
 		t.Fatal("LoadWithFlags returned a Config alongside an error")
 	}

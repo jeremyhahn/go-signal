@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -24,7 +25,7 @@ Use 'signal verify' to complete registration.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		number := args[0]
 
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -55,8 +56,9 @@ Use 'signal verify' to complete registration.`,
 	},
 }
 
-// newClient creates a Signal SDK client from CLI flags.
-func newClient() (*signal.Client, error) {
+// newClient creates a Signal SDK client from CLI flags. ctx is the running
+// command's context.
+func newClient(ctx context.Context) (*signal.Client, error) {
 	cfg := signal.ClientConfig{
 		ServerURL: serverURL,
 		DataDir:   configDir,
@@ -70,7 +72,7 @@ func newClient() (*signal.Client, error) {
 		if err != nil {
 			return nil, &CLIError{Op: "read CA cert", Cause: err}
 		}
-		caCert, err := signal.NewSecurePassword(string(certData))
+		caCert, err := signal.NewSecurePassword(ctx, string(certData))
 		// Wipe the file buffer.
 		for i := range certData {
 			certData[i] = 0
@@ -81,5 +83,5 @@ func newClient() (*signal.Client, error) {
 		cfg.CACert = caCert
 	}
 
-	return signal.NewClient(cfg)
+	return signal.NewClient(ctx, cfg)
 }

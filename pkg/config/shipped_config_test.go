@@ -18,7 +18,7 @@ func shippedConfigPath(t *testing.T) string {
 }
 
 func TestShippedConfig_Loads(t *testing.T) {
-	if _, err := config.Load(shippedConfigPath(t)); err != nil {
+	if _, err := config.Load(t.Context(), shippedConfigPath(t)); err != nil {
 		t.Fatalf("configs/signal-server.yml must load: %v", err)
 	}
 }
@@ -27,7 +27,7 @@ func TestShippedConfig_Loads(t *testing.T) {
 // running server to serve. They are seeded from this file, so assert the
 // names, the rollout, and the value the client receives.
 func TestShippedConfig_SeedsGlobalRemoteConfigFlags(t *testing.T) {
-	cfg, err := config.Load(shippedConfigPath(t))
+	cfg, err := config.Load(t.Context(), shippedConfigPath(t))
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -65,13 +65,13 @@ func TestShippedConfig_SeedsGlobalRemoteConfigFlags(t *testing.T) {
 // what stops it being deployed, and this asserts that gate actually rejects
 // it rather than assuming it would.
 func TestShippedConfig_IsRejectedInProductionMode(t *testing.T) {
-	cfg, err := config.Load(shippedConfigPath(t))
+	cfg, err := config.Load(t.Context(), shippedConfigPath(t))
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	cfg.Mode = "production"
 
-	if err := cfg.Validate(); err == nil {
+	if err := cfg.Validate(t.Context()); err == nil {
 		t.Error("expected the development config to be rejected in production mode")
 	}
 }

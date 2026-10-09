@@ -86,7 +86,7 @@ func TestBasicAuthHeaderCredential_MatchesTheStringSpelling(t *testing.T) {
 		{"long", strings.Repeat("x", 200)},
 	} {
 		t.Run(tc.user+"/"+tc.pass, func(t *testing.T) {
-			got := BasicAuthHeaderCredential(tc.user, secrets.MustNewSecureString(tc.pass))
+			got := BasicAuthHeaderCredential(t.Context(), tc.user, secrets.MustNewSecureString(t.Context(), tc.pass))
 			want := "Basic " + base64.StdEncoding.EncodeToString([]byte(tc.user+":"+tc.pass))
 			if got != want {
 				t.Errorf("header changed:\n  got  %q\n  want %q", got, want)
@@ -100,12 +100,12 @@ func TestBasicAuthHeaderCredential_MatchesTheStringSpelling(t *testing.T) {
 // send it, and the far side would reject it as a credential failure rather
 // than surfacing the real fault.
 func TestBasicAuthHeaderCredential_FailsClosedOnUnavailableSecret(t *testing.T) {
-	s := secrets.MustNewSecureString("pw")
+	s := secrets.MustNewSecureString(t.Context(), "pw")
 	s.Destroy()
-	if got := BasicAuthHeaderCredential("user", s); got != "" {
+	if got := BasicAuthHeaderCredential(t.Context(), "user", s); got != "" {
 		t.Errorf("destroyed credential produced a header: %q", got)
 	}
-	if got := BasicAuthHeaderCredential("user", nil); got != "" {
+	if got := BasicAuthHeaderCredential(t.Context(), "user", nil); got != "" {
 		t.Errorf("nil credential produced a header: %q", got)
 	}
 }

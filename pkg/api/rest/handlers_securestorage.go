@@ -17,11 +17,10 @@ func (s *Server) handleGetStorageAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The credential is marshalled into the response body (writeJSON opens
-	// the secret for exactly that), then wiped — its protected copy does not
+	// Written to the response, then wiped — its protected copy does not
 	// outlive the request. Matches handleGetDirectoryAuth and the SVR
 	// handlers; without it every storage-auth request would leak one
 	// protected allocation for the process lifetime.
 	defer creds.Destroy()
-	writeJSON(w, http.StatusOK, creds)
+	writeJSONContext(r.Context(), w, http.StatusOK, *creds)
 }

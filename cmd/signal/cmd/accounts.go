@@ -39,13 +39,13 @@ var listAccountsCmd = &cobra.Command{
 	Use:   "listAccounts",
 	Short: "List registered accounts",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
 		defer func() { _ = client.Close() }()
 
-		accounts, err := client.ListAccounts()
+		accounts, err := client.ListAccounts(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -69,7 +69,7 @@ var whoamiCmd = &cobra.Command{
 	Use:   "whoami",
 	Short: "Show authenticated account identity",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -92,7 +92,7 @@ var unregisterCmd = &cobra.Command{
 	Use:   "unregister",
 	Short: "Unregister the account from the server",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -105,7 +105,7 @@ var deleteLocalDataCmd = &cobra.Command{
 	Use:   "deleteLocalAccountData",
 	Short: "Delete all locally stored account data (irreversible)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -133,7 +133,7 @@ var updateAccountCmd = &cobra.Command{
 	Use:   "updateAccount",
 	Short: "Update account settings",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -171,7 +171,7 @@ var setPinCmd = &cobra.Command{
 		}
 		pin := strings.TrimRight(string(pinBytes), "\r\n")
 
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -184,7 +184,7 @@ var removePinCmd = &cobra.Command{
 	Use:   "removePin",
 	Short: "Remove registration lock PIN",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}
@@ -226,7 +226,7 @@ Examples:
 			cfg.LinkPreviews = &v
 		}
 
-		client, err := newClient()
+		client, err := newClient(cmd.Context())
 		if err != nil {
 			return err
 		}

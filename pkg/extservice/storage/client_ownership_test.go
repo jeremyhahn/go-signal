@@ -27,7 +27,7 @@ const ownershipRaceRounds = 4000
 // Reverting NewHTTP to check-then-clone makes this fail.
 func TestNewHTTP_DestroyDuringOwnershipTransfer(t *testing.T) {
 	for round := range ownershipRaceRounds {
-		secret := secrets.MustNewSecureString("shared-secret")
+		secret := secrets.MustNewSecureString(t.Context(), "shared-secret")
 
 		var wg sync.WaitGroup
 		wg.Add(1)
@@ -39,9 +39,9 @@ func TestNewHTTP_DestroyDuringOwnershipTransfer(t *testing.T) {
 		}()
 
 		close(release)
-		c, err := NewHTTP(HTTPConfig{BaseURL: "https://storage.example", SharedSecret: secret})
+		c, err := NewHTTP(t.Context(), HTTPConfig{BaseURL: "https://storage.example", SharedSecret: secret})
 		if err == nil {
-			if common.BasicAuthHeaderSecret("acct", c.secret) == "" {
+			if common.BasicAuthHeaderSecret(t.Context(), "acct", c.secret) == "" {
 				t.Fatalf("round %d: NewHTTP reported success but the client cannot derive credentials", round)
 			}
 			_ = c.Close()
@@ -56,8 +56,8 @@ func TestNewHTTP_DestroyDuringOwnershipTransfer(t *testing.T) {
 // contract the race above depends on: the client holds its own enclave, so the
 // caller destroying its copy afterwards leaves the client signing.
 func TestNewHTTP_ClonesRatherThanValidatesCallerSecret(t *testing.T) {
-	secret := secrets.MustNewSecureString("shared-secret")
-	c, err := NewHTTP(HTTPConfig{BaseURL: "https://storage.example", SharedSecret: secret})
+	secret := secrets.MustNewSecureString(t.Context(), "shared-secret")
+	c, err := NewHTTP(t.Context(), HTTPConfig{BaseURL: "https://storage.example", SharedSecret: secret})
 	if err != nil {
 		t.Fatalf("NewHTTP: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestNewHTTP_ClonesRatherThanValidatesCallerSecret(t *testing.T) {
 
 	secret.Destroy()
 
-	if common.BasicAuthHeaderSecret("acct", c.secret) == "" {
+	if common.BasicAuthHeaderSecret(t.Context(), "acct", c.secret) == "" {
 		t.Fatal("client lost its credentials when the caller destroyed its own secret")
 	}
 }

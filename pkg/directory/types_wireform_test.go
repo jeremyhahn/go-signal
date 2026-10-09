@@ -40,14 +40,14 @@ func TestDirectoryCredentials_MarshalJSON_ByteIdenticalToTheOldStructPath(t *tes
 	}
 	for _, pw := range passwords {
 		t.Run(pw, func(t *testing.T) {
-			c := &DirectoryCredentials{Username: "acct-uuid", Password: secrets.MustNewSecureString(pw)}
+			c := &DirectoryCredentials{Username: "acct-uuid", Password: secrets.MustNewSecureString(t.Context(), pw)}
 			defer c.Destroy()
 
 			// Through AppendJSON, which is what writeJSON actually calls in
 			// production, AND through the Marshaler that delegates to it.
 			// Testing only json.Marshal would stop pinning the production
 			// mechanism the moment the two are decoupled.
-			got, err := c.AppendJSON(nil)
+			got, err := c.AppendJSON(t.Context(), nil)
 			if err != nil {
 				t.Fatalf("AppendJSON: %v", err)
 			}
@@ -89,7 +89,7 @@ func TestDirectoryCredentials_UnmarshalJSON_RoundTripsEveryEscape(t *testing.T) 
 			if c.Username != "u" {
 				t.Errorf("username = %q, want %q", c.Username, "u")
 			}
-			if !c.Password.Equals(pw) {
+			if !c.Password.Equals(t.Context(), pw) {
 				t.Errorf("password did not round trip for %q", pw)
 			}
 		})

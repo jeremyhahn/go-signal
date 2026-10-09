@@ -24,7 +24,7 @@ func TestGetAuthToken_ConcurrentWithDestroy(t *testing.T) {
 		perCaller = 25
 	)
 	m := NewDirectoryManager(testLogger())
-	_ = m.SetSharedSecret(secrets.MustNewSecureString("cdsi-shared-secret"))
+	_ = m.SetSharedSecret(t.Context(), secrets.MustNewSecureString(t.Context(), "cdsi-shared-secret"))
 
 	var (
 		wg  sync.WaitGroup
@@ -48,7 +48,7 @@ func TestGetAuthToken_ConcurrentWithDestroy(t *testing.T) {
 				}
 				var unavailable *SharedSecretUnavailableError
 				switch {
-				case err == nil && len(creds.Password.Plaintext()) == 64: // HMAC-SHA256 hex
+				case err == nil && len(creds.Password.Plaintext(t.Context())) == 64: // HMAC-SHA256 hex
 				case errors.As(err, &unavailable) && creds == nil:
 				default:
 					mu.Lock()
@@ -82,5 +82,5 @@ func describe(creds *DirectoryCredentials, err error) string {
 	}
 	// Report the shape, never the credential: this string reaches a CI log
 	// on failure, and a bearer password there outlives every wipe.
-	return fmt.Sprintf("password of %d chars", len(creds.Password.Plaintext()))
+	return fmt.Sprintf("password of %d chars", len(creds.Password.Plaintext(context.Background())))
 }

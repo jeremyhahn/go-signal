@@ -37,7 +37,7 @@ func NewTransport(config TransportConfig) *Transport {
 
 // SendCode delivers a verification code to the given destination phone number
 // via an SMTP email-to-SMS gateway.
-func (t *Transport) SendCode(_ context.Context, destination string, code string, opts ...verification.SendOption) error {
+func (t *Transport) SendCode(ctx context.Context, destination string, code string, opts ...verification.SendOption) error {
 	resolved := verification.ApplySendOptions(opts...)
 
 	carrier := resolved.Carrier
@@ -59,7 +59,7 @@ func (t *Transport) SendCode(_ context.Context, destination string, code string,
 
 	password := ""
 	if t.config.Password != nil {
-		password = t.config.Password.Plaintext()
+		password = t.config.Password.Plaintext(ctx)
 	}
 	auth := smtp.PlainAuth("", t.config.Username, password, t.config.Host)
 

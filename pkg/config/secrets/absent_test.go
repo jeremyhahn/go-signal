@@ -13,7 +13,7 @@ import (
 // diverge exactly where the fail-open lived: a configured secret that has
 // been destroyed reports destroyed but NOT absent.
 func TestIsAbsent_SeparatesNeverSetFromNoLongerReadable(t *testing.T) {
-	destroyed := MustNewSecureString("x")
+	destroyed := MustNewSecureString(t.Context(), "x")
 	destroyed.Destroy()
 
 	cases := map[string]struct {
@@ -22,19 +22,19 @@ func TestIsAbsent_SeparatesNeverSetFromNoLongerReadable(t *testing.T) {
 		wantDestroyed bool
 	}{
 		"nil":            {nil, true, true},
-		"unset":          {MustNewSecureString(""), true, true},
-		"live":           {MustNewSecureString("x"), false, false},
+		"unset":          {MustNewSecureString(t.Context(), ""), true, true},
+		"live":           {MustNewSecureString(t.Context(), "x"), false, false},
 		"destroyed":      {destroyed, false, true},
 		"from bytes":     {mustFromBytes(t, "y"), false, false},
-		"clone of live":  {mustClone(t, MustNewSecureString("z")), false, false},
-		"clone of unset": {mustClone(t, MustNewSecureString("")), true, true},
+		"clone of live":  {mustClone(t, MustNewSecureString(t.Context(), "z")), false, false},
+		"clone of unset": {mustClone(t, MustNewSecureString(t.Context(), "")), true, true},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			if got := tc.s.IsAbsent(); got != tc.wantAbsent {
 				t.Errorf("IsAbsent() = %v, want %v", got, tc.wantAbsent)
 			}
-			if got := tc.s.IsDestroyed(); got != tc.wantDestroyed {
+			if got := tc.s.IsDestroyed(t.Context()); got != tc.wantDestroyed {
 				t.Errorf("IsDestroyed() = %v, want %v", got, tc.wantDestroyed)
 			}
 		})
@@ -44,7 +44,7 @@ func TestIsAbsent_SeparatesNeverSetFromNoLongerReadable(t *testing.T) {
 // Destroy must not make a configured secret look unconfigured — that is the
 // whole point of tracking it separately.
 func TestIsAbsent_StaysFalseAcrossDestroy(t *testing.T) {
-	s := MustNewSecureString("x")
+	s := MustNewSecureString(t.Context(), "x")
 	if s.IsAbsent() {
 		t.Fatal("a live secret must not be absent")
 	}
@@ -59,11 +59,11 @@ func TestIsAbsent_StaysFalseAcrossDestroy(t *testing.T) {
 }
 
 func TestTryWithBytes_RunsAndReportsNoError(t *testing.T) {
-	s := MustNewSecureString("hunter2")
+	s := MustNewSecureString(t.Context(), "hunter2")
 	defer s.Destroy()
 
 	var seen string
-	if err := s.TryWithBytes(func(b []byte) { seen = string(b) }); err != nil {
+	if err := s.TryWithBytes(t.Context(), func(b []byte) { seen = string(b) }); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if seen != "hunter2" {
@@ -72,11 +72,11 @@ func TestTryWithBytes_RunsAndReportsNoError(t *testing.T) {
 }
 
 func TestTryWithBytes_DistinguishesAbsentFromUnavailable(t *testing.T) {
-	destroyed := MustNewSecureString("x")
+	destroyed := MustNewSecureString(t.Context(), "x")
 	destroyed.Destroy()
 
 	t.Run("never set", func(t *testing.T) {
-		err := MustNewSecureString("").TryWithBytes(func([]byte) {})
+		err := MustNewSecureString(t.Context(), "").TryWithBytes(t.Context(), func([]byte) {})
 		var absent *AbsentSecretError
 		if !errors.As(err, &absent) {
 			t.Fatalf("expected *AbsentSecretError, got %#v", err)
@@ -86,13 +86,13 @@ func TestTryWithBytes_DistinguishesAbsentFromUnavailable(t *testing.T) {
 	t.Run("nil receiver", func(t *testing.T) {
 		var s *SecureString
 		var absent *AbsentSecretError
-		if err := s.TryWithBytes(func([]byte) {}); !errors.As(err, &absent) {
+		if err := s.TryWithBytes(t.Context(), func([]byte) {}); !errors.As(err, &absent) {
 			t.Fatalf("expected *AbsentSecretError, got %#v", err)
 		}
 	})
 
 	t.Run("configured then destroyed", func(t *testing.T) {
-		err := destroyed.TryWithBytes(func([]byte) {})
+		err := destroyed.TryWithBytes(t.Context(), func([]byte) {})
 		var unavailable *UnavailableSecretError
 		if !errors.As(err, &unavailable) {
 			t.Fatalf("expected *UnavailableSecretError, got %#v", err)
@@ -107,11 +107,11 @@ func TestTryWithBytes_DistinguishesAbsentFromUnavailable(t *testing.T) {
 // fn must not run when the secret cannot be revealed — a caller that ignored
 // the error would otherwise compute over whatever the zero value gives it.
 func TestTryWithBytes_DoesNotRunFnWhenUnavailable(t *testing.T) {
-	destroyed := MustNewSecureString("x")
+	destroyed := MustNewSecureString(t.Context(), "x")
 	destroyed.Destroy()
 
 	ran := false
-	if err := destroyed.TryWithBytes(func([]byte) { ran = true }); err == nil {
+	if err := destroyed.TryWithBytes(t.Context(), func([]byte) { ran = true }); err == nil {
 		t.Fatal("expected an error for a destroyed secret")
 	}
 	if ran {
@@ -121,7 +121,7 @@ func TestTryWithBytes_DoesNotRunFnWhenUnavailable(t *testing.T) {
 
 func mustFromBytes(t *testing.T, v string) *SecureString {
 	t.Helper()
-	s, err := NewSecureStringFromBytes([]byte(v))
+	s, err := NewSecureStringFromBytes(t.Context(), []byte(v))
 	if err != nil {
 		t.Fatalf("NewSecureStringFromBytes: %v", err)
 	}
@@ -130,7 +130,7 @@ func mustFromBytes(t *testing.T, v string) *SecureString {
 
 func mustClone(t *testing.T, src *SecureString) *SecureString {
 	t.Helper()
-	c, err := src.Clone()
+	c, err := src.Clone(t.Context())
 	if err != nil {
 		t.Fatalf("Clone: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestUnmarshalYAML_CarriesConfigured(t *testing.T) {
 			if got := doc.Secret.IsAbsent(); got != tc.wantAbsent {
 				t.Errorf("IsAbsent() = %v, want %v", got, tc.wantAbsent)
 			}
-			if got := doc.Secret.Plaintext(); got != tc.wantValue {
+			if got := doc.Secret.Plaintext(t.Context()); got != tc.wantValue {
 				t.Errorf("Plaintext() = %q, want %q", got, tc.wantValue)
 			}
 		})
@@ -224,7 +224,7 @@ func TestCloneWithPresence_IsASingleSnapshot(t *testing.T) {
 	const readers = 16
 
 	for range 50 {
-		s := MustNewSecureString("")
+		s := MustNewSecureString(t.Context(), "")
 
 		var wg sync.WaitGroup
 		start := make(chan struct{})
@@ -246,14 +246,14 @@ func TestCloneWithPresence_IsASingleSnapshot(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				<-start
-				clone, configured, err := s.CloneWithPresence()
+				clone, configured, err := s.CloneWithPresence(t.Context())
 				if err != nil {
 					t.Errorf("CloneWithPresence: %v", err)
 					return
 				}
 				defer clone.Destroy()
 
-				hasValue := clone.Plaintext() != ""
+				hasValue := clone.Plaintext(t.Context()) != ""
 				if hasValue && !configured {
 					t.Error("clone holds a value while presence reports never-configured: " +
 						"the two came from different snapshots")
@@ -271,10 +271,10 @@ func TestCloneWithPresence_IsASingleSnapshot(t *testing.T) {
 // that cannot be revealed yields an empty clone AND configured=true, so the
 // caller can tell it apart from a genuinely unset one.
 func TestCloneWithPresence_ConfiguredButUnreadable(t *testing.T) {
-	s := MustNewSecureString("x")
+	s := MustNewSecureString(t.Context(), "x")
 	s.Destroy()
 
-	clone, configured, err := s.CloneWithPresence()
+	clone, configured, err := s.CloneWithPresence(t.Context())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestCloneWithPresence_ConfiguredButUnreadable(t *testing.T) {
 }
 
 func TestCloneWithPresence_NeverConfigured(t *testing.T) {
-	clone, configured, err := MustNewSecureString("").CloneWithPresence()
+	clone, configured, err := MustNewSecureString(t.Context(), "").CloneWithPresence(t.Context())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

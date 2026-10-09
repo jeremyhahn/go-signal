@@ -69,14 +69,14 @@ var _ verification.VerificationTransport = (*Transport)(nil)
 // NewTransport validates the configuration and returns a ready-to-use
 // Transport. Fails fast on missing required fields so deployments never
 // silently fall through to a no-op when SES is misconfigured.
-func NewTransport(cfg Config) (*Transport, error) {
+func NewTransport(ctx context.Context, cfg Config) (*Transport, error) {
 	if cfg.Region == "" {
 		return nil, errors.New("ses: Region is required")
 	}
 	if cfg.AccessKeyID == "" {
 		return nil, errors.New("ses: AccessKeyID is required")
 	}
-	if cfg.SecretAccessKey == nil || cfg.SecretAccessKey.Plaintext() == "" {
+	if cfg.SecretAccessKey == nil || cfg.SecretAccessKey.Plaintext(ctx) == "" {
 		return nil, errors.New("ses: SecretAccessKey is required")
 	}
 	if cfg.FromAddress == "" {
@@ -101,7 +101,7 @@ func NewTransport(cfg Config) (*Transport, error) {
 		subject:     subject,
 		signer: &sigV4{
 			accessKeyID:     cfg.AccessKeyID,
-			secretAccessKey: cfg.SecretAccessKey.Plaintext(),
+			secretAccessKey: cfg.SecretAccessKey.Plaintext(ctx),
 			sessionToken:    cfg.SessionToken,
 			region:          cfg.Region,
 			service:         sesService,
