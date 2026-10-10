@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -252,7 +253,7 @@ func TestSecureString_UnmarshalYAML_DestroysReplacedValue(t *testing.T) {
 	assert.Equal(t, "second", c.Secret.Plaintext())
 	assert.NotSame(t, first, c.Secret.sec)
 	// The replaced secret is wiped: opening it fails.
-	_, err := first.Open()
+	_, err := first.Open(context.Background())
 	assert.Error(t, err)
 }
 
@@ -279,7 +280,7 @@ func failSealing(t *testing.T) error {
 	t.Helper()
 	injected := errors.New("injected: no protected memory available")
 	original := sealSecret
-	sealSecret = func([]byte) (*secure.Secret, error) { return nil, injected }
+	sealSecret = func(context.Context, []byte) (*secure.Secret, error) { return nil, injected }
 	t.Cleanup(func() { sealSecret = original })
 	return injected
 }

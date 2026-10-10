@@ -149,7 +149,9 @@ func (m *CertificatesManager) SetEd25519SigningKey(privKey ed25519.PrivateKey, p
 	}
 	// NewSecret copies the bytes into an enclave and zeros the source slice
 	// on return; the sealed material can only be read back through Open.
-	sec, err := secure.NewSecret(privKey)
+	// This method carries no context, so the seal is unbounded, as it was
+	// before NewSecret took one.
+	sec, err := secure.NewSecret(context.Background(), privKey)
 	if err != nil {
 		return &Ed25519KeyError{Cause: err}
 	}
@@ -210,13 +212,16 @@ func (m *CertificatesManager) useEd25519Key(fn func(priv ed25519.PrivateKey) err
 	if m.ed25519Secret == nil {
 		return false, nil
 	}
-	buf, err := m.ed25519Secret.Open()
+	buf, err := m.ed25519Secret.Open(context.Background())
 	if err != nil {
 		return true, err
 	}
-	priv := make(ed25519.PrivateKey, len(buf.Bytes()))
-	copy(priv, buf.Bytes())
+	copied, err := secure.CopyOut(buf)
 	buf.Destroy()
+	if err != nil {
+		return true, err
+	}
+	priv := ed25519.PrivateKey(copied)
 	defer func() {
 		for i := range priv {
 			priv[i] = 0

@@ -1,28 +1,24 @@
 package secrets
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	"github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 )
 
-// failProtectedBuffer makes the protected allocator fail for the duration of a
-// test, so the fail-closed path can be exercised. Allocation failure cannot be
-// provoked from outside, which is why the seam exists.
-func failProtectedBuffer(t *testing.T, injected error) {
-	t.Helper()
-	original := newProtectedBuffer
-	newProtectedBuffer = func(int) (*secure.Buffer, error) { return nil, injected }
-	t.Cleanup(func() { newProtectedBuffer = original })
-}
-
-// failProtectedSeal makes sealing the copied buffer fail, covering the second
-// allocation step independently of the first.
+// failProtectedSeal makes sealing the opened buffer fail for the duration of a
+// test, so the fail-closed path can be exercised. A sealing failure cannot be
+// provoked from outside, which is why the seam exists. Like the real
+// NewSecretFromBuffer, the double consumes the buffer it is handed.
 func failProtectedSeal(t *testing.T, injected error) {
 	t.Helper()
 	original := sealProtectedBuffer
-	sealProtectedBuffer = func(*secure.Buffer) (*secure.Secret, error) { return nil, injected }
+	sealProtectedBuffer = func(_ context.Context, buf *secure.Buffer) (*secure.Secret, error) {
+		buf.Destroy()
+		return nil, injected
+	}
 	t.Cleanup(func() { sealProtectedBuffer = original })
 }
 
@@ -42,8 +38,7 @@ func TestClone_AllocationFailureIsAnErrorNotAnEmptyValue(t *testing.T) {
 	injected := errors.New("no protected memory available")
 
 	for name, inject := range map[string]func(*testing.T, error){
-		"buffer allocation": failProtectedBuffer,
-		"buffer sealing":    failProtectedSeal,
+		"buffer sealing": failProtectedSeal,
 	} {
 		t.Run(name, func(t *testing.T) {
 			src := MustNewSecureString("shared-secret")

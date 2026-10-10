@@ -9,6 +9,7 @@ import (
 	"runtime"
 
 	"github.com/jeremyhahn/go-signal/cmd/signal/cmd"
+	"github.com/jeremyhahn/go-signal/pkg/securemem"
 )
 
 func main() {
@@ -22,23 +23,26 @@ func main() {
 		forceCLI = true
 	}
 
+	// CLI mode by default.
+	run, label := cmd.Execute, "Error"
 	if !forceCLI && (forceGUI || hasGUIEnvironment()) {
 		// GUI mode — delegates to runGUI which is build-tagged:
 		// desktop build: launches Wails app
 		// non-desktop build: prints error and exits
 		serverURL := extractFlag(args, "--server")
 		dataDir := extractFlag(args, "--config")
-		if err := runGUI(serverURL, dataDir); err != nil {
-			fmt.Fprintf(os.Stderr, "GUI error: %v\n", err)
-			os.Exit(1)
-		}
+		run = func() error { return runGUI(serverURL, dataDir) }
+		label = "GUI error"
 	} else {
-		// CLI mode
 		os.Args = stripFlags(os.Args, "--no-gui", "--gui")
-		if err := cmd.Execute(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+	}
+
+	// The secure-memory lifecycle wraps whichever mode runs, so neither the
+	// desktop app's embedded store nor any CLI path can allocate protected
+	// memory before the process is hardened and budgeted.
+	if err := securemem.Run(run); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", label, err)
+		os.Exit(1)
 	}
 }
 

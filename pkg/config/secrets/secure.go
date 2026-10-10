@@ -4,6 +4,7 @@
 package secrets
 
 import (
+	"context"
 	"encoding/json"
 	"sync"
 
@@ -17,6 +18,10 @@ const redacted = "[REDACTED]"
 // sealSecret is the protected-memory allocator. It is a variable rather than
 // a direct call so the fail-closed paths that depend on an allocation failure
 // can be exercised by fault injection; production code never reassigns it.
+//
+// SecureString's API carries no context, so every seal and open in this
+// package passes context.Background(): the same unbounded wait the secure
+// package applied before its calls took a context.
 var sealSecret = secure.NewSecret
 
 // SecureString holds sensitive string data in the shared protected-memory
@@ -86,7 +91,7 @@ func NewSecureString(value string) (*SecureString, error) {
 
 	// NewSecret copies src into an enclave and wipes src on return.
 	src := []byte(value)
-	sec, err := sealSecret(src)
+	sec, err := sealSecret(context.Background(), src)
 	if err != nil {
 		// Wipe rather than retain plaintext the caller believes is
 		// protected, then report the failure so the caller can abort.
@@ -148,12 +153,19 @@ func (s *SecureString) Reveal() (string, error) {
 	if s.sec == nil {
 		return "", &UnavailableSecretError{}
 	}
-	buf, err := s.sec.Open()
+	buf, err := s.sec.Open(context.Background())
 	if err != nil {
 		return "", &UnavailableSecretError{Cause: err}
 	}
 	defer buf.Destroy()
-	return string(buf.Bytes()), nil
+	var value string
+	if err := buf.WithBytes(func(b []byte) error {
+		value = string(b)
+		return nil
+	}); err != nil {
+		return "", &UnavailableSecretError{Cause: err}
+	}
+	return value, nil
 }
 
 // Plaintext is Reveal for call sites that already treat an absent secret as
@@ -181,13 +193,15 @@ func (s *SecureString) Bytes() []byte {
 	if s.sec == nil {
 		return nil
 	}
-	buf, err := s.sec.Open()
+	buf, err := s.sec.Open(context.Background())
 	if err != nil {
 		return nil
 	}
 	defer buf.Destroy()
-	out := make([]byte, len(buf.Bytes()))
-	copy(out, buf.Bytes())
+	out, err := secure.CopyOut(buf)
+	if err != nil {
+		return nil
+	}
 	return out
 }
 
@@ -224,7 +238,7 @@ func (s *SecureString) IsDestroyed() bool {
 		return true
 	}
 	// Attempt to open; if it fails the secret has been destroyed.
-	buf, err := s.sec.Open()
+	buf, err := s.sec.Open(context.Background())
 	if err != nil {
 		return true
 	}

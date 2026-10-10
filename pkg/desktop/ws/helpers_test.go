@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -205,7 +206,15 @@ func (s *wsKVStore) Exists(_ context.Context, key string) (bool, error) {
 func (s *wsKVStore) RegisterEntityIndexes(et string, idxs []kvstore.EntityIndex) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.regIndexes[et] = idxs
+	// Registration accumulates, as kvstore.KVStore requires: pkg/dao registers
+	// single-field and compound indexes in separate calls.
+	for _, idx := range idxs {
+		if !slices.ContainsFunc(s.regIndexes[et], func(r kvstore.EntityIndex) bool {
+			return r.FieldName == idx.FieldName && slices.Equal(r.FieldNames, idx.FieldNames)
+		}) {
+			s.regIndexes[et] = append(s.regIndexes[et], idx)
+		}
+	}
 	return nil
 }
 

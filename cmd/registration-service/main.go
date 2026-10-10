@@ -17,6 +17,8 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/jeremyhahn/go-signal/pkg/securemem"
 )
 
 var (
@@ -26,7 +28,7 @@ var (
 )
 
 func main() {
-	if err := Execute(); err != nil {
+	if err := securemem.Run(Execute); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}

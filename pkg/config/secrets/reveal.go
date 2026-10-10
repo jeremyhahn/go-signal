@@ -1,18 +1,16 @@
 package secrets
 
 import (
+	"context"
 	"crypto/subtle"
 
 	"github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 )
 
-// Protected-memory allocators, indirected so the fail-closed paths that depend
-// on an allocation failure can be exercised by fault injection. Production code
-// never reassigns them; same seam and same reasoning as sealSecret.
-var (
-	newProtectedBuffer  = secure.NewBuffer
-	sealProtectedBuffer = secure.NewSecretFromBuffer
-)
+// sealProtectedBuffer is indirected so the fail-closed path that depends on a
+// sealing failure can be exercised by fault injection. Production code never
+// reassigns it; same seam and same reasoning as sealSecret.
+var sealProtectedBuffer = secure.NewSecretFromBuffer
 
 // WithBytes reveals the protected value for the duration of fn and destroys
 // the revealed buffer before returning. The slice handed to fn is the secure
@@ -44,13 +42,15 @@ func (s *SecureString) WithBytes(fn func([]byte)) bool {
 	if s.sec == nil {
 		return false
 	}
-	buf, err := s.sec.Open()
+	buf, err := s.sec.Open(context.Background())
 	if err != nil {
 		return false
 	}
 	defer buf.Destroy()
-	fn(buf.Bytes())
-	return true
+	return buf.WithBytes(func(b []byte) error {
+		fn(b)
+		return nil
+	}) == nil
 }
 
 // Equals reports whether the protected value is exactly want, without ever
@@ -110,7 +110,7 @@ func NewSecureStringFromBytes(value []byte) (*SecureString, error) {
 	if len(value) == 0 {
 		return nil, &EmptySecretError{}
 	}
-	sec, err := sealSecret(value)
+	sec, err := sealSecret(context.Background(), value)
 	if err != nil {
 		// Wipe rather than leave plaintext the caller believes was consumed.
 		secure.Wipe(value)
@@ -127,12 +127,11 @@ func NewSecureStringFromBytes(value []byte) (*SecureString, error) {
 // the HMAC secret it signs with — so that the component's Destroy cannot reach
 // back into the caller's copy.
 //
-// The value never leaves protected memory. It is copied straight from the
-// source's mlocked buffer into a freshly allocated one and that buffer is
-// sealed in place; there is deliberately no intermediate Go-heap slice, which
-// would put the raw key in ordinary memory the runtime may copy and the
-// allocator may hand out again. TestClone_DoesNotStagePlaintextOnTheGoHeap
-// guards this.
+// The value never leaves protected memory. Opening the source decrypts it
+// into a fresh mlocked buffer that this clone owns, and that buffer is sealed
+// in place; there is deliberately no intermediate Go-heap slice, which would
+// put the raw key in ordinary memory the runtime may copy and the allocator
+// may hand out again. TestClone_DoesNotStagePlaintextOnTheGoHeap guards this.
 //
 // The two ways this can fail to produce a key are deliberately NOT the same
 // result, because conflating them is a fail-open:
@@ -140,7 +139,7 @@ func NewSecureStringFromBytes(value []byte) (*SecureString, error) {
 //   - A nil, unset or destroyed receiver yields (unset, nil). There is no
 //     secret to copy and that is a legitimate configuration — a deployment
 //     that runs without one.
-//   - An allocation failure yields (nil, *SealError). A secret exists and
+//   - A sealing failure yields (nil, *SealError). A secret exists and
 //     could not be protected. A caller that reads this as "no secret
 //     configured" would silently downgrade a configured deployment under
 //     nothing worse than memory pressure, which is why it is an error and not
@@ -181,30 +180,26 @@ func (s *SecureString) CloneWithPresence() (*SecureString, bool, error) {
 // cloneLocked performs the protected-page copy. The receiver's read lock must
 // already be held; it is the shared body of Clone and CloneWithPresence, so
 // the two cannot drift apart.
+//
+// The copy is the secure SDK's own: Open decrypts the source into a fresh,
+// writable buffer the caller owns, and NewSecretFromBuffer seals that buffer
+// straight out of its own locked pages. No borrow is taken here at all, so
+// nothing nests one borrow inside another, and no plaintext is staged outside
+// protected memory.
 func (s *SecureString) cloneLocked() (*SecureString, error) {
 	if s.sec == nil {
 		return &SecureString{}, nil
 	}
-	buf, err := s.sec.Open()
+	buf, err := s.sec.Open(context.Background())
 	if err != nil {
 		// Configured but unopenable. Clone's contract reports this as an
 		// empty clone rather than an error; CloneWithPresence's caller
 		// distinguishes it via the presence bit.
 		return &SecureString{}, nil
 	}
-	defer buf.Destroy()
-
-	b := buf.Bytes()
-	dst, err := newProtectedBuffer(len(b))
+	// Sealing consumes buf on every path, failure included.
+	sec, err := sealProtectedBuffer(context.Background(), buf)
 	if err != nil {
-		return nil, &SealError{Cause: err}
-	}
-	// dst.Bytes() is the mlocked destination: protected page to protected
-	// page, with no Go-heap staging in between.
-	copy(dst.Bytes(), b)
-	sec, err := sealProtectedBuffer(dst)
-	if err != nil {
-		dst.Destroy()
 		return nil, &SealError{Cause: err}
 	}
 	return &SecureString{sec: sec, configured: true}, nil
@@ -238,11 +233,16 @@ func (s *SecureString) TryWithBytes(fn func([]byte)) error {
 		// Configured, then destroyed: unavailable, never absent.
 		return &UnavailableSecretError{}
 	}
-	buf, err := s.sec.Open()
+	buf, err := s.sec.Open(context.Background())
 	if err != nil {
 		return &UnavailableSecretError{Cause: err}
 	}
 	defer buf.Destroy()
-	fn(buf.Bytes())
+	if err := buf.WithBytes(func(b []byte) error {
+		fn(b)
+		return nil
+	}); err != nil {
+		return &UnavailableSecretError{Cause: err}
+	}
 	return nil
 }

@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"runtime"
 	"testing"
@@ -218,7 +219,7 @@ func TestNewSecureStringFromBytes_SealFailureWipesTheSource(t *testing.T) {
 	// plaintext must not be left behind in the caller's slice.
 	injected := errors.New("seal failed")
 	restore := sealSecret
-	sealSecret = func([]byte) (*secure.Secret, error) { return nil, injected }
+	sealSecret = func(context.Context, []byte) (*secure.Secret, error) { return nil, injected }
 	t.Cleanup(func() { sealSecret = restore })
 
 	src := []byte("wipe-on-failure")
@@ -246,6 +247,40 @@ func TestClone_CopiesTheValue(t *testing.T) {
 
 	if got := clone.Plaintext(); got != "shared-secret" {
 		t.Errorf("clone Plaintext() = %q, want %q", got, "shared-secret")
+	}
+}
+
+// TestClone_TakesNoNestedBorrow arms the secure package's borrow guard across
+// Clone and CloneWithPresence: a borrow held while another is taken is a
+// NestedBorrowError, and the guard fails the test on it.
+func TestClone_TakesNoNestedBorrow(t *testing.T) {
+	clones := map[string]func(*SecureString) (*SecureString, error){
+		"Clone": (*SecureString).Clone,
+		"CloneWithPresence": func(s *SecureString) (*SecureString, error) {
+			clone, configured, err := s.CloneWithPresence()
+			if !configured {
+				t.Error("CloneWithPresence reported a configured source as absent")
+			}
+			return clone, err
+		},
+	}
+	for name, clone := range clones {
+		t.Run(name, func(t *testing.T) {
+			defer secure.GuardBorrows(t.Fatalf)()
+
+			orig := MustNewSecureString("shared-secret")
+			defer orig.Destroy()
+
+			copied, err := clone(orig)
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			defer copied.Destroy()
+
+			if got := copied.Plaintext(); got != "shared-secret" {
+				t.Errorf("clone Plaintext() = %q, want %q", got, "shared-secret")
+			}
+		})
 	}
 }
 

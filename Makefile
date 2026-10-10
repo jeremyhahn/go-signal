@@ -175,6 +175,7 @@ PKG_API_WEBSOCKET   := ./pkg/api/websocket/...
 PKG_VERIFICATION    := ./pkg/verification/...
 PKG_FIDO2           := ./pkg/fido2/...
 PKG_SECRETS         := ./pkg/config/secrets/...
+PKG_SECUREMEM       := ./pkg/securemem/...
 PKG_CMD             := ./cmd/signald/...
 
 # ==============================================================================
@@ -498,7 +499,7 @@ integration-test-cli: build
 .PHONY: test-svr test-service test-spam test-stickers test-storage
 .PHONY: test-store test-subscriptions test-usernames test-websocket test-rest test-grpc
 .PHONY: test-api-websocket test-cmd
-.PHONY: test-verification test-fido2 test-smtp test-secrets
+.PHONY: test-verification test-fido2 test-smtp test-secrets test-securemem
 
 test-accounts:
 	$(GOTEST) $(PKG_ACCOUNTS)
@@ -590,6 +591,8 @@ test-smtp:
 	$(GOTEST) -tags smtp ./pkg/verification/smtp/...
 test-secrets:
 	$(GOTEST) $(PKG_SECRETS)
+test-securemem:
+	$(GOTEST) $(PKG_SECUREMEM)
 
 # ==============================================================================
 # Coverage
@@ -609,7 +612,7 @@ ALL_PACKAGES := $(shell go list ./... 2>/dev/null | grep -vE '$(COVERAGE_EXCLUDE
 # Testable package short names for per-package targets
 TESTABLE_PACKAGES := accounts api/rest api/websocket calling captcha certificates \
 	config config/secrets devices directory errors keys keytransparency messages \
-	profiles securestorage securevaluerecovery stickers store storage/memory \
+	profiles securemem securestorage securevaluerecovery stickers store storage/memory \
 	usernames verification websocket
 
 .PHONY: coverage

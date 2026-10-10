@@ -1202,7 +1202,7 @@ func TestSetEd25519SigningKey_RotationWipesPreviousKey(t *testing.T) {
 	if m.ed25519Secret == previous {
 		t.Fatal("expected a new secret after rotation")
 	}
-	if _, err := previous.Open(); err == nil {
+	if _, err := previous.Open(context.Background()); err == nil {
 		t.Error("the replaced signing key must be wiped, not abandoned")
 	}
 	if m.ed25519PubKeyID != 2 {
