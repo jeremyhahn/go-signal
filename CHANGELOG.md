@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.2-alpha] - 2026-10-10
+
 ### Changed
 
 - `github.com/jeremyhahn/go-qrdb` and `github.com/jeremyhahn/go-qrdb/sdk/go` v0.7.0-alpha → v0.47.0-alpha (#116). The modules go-qrdb v0.47.0-alpha requires move with it, among them go-quicraft v0.20.0, go-truststrap v0.6.0-alpha, go-objstore v0.4.0-alpha, pebble v2.1.7 and quic-go v0.63.0, and go-enclave v0.8.0-alpha is new. The secure package's `Secret.Open`, `NewSecret` and `NewSecretFromBuffer` now take a context, and `Buffer.Bytes` is gone: `SecureString` and the certificates manager read protected bytes through `Buffer.WithBytes` or `secure.CopyOut`, and pass `context.Background()` because their own APIs carry no context. `SecureString.Clone` seals the buffer `Secret.Open` returns instead of copying it into a second buffer under two nested borrows, which v0.47's borrow guard rejects; the value still never leaves protected memory.

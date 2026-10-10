@@ -82,6 +82,8 @@ RUN CACERTS=$(find /usr/lib/jvm -name cacerts -type f 2>/dev/null | head -1) && 
 # is a wrong scanner that nobody notices, while a slow rebuild is visible. This
 # image is built on the integration path, not on every PR.
 COPY Makefile /tmp/pins/Makefile
+# The Makefile includes mk/release-alpha.mk, which includes mk/release-common.mk.
+COPY mk/ /tmp/pins/mk/
 RUN set -eux; \
     cd /tmp/pins; \
     pin() { \
