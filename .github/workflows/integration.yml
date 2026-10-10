@@ -54,6 +54,9 @@ on:
       # it a tool-version change lands on main having never built the image it
       # changes (#71).
       - 'Makefile'
+      # The Makefile includes mk/release-alpha.mk and mk/release-common.mk,
+      # which the devcontainer image copies beside it.
+      - 'mk/**'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/integration.yml'

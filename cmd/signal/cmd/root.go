@@ -24,6 +24,14 @@ var (
 	verbose    bool
 )
 
+// startSecureMemory hardens the process and installs its locked-memory
+// budget. Execute sets it to the Start of main's securemem.Lifecycle.
+var startSecureMemory func() error
+
+// secretFreeCommands neither open an account's store nor construct secrets,
+// so they run without the secure-memory lifecycle, on any host memlock limit.
+var secretFreeCommands = map[string]struct{}{"version": {}, "help": {}}
+
 var rootCmd = &cobra.Command{
 	Use:   "signal",
 	Short: "Signal messenger client",
@@ -34,6 +42,14 @@ interface is shown. Otherwise, commands are executed in CLI mode.
 
 All server URLs, certificates, and credentials are fully configurable
 for self-hosted deployments.`,
+	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+		if _, ok := secretFreeCommands[cmd.Name()]; ok {
+			return nil
+		}
+		// Every other command opens an account's store or handles its keys,
+		// so the lifecycle comes first.
+		return startSecureMemory()
+	},
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
@@ -59,8 +75,10 @@ var versionCmd = &cobra.Command{
 	},
 }
 
-// Execute runs the root command.
-func Execute() error {
+// Execute runs the root command, starting secure memory through start
+// before any command that holds secrets.
+func Execute(start func() error) error {
+	startSecureMemory = start
 	return rootCmd.Execute()
 }
 

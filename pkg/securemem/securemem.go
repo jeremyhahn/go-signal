@@ -5,9 +5,10 @@
 // process: harden it against inspection (secure.HardenProcess) before any
 // protected memory exists, install the process-wide locked-memory budget
 // (secure.SetAllocator) before the first protected allocation, and wipe every
-// live protected allocation on an orderly shutdown (secure.WipeAll). Run does
-// all three around the binary's work. go-qrdb's cmd/qrdbd start command is
-// the reference wiring this package follows.
+// live protected allocation on an orderly shutdown (secure.WipeAll). A
+// Lifecycle does all three, on the command paths that hold secrets only.
+// go-qrdb's cmd/qrdbd start command is the reference wiring this package
+// follows.
 package securemem
 
 import (
@@ -15,6 +16,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/jeremyhahn/go-qrdb/sdk/go/secure"
@@ -50,14 +52,16 @@ var wipeTimeout = 30 * time.Second
 
 // The SDK's process-lifecycle calls are irreversible for the calling
 // process — hardening cannot be undone, the allocator installs once, and the
-// wipe destroys the Sealer's keys — so they are reached through these seams,
-// which tests replace.
+// wipe destroys the Sealer's keys — and the host calls read the real
+// RLIMIT_MEMLOCK, so they are reached through these seams, which tests
+// replace.
 var (
 	hardenProcess             = secure.HardenProcess
 	discoverLockedMemoryLimit = secure.DiscoverLockedMemoryLimit
 	newAllocator              = secure.NewAllocatorWithinRLimit
 	setAllocator              = secure.SetAllocator
 	processAllocator          = secure.ProcessAllocator
+	allocatorLimit            = (*secure.Allocator).Limit
 	wipeAll                   = secure.WipeAll
 )
 
@@ -91,32 +95,60 @@ var hardeningLogLevel = map[secure.ProcessHardening]slog.Level{
 	secure.ProcessHardeningUnavailable: slog.LevelWarn,
 }
 
-// Run hardens the process, installs the locked-memory budget, runs fn, and
-// wipes every live protected allocation once fn returns.
+// Lifecycle is one process's secure-memory lifecycle.
 //
-// Every go-signal main calls Run first and does all of its work inside fn:
-// configuration loading seals secrets before any command runs, so nothing may
-// come earlier. A hardening or budget failure returns before fn runs, and the
-// caller must exit non-zero — the process holds no secrets yet and must not
-// acquire any unhardened or unbudgeted. An incomplete shutdown wipe is
-// reported as a *WipeError unless fn already failed; fn's error is the one
-// the caller acts on.
-func Run(fn func() error) (err error) {
-	if err := harden(); err != nil {
+// main builds it from the binary's configured logger and runs the command
+// inside Run. Every command path that loads configuration or constructs
+// secrets calls Start before either: configuration loading seals secrets, so
+// nothing on such a path may come earlier. Commands that do neither, such as
+// version and help, never call Start, so they run on any host memlock limit
+// and the process exits unhardened, unbudgeted and holding nothing to wipe.
+type Lifecycle struct {
+	logger  *slog.Logger
+	started atomic.Bool
+}
+
+// New returns the lifecycle of a process whose records go to logger, the
+// logger main built for the binary. logger must not be nil.
+func New(logger *slog.Logger) *Lifecycle {
+	return &Lifecycle{logger: logger}
+}
+
+// Start hardens the process and installs the locked-memory budget. Once it
+// has succeeded, later calls return nil without repeating either step.
+//
+// A hardening or budget failure is returned before the caller loads
+// anything, and the command must fail with it — the process holds no secrets
+// yet and must not acquire any unhardened or unbudgeted.
+func (l *Lifecycle) Start() error {
+	if l.started.Load() {
+		return nil
+	}
+	if err := l.harden(); err != nil {
 		return err
 	}
-	if err := installBudget(); err != nil {
+	if err := l.installBudget(); err != nil {
 		return err
 	}
-	defer wipe(&err)
+	l.started.Store(true)
+	return nil
+}
+
+// Run runs fn and, when Start has succeeded by the time fn returns or
+// panics, wipes every live protected allocation. A process that never
+// started holds no protected memory, so it skips the wipe. An incomplete
+// shutdown wipe is reported as a *WipeError unless fn already failed; fn's
+// error is the one the caller acts on.
+func (l *Lifecycle) Run(fn func() error) (err error) {
+	defer l.wipe(&err)
 	return fn()
 }
 
 // harden applies secure.HardenProcess and logs its outcome. Every error it
 // returns means the process is not hardened; it is returned as the SDK
 // reports it, as go-qrdb's reference does.
-func harden() error {
-	outcome, err := hardenProcess(slog.Default())
+func (l *Lifecycle) harden() error {
+	outcome, err := hardenProcess(l.logger)
 	if err != nil {
 		return err
 	}
@@ -124,7 +156,7 @@ func harden() error {
 	if !ok {
 		level = slog.LevelInfo
 	}
-	slog.Log(context.Background(), level, "process hardening applied",
+	l.logger.Log(context.Background(), level, "process hardening applied",
 		"outcome", outcome.String(),
 		"inspection_opt_out_env", secure.AllowProcessInspectionEnv,
 	)
@@ -138,7 +170,7 @@ func harden() error {
 // earlier in the process is benign when its limit equals the resolved one.
 // Any other limit is a *BudgetMismatchError, since every protected
 // allocation would otherwise run against a figure nobody chose.
-func installBudget() error {
+func (l *Lifecycle) installBudget() error {
 	resolved, err := resolveBudget()
 	if err != nil {
 		return err
@@ -155,14 +187,14 @@ func installBudget() error {
 		if err != nil {
 			return &BudgetError{BudgetBytes: resolved.bytes, Err: err}
 		}
-		if installedBytes := installed.Limit(); installedBytes != resolved.bytes {
+		if installedBytes := allocatorLimit(installed); installedBytes != resolved.bytes {
 			return &BudgetError{BudgetBytes: resolved.bytes, Err: &BudgetMismatchError{
 				BudgetBytes:    resolved.bytes,
 				InstalledBytes: installedBytes,
 			}}
 		}
 	}
-	slog.Info("secure memory budget installed",
+	l.logger.Info("secure memory budget installed",
 		"budget_bytes", resolved.bytes,
 		"source", string(resolved.source),
 		"rlimit_memlock_source", resolved.limit.Source.String(),
@@ -203,10 +235,13 @@ func resolveBudget() (budget, error) {
 	return budget{bytes: derived, source: budgetDerived, limit: limit}, nil
 }
 
-// wipe destroys every live protected allocation, bounded by wipeTimeout, and
-// reports an incomplete wipe through err without overwriting an earlier
-// failure.
-func wipe(err *error) {
+// wipe destroys every live protected allocation of a started process,
+// bounded by wipeTimeout, and reports an incomplete wipe through err without
+// overwriting an earlier failure.
+func (l *Lifecycle) wipe(err *error) {
+	if !l.started.Load() {
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), wipeTimeout)
 	defer cancel()
 	remaining, werr := wipeAll(ctx)
@@ -214,7 +249,7 @@ func wipe(err *error) {
 		return
 	}
 	wipeErr := &WipeError{Remaining: remaining, Err: werr}
-	slog.Error("secure memory wipe incomplete at shutdown", "error", wipeErr)
+	l.logger.Error("secure memory wipe incomplete at shutdown", "error", wipeErr)
 	if *err == nil {
 		*err = wipeErr
 	}

@@ -1,7 +1,9 @@
 package securemem
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"os"
@@ -13,8 +15,9 @@ import (
 )
 
 // errUnstubbedSeam is what every seam returns unless a test installs its own
-// double: the real calls harden the test binary, install its one allocator
-// and destroy the Sealer's keys, none of which a test may do.
+// double: the real calls harden the test binary, read the host's
+// RLIMIT_MEMLOCK, install its one allocator and destroy the Sealer's keys,
+// none of which a test may do.
 var errUnstubbedSeam = errors.New("securemem_test: unstubbed lifecycle seam")
 
 func TestMain(m *testing.M) {
@@ -25,6 +28,7 @@ func TestMain(m *testing.M) {
 	newAllocator = func(int64) (*secure.Allocator, error) { return nil, errUnstubbedSeam }
 	setAllocator = func(*secure.Allocator) error { return errUnstubbedSeam }
 	processAllocator = func() (*secure.Allocator, error) { return nil, errUnstubbedSeam }
+	allocatorLimit = func(*secure.Allocator) int64 { return -1 }
 	wipeAll = func(context.Context) (int, error) { return 0, errUnstubbedSeam }
 	os.Exit(m.Run())
 }
@@ -34,20 +38,22 @@ func TestMain(m *testing.M) {
 type lifecycle struct {
 	calls []string
 
-	hardening secure.ProcessHardening
-	hardenErr error
-	limit     secure.LockedMemoryLimit
-	limitErr  error
-	allocErr  error
-	setErr    error
-	installed func() (*secure.Allocator, error)
-	wipe      func(context.Context) (int, error)
-	budget    int64
+	hardening      secure.ProcessHardening
+	hardenErr      error
+	limit          secure.LockedMemoryLimit
+	limitErr       error
+	allocErr       error
+	setErr         error
+	installedErr   error
+	installedLimit int64
+	wipe           func(context.Context) (int, error)
+	budget         int64
 }
 
 // stubLifecycle installs doubles for every seam for the duration of t, with
 // a clean default: hardened, an unbounded memlock ceiling, an allocator that
-// installs, and a complete wipe.
+// installs, and a complete wipe. No double reads the host: the memlock
+// ceiling and every allocator limit are the figures the test sets.
 func stubLifecycle(t *testing.T) *lifecycle {
 	t.Helper()
 	l := &lifecycle{
@@ -55,11 +61,11 @@ func stubLifecycle(t *testing.T) *lifecycle {
 		limit:     secure.LockedMemoryLimit{Source: secure.LimitUnlimited},
 		wipe:      func(context.Context) (int, error) { return 0, nil },
 	}
-	prevHarden, prevDiscover, prevNew, prevSet, prevProcess, prevWipe :=
-		hardenProcess, discoverLockedMemoryLimit, newAllocator, setAllocator, processAllocator, wipeAll
+	prevHarden, prevDiscover, prevNew, prevSet, prevProcess, prevLimit, prevWipe :=
+		hardenProcess, discoverLockedMemoryLimit, newAllocator, setAllocator, processAllocator, allocatorLimit, wipeAll
 	t.Cleanup(func() {
-		hardenProcess, discoverLockedMemoryLimit, newAllocator, setAllocator, processAllocator, wipeAll =
-			prevHarden, prevDiscover, prevNew, prevSet, prevProcess, prevWipe
+		hardenProcess, discoverLockedMemoryLimit, newAllocator, setAllocator, processAllocator, allocatorLimit, wipeAll =
+			prevHarden, prevDiscover, prevNew, prevSet, prevProcess, prevLimit, prevWipe
 	})
 	hardenProcess = func(*slog.Logger) (secure.ProcessHardening, error) {
 		l.calls = append(l.calls, "harden")
@@ -80,8 +86,9 @@ func stubLifecycle(t *testing.T) *lifecycle {
 	}
 	processAllocator = func() (*secure.Allocator, error) {
 		l.calls = append(l.calls, "processAllocator")
-		return l.installed()
+		return nil, l.installedErr
 	}
+	allocatorLimit = func(*secure.Allocator) int64 { return l.installedLimit }
 	wipeAll = func(ctx context.Context) (int, error) {
 		l.calls = append(l.calls, "wipe")
 		return l.wipe(ctx)
@@ -89,28 +96,44 @@ func stubLifecycle(t *testing.T) *lifecycle {
 	return l
 }
 
-// allocatorWithLimit builds an allocator reporting limit without installing
-// it or locking anything: a one-page budget passes any memlock ceiling, and
-// ForceLimit then sets the figure without consulting it.
-func allocatorWithLimit(t *testing.T, limit int64) *secure.Allocator {
+// newTestLifecycle returns a Lifecycle whose logger writes JSON records to
+// the returned buffer.
+func newTestLifecycle() (*Lifecycle, *bytes.Buffer) {
+	var buf bytes.Buffer
+	return New(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))), &buf
+}
+
+// logRecords decodes the JSON records in buf, keyed by message.
+func logRecords(t *testing.T, buf *bytes.Buffer) map[string]map[string]any {
 	t.Helper()
-	a, err := secure.NewAllocatorWithinRLimit(int64(os.Getpagesize()))
-	if err != nil {
-		t.Fatalf("NewAllocatorWithinRLimit: %v", err)
+	records := map[string]map[string]any{}
+	dec := json.NewDecoder(buf)
+	for dec.More() {
+		var rec map[string]any
+		if err := dec.Decode(&rec); err != nil {
+			t.Fatalf("decode log record: %v", err)
+		}
+		msg, _ := rec[slog.MessageKey].(string)
+		records[msg] = rec
 	}
-	if _, err := a.ForceLimit(limit); err != nil {
-		t.Fatalf("ForceLimit: %v", err)
+	return records
+}
+
+// startAndRun is the shape of a secret-bearing command: Start, then work.
+func startAndRun(lc *Lifecycle, l *lifecycle, work func() error) func() error {
+	return func() error {
+		if err := lc.Start(); err != nil {
+			return err
+		}
+		l.calls = append(l.calls, "fn")
+		return work()
 	}
-	return a
 }
 
 func TestRun_StartupOrder(t *testing.T) {
 	l := stubLifecycle(t)
-	err := Run(func() error {
-		l.calls = append(l.calls, "fn")
-		return nil
-	})
-	if err != nil {
+	lc, _ := newTestLifecycle()
+	if err := lc.Run(startAndRun(lc, l, func() error { return nil })); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	want := []string{"harden", "discover", "newAllocator", "setAllocator", "fn", "wipe"}
@@ -122,10 +145,45 @@ func TestRun_StartupOrder(t *testing.T) {
 	}
 }
 
+// TestRun_WithoutStartTouchesNothing is the secret-free command path
+// (version, help): with a memlock ceiling too small to budget, the command
+// still runs, and the process is neither hardened, budgeted nor wiped.
+func TestRun_WithoutStartTouchesNothing(t *testing.T) {
+	l := stubLifecycle(t)
+	l.limit = secure.LockedMemoryLimit{Bytes: 0, Bounded: true}
+	lc, buf := newTestLifecycle()
+	ran := false
+	if err := lc.Run(func() error { ran = true; return nil }); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !ran {
+		t.Error("fn did not run")
+	}
+	if len(l.calls) != 0 {
+		t.Errorf("calls = %v, want none", l.calls)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("a secret-free run logged %q", buf.String())
+	}
+}
+
+func TestRun_WithoutStartReturnsFnError(t *testing.T) {
+	l := stubLifecycle(t)
+	lc, _ := newTestLifecycle()
+	fnErr := errors.New("version failed")
+	if err := lc.Run(func() error { return fnErr }); !errors.Is(err, fnErr) {
+		t.Fatalf("Run error = %v, want %v", err, fnErr)
+	}
+	if slices.Contains(l.calls, "wipe") {
+		t.Errorf("calls = %v: a process that never started must not wipe", l.calls)
+	}
+}
+
 func TestRun_ReturnsFnErrorAfterWiping(t *testing.T) {
 	l := stubLifecycle(t)
+	lc, _ := newTestLifecycle()
 	fnErr := errors.New("fn failed")
-	err := Run(func() error { return fnErr })
+	err := lc.Run(startAndRun(lc, l, func() error { return fnErr }))
 	if !errors.Is(err, fnErr) {
 		t.Fatalf("Run error = %v, want %v", err, fnErr)
 	}
@@ -136,6 +194,7 @@ func TestRun_ReturnsFnErrorAfterWiping(t *testing.T) {
 
 func TestRun_WipesWhenFnPanics(t *testing.T) {
 	l := stubLifecycle(t)
+	lc, _ := newTestLifecycle()
 	defer func() {
 		if recover() == nil {
 			t.Fatal("panic was not propagated")
@@ -144,10 +203,24 @@ func TestRun_WipesWhenFnPanics(t *testing.T) {
 			t.Errorf("calls = %v, want the wipe last", l.calls)
 		}
 	}()
-	_ = Run(func() error { panic("fn panicked") })
+	_ = lc.Run(startAndRun(lc, l, func() error { panic("fn panicked") }))
 }
 
-func TestRun_HardeningFailureStopsBeforeAnythingElse(t *testing.T) {
+func TestStart_Idempotent(t *testing.T) {
+	l := stubLifecycle(t)
+	lc, _ := newTestLifecycle()
+	for range 3 {
+		if err := lc.Start(); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+	}
+	want := []string{"harden", "discover", "newAllocator", "setAllocator"}
+	if !slices.Equal(l.calls, want) {
+		t.Fatalf("calls = %v, want one hardening and one budget %v", l.calls, want)
+	}
+}
+
+func TestStart_HardeningFailureStopsBeforeAnythingElse(t *testing.T) {
 	hardenErrs := map[string]error{
 		"traced":          &secure.ProcessTracedError{},
 		"hardening":       &secure.ProcessHardeningError{},
@@ -158,13 +231,20 @@ func TestRun_HardeningFailureStopsBeforeAnythingElse(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			l := stubLifecycle(t)
 			l.hardenErr = hardenErr
+			lc, _ := newTestLifecycle()
 			ran := false
-			err := Run(func() error { ran = true; return nil })
+			err := lc.Run(func() error {
+				if err := lc.Start(); err != nil {
+					return err
+				}
+				ran = true
+				return nil
+			})
 			if !errors.Is(err, hardenErr) {
 				t.Fatalf("Run error = %v, want the hardening error unchanged", err)
 			}
 			if ran {
-				t.Error("fn ran in an unhardened process")
+				t.Error("work ran in an unhardened process")
 			}
 			if !slices.Equal(l.calls, []string{"harden"}) {
 				t.Errorf("calls = %v, want only harden", l.calls)
@@ -173,32 +253,68 @@ func TestRun_HardeningFailureStopsBeforeAnythingElse(t *testing.T) {
 	}
 }
 
-func TestRun_HardeningOutcomesProceed(t *testing.T) {
-	outcomes := []secure.ProcessHardening{
-		secure.ProcessHardened,
-		secure.ProcessInspectionAllowed,
-		secure.ProcessHardeningUnavailable,
+func TestStart_HardeningOutcomesProceed(t *testing.T) {
+	outcomes := map[secure.ProcessHardening]string{
+		secure.ProcessHardened:             slog.LevelInfo.String(),
+		secure.ProcessInspectionAllowed:    slog.LevelWarn.String(),
+		secure.ProcessHardeningUnavailable: slog.LevelWarn.String(),
 	}
-	for _, outcome := range outcomes {
+	for outcome, level := range outcomes {
 		t.Run(outcome.String(), func(t *testing.T) {
 			l := stubLifecycle(t)
 			l.hardening = outcome
-			ran := false
-			if err := Run(func() error { ran = true; return nil }); err != nil {
-				t.Fatalf("Run: %v", err)
+			lc, buf := newTestLifecycle()
+			if err := lc.Start(); err != nil {
+				t.Fatalf("Start: %v", err)
 			}
-			if !ran {
-				t.Error("fn did not run")
+			rec, ok := logRecords(t, buf)["process hardening applied"]
+			if !ok {
+				t.Fatal("hardening outcome not logged through the lifecycle's logger")
+			}
+			if rec[slog.LevelKey] != level || rec["outcome"] != outcome.String() {
+				t.Errorf("record = %v, want level %s outcome %s", rec, level, outcome)
 			}
 		})
 	}
 }
 
-func TestRun_BudgetFailureStopsBeforeFn(t *testing.T) {
+// TestStart_LogsThroughTheGivenLogger proves both startup records reach the
+// logger main built, in its format, and the SDK's hardening call receives it.
+func TestStart_LogsThroughTheGivenLogger(t *testing.T) {
+	l := stubLifecycle(t)
+	lc, buf := newTestLifecycle()
+	var hardenLogger *slog.Logger
+	hardenProcess = func(logger *slog.Logger) (secure.ProcessHardening, error) {
+		hardenLogger = logger
+		return l.hardening, nil
+	}
+	if err := lc.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if hardenLogger != lc.logger {
+		t.Error("secure.HardenProcess did not receive the lifecycle's logger")
+	}
+	rec, ok := logRecords(t, buf)["secure memory budget installed"]
+	if !ok {
+		t.Fatal("budget not logged through the lifecycle's logger")
+	}
+	if rec["budget_bytes"] != float64(defaultBudgetBytes) || rec["source"] != string(budgetDefault) {
+		t.Errorf("record = %v, want budget %d from %s", rec, defaultBudgetBytes, budgetDefault)
+	}
+}
+
+func TestStart_BudgetFailureStopsBeforeWork(t *testing.T) {
 	l := stubLifecycle(t)
 	l.allocErr = secure.ErrBudgetExceedsRLimit
+	lc, _ := newTestLifecycle()
 	ran := false
-	err := Run(func() error { ran = true; return nil })
+	err := lc.Run(func() error {
+		if err := lc.Start(); err != nil {
+			return err
+		}
+		ran = true
+		return nil
+	})
 	var budgetErr *BudgetError
 	if !errors.As(err, &budgetErr) {
 		t.Fatalf("Run error = %v (%T), want *BudgetError", err, err)
@@ -210,7 +326,7 @@ func TestRun_BudgetFailureStopsBeforeFn(t *testing.T) {
 		t.Errorf("BudgetBytes = %d, want %d", budgetErr.BudgetBytes, defaultBudgetBytes)
 	}
 	if ran {
-		t.Error("fn ran without an installed budget")
+		t.Error("work ran without an installed budget")
 	}
 	if slices.Contains(l.calls, "wipe") {
 		t.Errorf("calls = %v: a startup that never installed a budget must not wipe", l.calls)
@@ -221,7 +337,8 @@ func TestInstallBudget_SetAllocatorFailure(t *testing.T) {
 	l := stubLifecycle(t)
 	sentinel := errors.New("set allocator refused")
 	l.setErr = sentinel
-	err := installBudget()
+	lc, _ := newTestLifecycle()
+	err := lc.installBudget()
 	var budgetErr *BudgetError
 	if !errors.As(err, &budgetErr) || !errors.Is(err, sentinel) {
 		t.Fatalf("installBudget error = %v, want *BudgetError wrapping %v", err, sentinel)
@@ -234,33 +351,37 @@ func TestInstallBudget_SetAllocatorFailure(t *testing.T) {
 func TestInstallBudget_AlreadyInstalledMatching(t *testing.T) {
 	l := stubLifecycle(t)
 	l.setErr = secure.ErrAllocatorInstalled
-	installed := allocatorWithLimit(t, defaultBudgetBytes)
-	l.installed = func() (*secure.Allocator, error) { return installed, nil }
-	if err := installBudget(); err != nil {
+	l.installedLimit = defaultBudgetBytes
+	lc, _ := newTestLifecycle()
+	if err := lc.installBudget(); err != nil {
 		t.Fatalf("installBudget with a matching installed allocator: %v", err)
+	}
+	if !slices.Contains(l.calls, "processAllocator") {
+		t.Errorf("calls = %v, want the installed allocator consulted", l.calls)
 	}
 }
 
 func TestInstallBudget_AlreadyInstalledMismatch(t *testing.T) {
 	l := stubLifecycle(t)
 	l.setErr = secure.ErrAllocatorInstalled
-	installed := allocatorWithLimit(t, defaultBudgetBytes+int64(os.Getpagesize()))
-	l.installed = func() (*secure.Allocator, error) { return installed, nil }
-	err := installBudget()
+	l.installedLimit = defaultBudgetBytes + int64(os.Getpagesize())
+	lc, _ := newTestLifecycle()
+	err := lc.installBudget()
 	var mismatch *BudgetMismatchError
 	if !errors.As(err, &mismatch) {
 		t.Fatalf("installBudget error = %v (%T), want *BudgetMismatchError", err, err)
 	}
-	if mismatch.BudgetBytes != defaultBudgetBytes || mismatch.InstalledBytes != installed.Limit() {
-		t.Errorf("mismatch = %+v, want budget %d installed %d", mismatch, defaultBudgetBytes, installed.Limit())
+	if mismatch.BudgetBytes != defaultBudgetBytes || mismatch.InstalledBytes != l.installedLimit {
+		t.Errorf("mismatch = %+v, want budget %d installed %d", mismatch, defaultBudgetBytes, l.installedLimit)
 	}
 }
 
 func TestInstallBudget_InstalledAllocatorUnreadable(t *testing.T) {
 	l := stubLifecycle(t)
 	l.setErr = secure.ErrAllocatorInstalled
-	l.installed = func() (*secure.Allocator, error) { return nil, secure.ErrNilAllocator }
-	err := installBudget()
+	l.installedErr = secure.ErrNilAllocator
+	lc, _ := newTestLifecycle()
+	err := lc.installBudget()
 	var budgetErr *BudgetError
 	if !errors.As(err, &budgetErr) || !errors.Is(err, secure.ErrNilAllocator) {
 		t.Fatalf("installBudget error = %v, want *BudgetError wrapping ErrNilAllocator", err)
@@ -317,6 +438,7 @@ func TestResolveBudget(t *testing.T) {
 
 func TestResolveBudget_LimitTooSmall(t *testing.T) {
 	limits := map[string]int64{
+		"zero":               0,
 		"below the minimum":  minBudgetBytes + headroomBytes - 1,
 		"below the headroom": headroomBytes / 2,
 	}
@@ -349,8 +471,21 @@ func TestResolveBudget_DiscoveryFailureFailsClosed(t *testing.T) {
 	}
 }
 
+// startedLifecycle returns a Lifecycle whose Start has succeeded against
+// the stubbed seams.
+func startedLifecycle(t *testing.T) (*Lifecycle, *bytes.Buffer) {
+	t.Helper()
+	lc, buf := newTestLifecycle()
+	if err := lc.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	buf.Reset()
+	return lc, buf
+}
+
 func TestWipe_BoundedByItsContext(t *testing.T) {
 	l := stubLifecycle(t)
+	lc, _ := startedLifecycle(t)
 	prev := wipeTimeout
 	wipeTimeout = 10 * time.Millisecond
 	t.Cleanup(func() { wipeTimeout = prev })
@@ -365,7 +500,7 @@ func TestWipe_BoundedByItsContext(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		var err error
-		wipe(&err)
+		lc.wipe(&err)
 		done <- err
 	}()
 	select {
@@ -383,7 +518,9 @@ func TestWipe_BoundedByItsContext(t *testing.T) {
 }
 
 func TestWipe_DefaultTimeoutIsTheReference(t *testing.T) {
-	stubLifecycle(t).wipe = func(ctx context.Context) (int, error) {
+	l := stubLifecycle(t)
+	lc, _ := startedLifecycle(t)
+	l.wipe = func(ctx context.Context) (int, error) {
 		deadline, ok := ctx.Deadline()
 		if !ok {
 			t.Fatal("wipe context has no deadline")
@@ -394,15 +531,17 @@ func TestWipe_DefaultTimeoutIsTheReference(t *testing.T) {
 		return 0, nil
 	}
 	var err error
-	wipe(&err)
+	lc.wipe(&err)
 	if err != nil {
 		t.Fatalf("a clean wipe set err = %v", err)
 	}
 }
 
 func TestWipe_IncompleteSurfacesOnACleanRun(t *testing.T) {
-	stubLifecycle(t).wipe = func(context.Context) (int, error) { return 3, nil }
-	err := Run(func() error { return nil })
+	l := stubLifecycle(t)
+	lc, buf := startedLifecycle(t)
+	l.wipe = func(context.Context) (int, error) { return 3, nil }
+	err := lc.Run(func() error { return nil })
 	var wipeErr *WipeError
 	if !errors.As(err, &wipeErr) {
 		t.Fatalf("Run error = %v (%T), want *WipeError", err, err)
@@ -410,12 +549,18 @@ func TestWipe_IncompleteSurfacesOnACleanRun(t *testing.T) {
 	if wipeErr.Remaining != 3 {
 		t.Errorf("Remaining = %d, want 3", wipeErr.Remaining)
 	}
+	rec, ok := logRecords(t, buf)["secure memory wipe incomplete at shutdown"]
+	if !ok || rec[slog.LevelKey] != slog.LevelError.String() {
+		t.Errorf("incomplete wipe not logged as an error through the lifecycle's logger: %v", rec)
+	}
 }
 
 func TestWipe_DoesNotOverwriteAnEarlierError(t *testing.T) {
-	stubLifecycle(t).wipe = func(context.Context) (int, error) { return 5, nil }
+	l := stubLifecycle(t)
+	lc, _ := startedLifecycle(t)
+	l.wipe = func(context.Context) (int, error) { return 5, nil }
 	original := errors.New("server failed")
-	err := Run(func() error { return original })
+	err := lc.Run(func() error { return original })
 	if !errors.Is(err, original) {
 		t.Fatalf("Run error = %v, want the original %v", err, original)
 	}

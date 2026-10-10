@@ -332,11 +332,6 @@ func init() {
 }
 
 func runStart(cmd *cobra.Command, args []string) error {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
-	slog.SetDefault(logger)
-
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
 
