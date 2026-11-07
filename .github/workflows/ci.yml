@@ -31,7 +31,7 @@ permissions:
 # break the build when an upstream re-points a tag (go-tpm-tools v0.4.8,
 # 2026-08-14). ci-template v1.1 forbids both.
 env:
-  GO_VERSION: '1.27.2'
+  GO_VERSION: '1.27.3'
 
 jobs:
   lint:

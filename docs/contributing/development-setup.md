@@ -5,7 +5,7 @@
 
 ## Prerequisites
 
-- Go 1.27.2 (`go.mod` declares `go 1.27.2`).
+- Go 1.27.3 (`go.mod` declares `go 1.27.3`).
 - Make.
 - Docker with the compose plugin, for `make integration-test` outside a devcontainer.
 - `protoc` and its Go plugins at the versions the Makefile pins, for proto regeneration. `make proto-tools` verifies them.

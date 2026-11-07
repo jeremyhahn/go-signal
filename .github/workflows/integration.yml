@@ -87,7 +87,7 @@ jobs:
       # runner every target starts with "make: go: No such file or directory".
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
 
       # The signal-server image resolves first-party modules from the internal
       # Gitea, and the test container compiles the suite itself, so credentials
