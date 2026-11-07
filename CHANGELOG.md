@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Security
+
+- Test TLS material is generated at test time, never committed. `make test-tls` (`test/tls/generate-certs.sh`) writes a short-lived ECDSA P-256 CA and server certificate under `test/tls/`, regenerating them when missing or within a day of expiry, and discards the CA key once the leaf is signed. `integration-test`, `integration-test-cli`, `integration-test-fido2` and `docker-build-dev` run it first, and the devcontainer runs it as its `initializeCommand`. The devcontainer, integration and signal-cli images take the generated CA through compose's `tls` build context instead of committed copies, and the generated files are gitignored. Committed build output (the `signalctl` binary and root-level logs) is removed and ignored, as are local agent-tooling state files.
+
 ## [0.2.2-alpha] - 2026-10-10
 
 ### Changed
@@ -285,7 +289,7 @@ simply never moved out of the unreleased section.
 
 ## Project history
 
-go-signal is a Go port of the Java Signal-Server reference implementation. The work is tracked in phases in the top-level plan (`/home/jhahn/.claude/plans/fluttering-kindling-flask.md`):
+go-signal is a Go port of the Java Signal-Server reference implementation. The work is tracked in phases in the project plan:
 
 - **Phase 0**: Prerequisites — module resolution, docs scaffold, changelog setup *(current)*.
 - **Phase 1**: Foundation — pluggable storage, Redis cache, gRPC scaffold, background worker framework.

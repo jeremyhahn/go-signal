@@ -1,8 +1,7 @@
 # go-signal Architecture
 
 This document gives an operator-facing tour of the deployed system. For
-phase-by-phase implementation history, see
-`/home/jhahn/.claude/plans/fluttering-kindling-flask.md`.
+phase-by-phase implementation history, see [CHANGELOG.md](CHANGELOG.md).
 
 ## Topology
 

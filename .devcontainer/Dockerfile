@@ -20,9 +20,11 @@
 # run 340. Baking the source in is also the honest CI shape: a test image should
 # contain the code under test rather than borrow it from its surroundings.
 #
-# Both stages build with the REPOSITORY ROOT as context, which is why the CA
-# cert below is addressed as .devcontainer/ca-cert.pem. .dockerignore excludes
-# .devcontainer/ wholesale and re-admits exactly that one file.
+# The test CA the image trusts is not in the repository. `make test-tls`
+# generates it under test/tls, and compose hands that directory to the build as
+# the named context `tls` (additional_contexts in docker-compose.yml). A plain
+# `docker build` supplies it the same way:
+#   docker build --build-context tls=test/tls -f .devcontainer/Dockerfile .
 
 FROM golang:1.27.2-bookworm AS toolchain
 
@@ -43,7 +45,7 @@ RUN wget -qO- https://packages.adoptium.net/artifactory/api/gpg/key/public | tee
     rm -rf /var/lib/apt/lists/*
 
 # Import test CA cert into Java trust store for signal-cli
-COPY .devcontainer/ca-cert.pem /tmp/ca-cert.pem
+COPY --from=tls ca-cert.pem /tmp/ca-cert.pem
 RUN CACERTS=$(find /usr/lib/jvm -name cacerts -type f 2>/dev/null | head -1) && \
     if [ -n "$CACERTS" ]; then \
         keytool -importcert -trustcacerts -noprompt \
