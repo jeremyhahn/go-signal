@@ -259,7 +259,7 @@ github.com/jeremyhahn/go-qrdb v0.47.0-alpha h1:YV8OacuP+yRb9cVoouvPBwuk2xSaU4kD+
 github.com/jeremyhahn/go-qrdb v0.47.0-alpha/go.mod h1:2LTAOfccTMUn7ZNYxkjBAsguKSvaW2SBLBMo1Qb1l+8=
 github.com/jeremyhahn/go-qrdb/sdk/go v0.47.0-alpha h1:jFIQQJR0cw8HtbTnUa8P4UER6jeBBLVVo0G3JhXbyc8=
 github.com/jeremyhahn/go-qrdb/sdk/go v0.47.0-alpha/go.mod h1:Sn7wcvuhNJan30nsn9L0v6kSD+x5reo5Ls9hY//zr0w=
-github.com/jeremyhahn/go-quicraft v0.20.0 h1:aAEiYvAATV0MY5Agrh6h5JybM/gsb651yIsF7HokXv8=
+github.com/jeremyhahn/go-quicraft v0.20.0 h1:7d3M8SvzBVRgnsU/x70yxIJN5Dw4NGVhz5zqta3jSsU=
 github.com/jeremyhahn/go-quicraft v0.20.0/go.mod h1:TD+dzKgLeQaIVqCzfG20t5xaUwrzmv/gmRQeyx8YmRk=
 github.com/jeremyhahn/go-truststrap v0.6.0-alpha h1:PKrd1WIH0JkGb/LwRwDhiO2UDPMw0++2swuqvI6L/nA=
 github.com/jeremyhahn/go-truststrap v0.6.0-alpha/go.mod h1:ag7JwSjxVh1qxykYBHJ3eaLPM925tRSOPCf0PflS8Qk=
