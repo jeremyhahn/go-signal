@@ -44,16 +44,19 @@ RUN wget -qO- https://packages.adoptium.net/artifactory/api/gpg/key/public | tee
     apt-get update && apt-get install -y --no-install-recommends temurin-21-jre && \
     rm -rf /var/lib/apt/lists/*
 
-# Import test CA cert into Java trust store for signal-cli
+# Import the generated test CA into the Java trust store for signal-cli.
+# Temurin's lib/security/cacerts is a symlink, so `find -L`: a plain
+# `-type f` matched nothing and the import was silently skipped. A missing
+# trust store now fails the build instead of producing an image that trusts
+# nothing.
 COPY --from=tls ca-cert.pem /tmp/ca-cert.pem
-RUN CACERTS=$(find /usr/lib/jvm -name cacerts -type f 2>/dev/null | head -1) && \
-    if [ -n "$CACERTS" ]; then \
-        keytool -importcert -trustcacerts -noprompt \
-            -alias signal-test-ca \
-            -file /tmp/ca-cert.pem \
-            -keystore "$CACERTS" \
-            -storepass changeit; \
-    fi && \
+RUN CACERTS=$(find -L /usr/lib/jvm -name cacerts -type f 2>/dev/null | head -1) && \
+    [ -n "$CACERTS" ] || { echo "no Java cacerts under /usr/lib/jvm" >&2; exit 1; }; \
+    keytool -importcert -trustcacerts -noprompt \
+        -alias signal-test-ca \
+        -file /tmp/ca-cert.pem \
+        -keystore "$CACERTS" \
+        -storepass changeit && \
     rm /tmp/ca-cert.pem
 
 # Install Go tools, at the versions the MAKEFILE declares.
