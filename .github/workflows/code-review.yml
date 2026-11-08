@@ -1,4 +1,4 @@
-# code-review-template: v5.9.3 -- the code review in Gitea or GitHub CI for a pull request
+# code-review-template: v5.9.5 -- the code review in Gitea or GitHub CI for a pull request
 # that carries `code-review` and `task:ready`, routed by its labels through
 # route-labels (labels.md §2). Codex on the `codex` runner reviews every such
 # PR; `agent:opencode` adds an advisory COMMENT review by the opencode job on
@@ -26,6 +26,16 @@
 #                             opencode review uses (required since v5.7;
 #                             unset, the opencode job fails)
 #
+# v5.9.5 (2026-11-08): the two `A && B || die` lines (the identity probe
+# check and the Codex refresh timeout) are if-statements, so shellcheck
+# SC2015 is clean in hosted Lint (go-signal #126 Lint failed on both at
+# v5.9.3). No behaviour change.
+# v5.9.4 (2026-11-08, Company Agent m2107 item 4): the review job's `if:`
+# tests the payload's state and labels (open, `code-review`, `task:ready`,
+# not `task:in-progress`), so a run the guard would end skip=closed or
+# skip=unrequested or skip=claimed takes no runner; the concurrency group
+# moves from the workflow to the job and is one per PR on GitHub. The guard
+# is unchanged.
 # v5.9.3 (2026-11-08, Company Agent m2101 item 2): comments only; the
 # internal token-variable name in WHO RUNS WHAT is gone. No behaviour change.
 # v5.9.2 (2026-11-07, Company Agent m2066 item 3): the GitHub token check
@@ -297,14 +307,11 @@ on:
   pull_request_target:
     types: [opened, reopened, synchronize, labeled]
 
-# One review per head (v5.3). The group is the PR and its head sha: a twin on
-# the same sha (opened plus labeled, a re-run, a route label) waits for the
-# review in flight instead of cancelling it, and its guard ends skip=reviewed.
-# A new push is a new group; Gitea cancels the replaced head's runs on the
-# push, and a run that still starts on it ends skip=stale.
-concurrency:
-  group: code-review-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
-  cancel-in-progress: false
+# v5.9.4: no workflow-level concurrency. A group there takes every run the
+# events create, a run whose job the `if:` skips among them, and a newer
+# pending run replaces an older one: a `ci:full` label could drop the
+# pending review of a new head. The group is the review job's own (below),
+# which a job its `if:` skips never enters.
 
 permissions:
   contents: read
@@ -340,13 +347,34 @@ jobs:
     # gates on the codex review. Keep the list equal to the guard's case.
     # No `container:` or `services:`: the `codex` label maps to the
     # codex-review image pinned by digest.
+    # v5.9.4: the event payload's state and labels are tested here too, so
+    # a closed PR, one without `code-review` and `task:ready` or one that is
+    # `task:in-progress` takes no codex runner slot: on GitHub the codex pool
+    # is one runner for every repository, and a guard that ended skip= in
+    # the job still held it about 95 s (Infra, Company Agent m2107 item 4).
+    # The guard reads the LIVE pull request again and stays the authority; a
+    # re-run replays this payload, as it did before.
     if: >-
-      github.event.action != 'labeled'
+      github.event.pull_request.state == 'open'
+      && contains(github.event.pull_request.labels.*.name, 'code-review')
+      && contains(github.event.pull_request.labels.*.name, 'task:ready')
+      && !contains(github.event.pull_request.labels.*.name, 'task:in-progress')
+      && (github.event.action != 'labeled'
       || github.event.label.name == 'code-review'
       || github.event.label.name == 'task:ready'
       || startsWith(github.event.label.name, 'agent:')
       || startsWith(github.event.label.name, 'model:')
-      || startsWith(github.event.label.name, 'effort:')
+      || startsWith(github.event.label.name, 'effort:'))
+    # v5.9.4: one group per PR on GitHub, `cancel-in-progress: false`: the
+    # review in flight finishes, and a newer requested run replaces a pending
+    # one, so the heads a PR's pushes leave behind queue no codex job (the
+    # guard still ends one that starts skip=stale). On Gitea the group stays
+    # v5.3's, the PR and its head sha: a twin on the same sha waits for the
+    # review in flight and its guard ends skip=reviewed, and Gitea cancels
+    # the replaced head's runs on the push.
+    concurrency:
+      group: ${{ github.server_url == 'https://github.com' && format('code-review-{0}', github.event.pull_request.number) || format('code-review-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
+      cancel-in-progress: false
     runs-on: codex
     # The route, for the opencode job.
     outputs:
@@ -577,8 +605,9 @@ jobs:
             fi
             me=$(jq -r '.user.login // empty' <<<"$probe")
             probe_id=$(jq -r '.id // empty' <<<"$probe")
-            [ "$(jq -r '.state // empty' <<<"$probe")" = PENDING ] && [[ $probe_id =~ ^[0-9]+$ ]] ||
+            if [ "$(jq -r '.state // empty' <<<"$probe")" != PENDING ] || ! [[ $probe_id =~ ^[0-9]+$ ]]; then
               die "the identity probe on PR $PR_NUM was not filed as a PENDING review"
+            fi
             api DELETE "/pulls/$PR_NUM/reviews/$probe_id" >/dev/null
             [ "$me" = "$REVIEWER" ] ||
               die "the token at $TOKEN_FILE belongs to '${me:-unknown}', not '$REVIEWER' (dept-infra#94)"
@@ -700,8 +729,9 @@ jobs:
             rm -rf -- "${refresh_dir:?}"
             [ "$rc" != 75 ] ||
               die "timed out after 300 s waiting for $CODEX_MASTER/.review.lock to refresh the Codex login"
-            [ "$rc" != 124 ] && [ "$rc" != 137 ] ||
+            if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
               die "the Codex refresh call (\`codex exec\`) did not finish within 120 s; the Codex login was not refreshed"
+            fi
             copy_login
             exp=$(token_exp "$CODEX_COPY") || exp=""
             [[ $exp =~ ^[0-9]+$ ]] || exp=0
