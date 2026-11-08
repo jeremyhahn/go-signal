@@ -23,7 +23,7 @@ function makeResponse(body: unknown, ok = true, contentType = 'application/json'
 let adapter: WebAdapter;
 
 beforeEach(() => {
-  adapter = new WebAdapter('http://localhost:3001');
+  adapter = new WebAdapter('http://localhost:8080');
   vi.stubGlobal('fetch', vi.fn());
   vi.stubGlobal('WebSocket', vi.fn().mockImplementation(() => ({
     onopen: null,
@@ -76,7 +76,7 @@ describe('WebAdapter – createVerificationSession', () => {
 
     expect(result).toEqual(session);
     expect(vi.mocked(fetch)).toHaveBeenCalledWith(
-      'http://localhost:3001/api/v1/account/verify/session',
+      'http://localhost:8080/api/v1/account/verify/session',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ number: '+15551234567' }),
@@ -98,7 +98,7 @@ describe('WebAdapter – register', () => {
 
     expect(result).toEqual(account);
     expect(vi.mocked(fetch)).toHaveBeenCalledWith(
-      'http://localhost:3001/api/v1/account/register',
+      'http://localhost:8080/api/v1/account/register',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ number: '+15551234567', sessionId: 'sess-1' }),
@@ -119,7 +119,7 @@ describe('WebAdapter – sendMessage', () => {
 
     expect(result).toEqual({ timestamp: 1000, needsSync: false });
     expect(vi.mocked(fetch)).toHaveBeenCalledWith(
-      'http://localhost:3001/api/v1/messages/send',
+      'http://localhost:8080/api/v1/messages/send',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ recipient: 'recipient-uuid', text: 'Hello' }),
@@ -153,7 +153,7 @@ describe('WebAdapter – getConversations', () => {
 
     expect(result).toEqual(convs);
     expect(vi.mocked(fetch)).toHaveBeenCalledWith(
-      'http://localhost:3001/api/v1/conversations',
+      'http://localhost:8080/api/v1/conversations',
       expect.anything(),
     );
   });
@@ -197,7 +197,7 @@ describe('WebAdapter – getTurnCredentials', () => {
 
     expect(result).toEqual(creds);
     expect(vi.mocked(fetch)).toHaveBeenCalledWith(
-      'http://localhost:3001/v2/calling/relays',
+      'http://localhost:8080/v2/calling/relays',
       expect.anything(),
     );
   });
