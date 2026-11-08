@@ -4,6 +4,7 @@
 	"service": "devcontainer",
 	"workspaceFolder": "/workspace",
 	"shutdownAction": "stopCompose",
+	"initializeCommand": "make test-tls",
 	"forwardPorts": [8081, 8443, 5432, 6379],
 	"portsAttributes": {
 		"8081": { "label": "signald HTTP/2" },

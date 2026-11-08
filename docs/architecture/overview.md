@@ -7,7 +7,7 @@ go-signal is a Go implementation of the Signal server. It targets wire compatibi
 
 ```
 Module:  github.com/jeremyhahn/go-signal
-Go:      1.27.2 (go.mod)
+Go:      1.27.3 (go.mod)
 License: AGPL-3.0
 ```
 

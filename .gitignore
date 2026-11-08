@@ -48,3 +48,20 @@ go.work.sum
 /svr2
 /storage-service
 node_modules/
+
+# Test TLS material. `make test-tls` generates it (test/tls/generate-certs.sh)
+# and it is never committed: no private key belongs in the tree, and the images
+# take the generated CA through compose's `tls` build context.
+/test/tls/*.pem
+/test/tls/*.csr
+/test/tls/*.srl
+/.devcontainer/ca-cert.pem
+/test/signal-cli/ca-cert.pem
+
+# Local build and test output: binaries and logs written at the repository root.
+/signalctl
+/*.log
+
+# Local agent tooling state
+.serena/
+scheduled_tasks.lock

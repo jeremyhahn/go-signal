@@ -1,3 +1,7 @@
+# The test CA is not in the repository: `make test-tls` generates it under
+# test/tls and compose passes that directory as the named build context `tls`.
+# A plain build supplies it the same way:
+#   docker build --build-context tls=../tls .
 FROM eclipse-temurin:21-jdk-jammy AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -8,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ARG SIGNAL_SERVER_URL=https://signal-server:8080
 
 COPY build-signal-cli.sh /tmp/build-signal-cli.sh
-COPY ca-cert.pem /tmp/ca-cert.pem
+COPY --from=tls ca-cert.pem /tmp/ca-cert.pem
 RUN chmod +x /tmp/build-signal-cli.sh && \
     SIGNAL_SERVER_URL=${SIGNAL_SERVER_URL} /tmp/build-signal-cli.sh
 
@@ -18,7 +22,7 @@ COPY --from=builder /opt/signal-cli /opt/signal-cli
 RUN ln -s /opt/signal-cli/bin/signal-cli /usr/local/bin/signal-cli
 
 # Import the test CA cert into Java's trust store
-COPY ca-cert.pem /tmp/ca-cert.pem
+COPY --from=tls ca-cert.pem /tmp/ca-cert.pem
 RUN keytool -importcert -trustcacerts -noprompt \
     -alias signal-test-ca \
     -file /tmp/ca-cert.pem \

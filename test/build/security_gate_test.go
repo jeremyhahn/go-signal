@@ -110,7 +110,9 @@ func packagesUnderTags(t *testing.T, tags string) string {
 // half. The assertion is not that a flag is present but that the flag's value
 // selects the packages that were being skipped.
 func TestLintTarget_AnalysesTheTaggedPackages(t *testing.T) {
-	runs := runTarget(t, "lint", "GOLINT")
+	// ACTIONLINT=true stands in for the workflow linter the target ends with: this
+	// test is about the golangci-lint passes, and the Lint job runs the real one.
+	runs := runTarget(t, "lint", "GOLINT", "ACTIONLINT=true")
 	if len(runs) != 2 {
 		t.Fatalf("lint made %d invocations, want 2 (repo tags, then integration): %v", len(runs), runs)
 	}
@@ -244,7 +246,7 @@ func TestGateTags_FollowTheFeatureFlags(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			for i, argv := range runTarget(t, "lint", "GOLINT", tc.flag) {
+			for i, argv := range runTarget(t, "lint", "GOLINT", tc.flag, "ACTIONLINT=true") {
 				lint := flagValue(argv, "--build-tags")
 				if contains(strings.Fields(lint), tc.absent) {
 					t.Errorf("lint pass %d tags %q still carry %q with %s", i+1, lint, tc.absent, tc.flag)

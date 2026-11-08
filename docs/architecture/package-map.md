@@ -108,6 +108,6 @@ See [topology.md](topology.md) for how the binaries relate.
 | `deploy/` | Dockerfiles, `docker-compose.yml`, `k8s/` manifests |
 | `test/integration/` | Integration tests (`api/`, `cli/`, `storage/`, `mocks/`) |
 | `test/performance/` | Benchmark documentation |
-| `test/tls/` | TLS certificate fixtures |
+| `test/tls/` | Test TLS generator (`generate-certs.sh`); `make test-tls` writes the CA and server certificate here, uncommitted |
 | `test/signal-cli/` | signal-cli test harness |
 | `test/build/` | Security and coverage gate tests |
