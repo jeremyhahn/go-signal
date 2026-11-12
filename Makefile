@@ -206,19 +206,24 @@ endif
 # `make lint|build|coverage|security|integration-test GO_BUILD_TAGS='...'`).
 # Merged into the repository set above, duplicates dropped; empty changes nothing.
 GO_BUILD_TAGS ?=
+# Separator helpers. A tag list carries ONE separator: the go tool reads a list
+# with any space in it as space-separated, so "a,b c" loses tags silently.
+comma      := ,
+space      := $(subst ,, )
 BUILD_TAGS += $(filter-out $(BUILD_TAGS),$(sort $(GO_BUILD_TAGS)))
 BUILD_TAGS_FLAG := $(if $(strip $(BUILD_TAGS)),-tags "$(strip $(BUILD_TAGS))")
 # The integration targets use the `integration` tag plus the caller's extras
 # (not the repository set); quoted only when there are extras.
-INTEGRATION_TAGS_FLAG := -tags $(if $(strip $(GO_BUILD_TAGS)),"integration $(filter-out integration,$(sort $(GO_BUILD_TAGS)))",integration)
+INTEGRATION_EXTRA_TAGS := $(filter-out integration,$(sort $(GO_BUILD_TAGS)))
+INTEGRATION_TAGS_FLAG := -tags $(if $(INTEGRATION_EXTRA_TAGS),"$(strip integration $(INTEGRATION_EXTRA_TAGS))",integration)
+# integration-test-fido2's list, comma form throughout.
+INTEGRATION_FIDO2_TAGS := $(subst $(space),$(comma),$(strip integration fido2 $(filter-out integration fido2,$(sort $(GO_BUILD_TAGS)))))
 
 # gosec wants a COMMA-separated tag list, unlike the go tool and
 # golangci-lint. A space-separated one is not rejected — it is read as a single
 # tag nobody declared, so it matches nothing and the run looks normal.
 # Measured: the space form scanned the same 414 files as an untagged run while
 # the comma form scanned 445.
-comma      := ,
-space      := $(subst ,, )
 GOSEC_TAGS := $(subst $(space),$(comma),$(strip $(BUILD_TAGS)))
 
 # The one place the default tag set is defined. CI jobs that cannot call a make
@@ -493,7 +498,7 @@ else
 # failed to start: container devcontainer-signal-server-1 exited (1)" and this
 # target still returned 0. It did exactly that until 2026-08-14. bash is invoked
 # explicitly because /bin/sh is dash here and has no pipefail.
-	bash -o pipefail -c 'docker compose -f .devcontainer/docker-compose.yml run --rm integration 2>&1 | tee $(BUILD_DIR)/integration-test.log'
+	bash -o pipefail -c 'docker compose -f .devcontainer/docker-compose.yml run --rm $(if $(strip $(GO_BUILD_TAGS)),-e GO_BUILD_TAGS="$(strip $(GO_BUILD_TAGS))") integration 2>&1 | tee $(BUILD_DIR)/integration-test.log'
 	@echo "==> Integration tests complete."
 endif
 
@@ -503,7 +508,7 @@ endif
 integration-test-fido2: test-tls
 	@echo "==> Running FIDO2 integration tests..."
 	@mkdir -p $(BUILD_DIR)
-	$(GOTEST) -tags "integration,fido2$(addprefix $(comma),$(GO_BUILD_TAGS))" -timeout 120s \
+	$(GOTEST) -tags "$(INTEGRATION_FIDO2_TAGS)" -timeout 120s \
 		./test/integration/... 2>&1 | tee $(BUILD_DIR)/integration-test-fido2.log
 	@echo "==> FIDO2 integration tests complete."
 
@@ -517,6 +522,13 @@ integration-test-cli: build test-tls
 	$(GOTEST) $(INTEGRATION_TAGS_FLAG) -timeout 120s \
 		./test/integration/cli/... 2>&1 | tee $(BUILD_DIR)/integration-test-cli.log
 	@echo "==> CLI parity integration tests complete."
+
+# check-go-build-tags dry-runs (make -n) the integration targets with
+# GO_BUILD_TAGS set and asserts the tags arrive with one separator per list,
+# including through the Docker path (#122).
+.PHONY: check-go-build-tags
+check-go-build-tags:
+	bash test/make/check-go-build-tags.sh
 
 # Per-package unit tests
 .PHONY: test-accounts test-auth test-backup test-badges test-calling test-captcha
