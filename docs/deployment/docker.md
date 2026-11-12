@@ -7,7 +7,7 @@
 
 | File | Purpose | Base |
 |---|---|---|
-| `Dockerfile` | Production `signald` image | `golang:1.27.3-bookworm` builder, `debian:bookworm-slim` runtime |
+| `Dockerfile` | Production `signald` image | `golang:1.27.4-bookworm` builder, `debian:bookworm-slim` runtime |
 | `Dockerfile.dev` | Development/demo image with baked-in test config, stub transport (fixed code `123456`) and test TLS certs. Not for production. | same |
 | `Dockerfile.service` | Parameterized image for the auxiliary services (`--build-arg SERVICE=<name>`) | |
 | `deploy/Dockerfile.*` | Per-binary images used by `deploy/docker-compose.yml` (`signald` on a distroless nonroot base) | |
