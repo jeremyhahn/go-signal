@@ -9,9 +9,24 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
+# Self-check: the script must pass when the caller disables a feature
+# (WITH_FIDO2=0). CHECK_GO_BUILD_TAGS_NESTED stops the recursion.
+if [ -z "${CHECK_GO_BUILD_TAGS_NESTED:-}" ]; then
+	if CHECK_GO_BUILD_TAGS_NESTED=1 WITH_FIDO2=0 "$0" >/dev/null 2>&1; then
+		echo "ok   WITH_FIDO2=0 in the caller's environment changes nothing"
+	else
+		echo "FAIL: the check fails when invoked with WITH_FIDO2=0" >&2
+		exit 1
+	fi
+fi
+
 # Run from inside make (make lint): drop what the parent passes down, or a
 # caller's GO_BUILD_TAGS on the outer command line leaks into every case.
 unset MAKEFLAGS MFLAGS MAKELEVEL MAKEOVERRIDES GO_BUILD_TAGS SIGNAL_SERVER_URL
+# Same for the feature switches the Makefile reads (WITH_*): make exports a
+# command-line `WITH_FIDO2=0` to recipes, which would drop fido2 from the
+# fixture (make lint WITH_FIDO2=0). Unset them so the fixture is the default.
+unset WITH_FIDO2 WITH_SMTP WITH_DESKTOP WITH_FTS
 MAKE=${MAKE:-make}
 # A fixed build date, so dry runs of build compare equal.
 mk() { "$MAKE" -n --no-print-directory BUILD_DATE=fixed "$@" 2>&1; }
