@@ -225,6 +225,8 @@ INTEGRATION_FIDO2_TAGS := $(subst $(space),$(comma),$(strip integration fido2 $(
 # Measured: the space form scanned the same 414 files as an untagged run while
 # the comma form scanned 445.
 GOSEC_TAGS := $(subst $(space),$(comma),$(strip $(BUILD_TAGS)))
+# govulncheck takes the same comma form (`vuln`): without the tags, code behind
+# //go:build escaped its call-graph analysis.
 
 # The one place the default tag set is defined. CI jobs that cannot call a make
 # target directly (the FIPS job builds and tests ./... under GOFIPS140, which no
@@ -818,6 +820,7 @@ lint: ## Run golangci-lint (repo tags, then the integration tag), then actionlin
 	@echo "==> Running linter (tags: integration $(strip $(BUILD_TAGS)))..."
 	$(GOLINT) run --timeout 5m --build-tags "integration $(strip $(BUILD_TAGS))" ./...
 	@$(MAKE) --no-print-directory actionlint
+	@$(MAKE) --no-print-directory check-go-build-tags
 
 # Every workflow under .github/workflows/, with .github/actionlint.yaml when the
 # repo carries one (actionlint finds it itself; every runs-on here is
@@ -871,7 +874,7 @@ gosec: gosec-tool ## Run gosec security scanner, twice: repo tags, then with the
 
 vuln: ## Run govulncheck vulnerability scan
 	@echo "==> Running vulnerability check..."
-	$(GOVULNCHECK) ./...
+	$(GOVULNCHECK) $(if $(GOSEC_TAGS),-tags "$(GOSEC_TAGS)") ./...
 
 modverify: ## Verify module integrity against go.sum
 	@echo "==> Verifying module integrity..."
