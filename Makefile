@@ -202,7 +202,15 @@ endif
 ifeq ($(WITH_FTS),1)
   BUILD_TAGS += qrdb_fts
 endif
+# GO_BUILD_TAGS: extra space-separated tags from the caller (ci-template calls
+# `make lint|build|coverage|security|integration-test GO_BUILD_TAGS='...'`).
+# Merged into the repository set above, duplicates dropped; empty changes nothing.
+GO_BUILD_TAGS ?=
+BUILD_TAGS += $(filter-out $(BUILD_TAGS),$(sort $(GO_BUILD_TAGS)))
 BUILD_TAGS_FLAG := $(if $(strip $(BUILD_TAGS)),-tags "$(strip $(BUILD_TAGS))")
+# The integration targets use the `integration` tag plus the caller's extras
+# (not the repository set); quoted only when there are extras.
+INTEGRATION_TAGS_FLAG := -tags $(if $(strip $(GO_BUILD_TAGS)),"integration $(filter-out integration,$(sort $(GO_BUILD_TAGS)))",integration)
 
 # gosec wants a COMMA-separated tag list, unlike the go tool and
 # golangci-lint. A space-separated one is not rejected — it is read as a single
@@ -470,7 +478,7 @@ integration-test: test-tls ## Run integration tests
 ifdef SIGNAL_SERVER_URL
 	@echo "==> Running integration tests against $(SIGNAL_SERVER_URL)..."
 	@mkdir -p $(COVER_DIR)
-	bash -o pipefail -c '$(GOTEST) -tags integration -timeout 120m \
+	bash -o pipefail -c '$(GOTEST) $(INTEGRATION_TAGS_FLAG) -timeout 120m \
 		-coverprofile=$(COVER_DIR)/integration-coverage.out \
 		-covermode=atomic \
 		./test/integration/... 2>&1 | tee $(BUILD_DIR)/integration-test.log'
@@ -495,7 +503,7 @@ endif
 integration-test-fido2: test-tls
 	@echo "==> Running FIDO2 integration tests..."
 	@mkdir -p $(BUILD_DIR)
-	$(GOTEST) -tags "integration,fido2" -timeout 120s \
+	$(GOTEST) -tags "integration,fido2$(addprefix $(comma),$(GO_BUILD_TAGS))" -timeout 120s \
 		./test/integration/... 2>&1 | tee $(BUILD_DIR)/integration-test-fido2.log
 	@echo "==> FIDO2 integration tests complete."
 
@@ -506,7 +514,7 @@ integration-test-cli: build test-tls
 	@echo "==> Running CLI parity integration tests..."
 	@mkdir -p $(BUILD_DIR)
 	SIGNAL_GO_BIN=$(CURDIR)/$(BIN_DIR)/signal \
-	$(GOTEST) -tags integration -timeout 120s \
+	$(GOTEST) $(INTEGRATION_TAGS_FLAG) -timeout 120s \
 		./test/integration/cli/... 2>&1 | tee $(BUILD_DIR)/integration-test-cli.log
 	@echo "==> CLI parity integration tests complete."
 
