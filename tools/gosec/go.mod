@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-signal/tools/gosec
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/securego/gosec/v2 v2.29.0

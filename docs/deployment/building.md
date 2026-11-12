@@ -3,7 +3,7 @@
 > **Status: REFERENCE** · Last verified: 2026-10-09
 > Make targets, build tags, version injection and dependency handling for building go-signal.
 
-go-signal produces the `signald` server and the `signal` CLI (`./cmd/signal`), plus five auxiliary service binaries (see [../architecture/topology.md](../architecture/topology.md)). The module is `github.com/jeremyhahn/go-signal` and requires Go 1.27.3. The build is pure Go and sets `CGO_ENABLED=0` in the container images.
+go-signal produces the `signald` server and the `signal` CLI (`./cmd/signal`), plus five auxiliary service binaries (see [../architecture/topology.md](../architecture/topology.md)). The module is `github.com/jeremyhahn/go-signal` and requires Go 1.27.4. The build is pure Go and sets `CGO_ENABLED=0` in the container images.
 
 ## Build Commands
 
