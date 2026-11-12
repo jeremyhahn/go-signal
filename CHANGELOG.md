@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Security
+
+- Test TLS material is generated at test time, never committed. `make test-tls` (`test/tls/generate-certs.sh`) writes a short-lived ECDSA P-256 CA and server certificate under `test/tls/`, regenerating them when missing or within a day of expiry, and discards the CA key once the leaf is signed. `integration-test`, `integration-test-cli`, `integration-test-fido2` and `docker-build-dev` run it first, and the devcontainer runs it as its `initializeCommand`. The devcontainer, integration and signal-cli images take the generated CA through compose's `tls` build context instead of committed copies, and the generated files are gitignored. The devcontainer image's Java trust-store import now finds Temurin's symlinked `cacerts` (it matched nothing and was skipped) and fails the build when no trust store exists. Committed build output (the `signalctl` binary and root-level logs) is removed and ignored, as are local agent-tooling state files.
+
+## [0.2.2-alpha] - 2026-10-10
+
+### Changed
+
+- `github.com/jeremyhahn/go-qrdb` and `github.com/jeremyhahn/go-qrdb/sdk/go` v0.7.0-alpha → v0.47.0-alpha (#116). The modules go-qrdb v0.47.0-alpha requires move with it, among them go-quicraft v0.20.0, go-truststrap v0.6.0-alpha, go-objstore v0.4.0-alpha, pebble v2.1.7 and quic-go v0.63.0, and go-enclave v0.8.0-alpha is new. The secure package's `Secret.Open`, `NewSecret` and `NewSecretFromBuffer` now take a context, and `Buffer.Bytes` is gone: `SecureString` and the certificates manager read protected bytes through `Buffer.WithBytes` or `secure.CopyOut`, and pass `context.Background()` because their own APIs carry no context. `SecureString.Clone` seals the buffer `Secret.Open` returns instead of copying it into a second buffer under two nested borrows, which v0.47's borrow guard rejects; the value still never leaves protected memory.
+- Every binary (signald, cdsi, svr2, registration-service, storage-service, key-transparency and the signal client, desktop GUI included) now owns go-qrdb v0.47's secure-memory process lifecycle through the new `pkg/securemem` (#116). Before anything else runs it hardens the process against inspection (`secure.HardenProcess`; any failure exits non-zero, and the outcome is logged) and installs the process locked-memory budget: 64 MiB, or less when `RLIMIT_MEMLOCK` is bounded below that plus 2 MiB of headroom, refusing to start when the limit leaves under 1 MiB. On an orderly exit it wipes all protected memory within 30 seconds and reports an incomplete wipe as an error. `QRDB_SECURE_ALLOW_PROCESS_INSPECTION=true` leaves a process inspectable for a debugging session, with a warning.
+- The secure-memory lifecycle now runs only on the command paths that hold secrets (#116): each binary's root command starts it before loading configuration, the signal client before any account command or the GUI, and the shutdown wipe runs only once it has started. `version`, `help` and `--help` run on any `RLIMIT_MEMLOCK`. Its hardening, budget and wipe records go through the logger each `main` builds (signald's JSON on stdout, the others' text on stderr) instead of Go's default logger; the daemons build that logger in `main` rather than in `start`. `pkg/securemem` exposes `New(logger)`, `Lifecycle.Start` and `Lifecycle.Run` in place of `Run(fn)`, and its unit tests no longer read the host's memlock limit.
+- `make lint` now ends with actionlint over `.github/workflows/` (new `make actionlint` target, pinned at `ACTIONLINT_VERSION` v1.7.12; CI's Lint job installs that pin unless the runner already carries it). `make trivy` and `make trivy-image` fail with an install hint when trivy is not on PATH instead of skipping and exiting 0, so `make security` can no longer pass without its scanner (#92).
+
 ## [0.2.1-alpha] - 2026-10-09
 
 ### Security
@@ -276,7 +289,7 @@ simply never moved out of the unreleased section.
 
 ## Project history
 
-go-signal is a Go port of the Java Signal-Server reference implementation. The work is tracked in phases in the top-level plan (`/home/jhahn/.claude/plans/fluttering-kindling-flask.md`):
+go-signal is a Go port of the Java Signal-Server reference implementation. The work is tracked in phases in the project plan:
 
 - **Phase 0**: Prerequisites — module resolution, docs scaffold, changelog setup *(current)*.
 - **Phase 1**: Foundation — pluggable storage, Redis cache, gRPC scaffold, background worker framework.

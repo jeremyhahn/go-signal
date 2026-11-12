@@ -86,13 +86,6 @@ Dockerfile*
 deploy/Dockerfile*
 .devcontainer/
 
-# ...except the test CA. .devcontainer/Dockerfile imports it into the Java trust
-# store so signal-cli will talk to the test server, and both of its stages build
-# with the REPOSITORY ROOT as context, which puts the cert behind the exclusion
-# above. Re-admitting this one file keeps the rest of .devcontainer/ out. It is a
-# certificate, not a key.
-!.devcontainer/ca-cert.pem
-
 # BuildKit credential staging file (dependency-resolution.md §6). The canonical
 # Gitea module-credential pattern mounts these variables via
 # --mount=type=secret and the file is meant to live OUTSIDE the build context;

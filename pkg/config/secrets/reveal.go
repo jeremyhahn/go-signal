@@ -8,8 +8,9 @@ import (
 )
 
 // Protected-memory allocators, indirected so the fail-closed paths that depend
-// on an allocation failure can be exercised by fault injection. Production code
-// never reassigns them; same seam and same reasoning as sealSecret.
+// on an allocation or sealing failure can be exercised by fault injection.
+// Production code never reassigns them; same seam and same reasoning as
+// sealSecret.
 var (
 	newProtectedBuffer  = secure.NewBuffer
 	sealProtectedBuffer = secure.NewSecretFromBuffer
@@ -132,7 +133,7 @@ func NewSecureStringFromBytes(ctx context.Context, value []byte) (*SecureString,
 //   - A nil, unset or destroyed receiver yields (unset, nil). There is no
 //     secret to copy and that is a legitimate configuration — a deployment
 //     that runs without one.
-//   - An allocation failure yields (nil, *SealError). A secret exists and
+//   - A sealing failure yields (nil, *SealError). A secret exists and
 //     could not be protected. A caller that reads this as "no secret
 //     configured" would silently downgrade a configured deployment under
 //     nothing worse than memory pressure, which is why it is an error and not

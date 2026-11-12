@@ -206,12 +206,11 @@ func (s *wsKVStore) Exists(_ context.Context, key string) (bool, error) {
 func (s *wsKVStore) RegisterEntityIndexes(et string, idxs []kvstore.EntityIndex) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Registration accumulates, as the kvstore contract requires: the DAO
-	// registers single-field and compound indexes in separate calls.
+	// Registration accumulates, as kvstore.KVStore requires: pkg/dao registers
+	// single-field and compound indexes in separate calls.
 	for _, idx := range idxs {
-		name := idx.ResolvedName(et)
-		if !slices.ContainsFunc(s.regIndexes[et], func(have kvstore.EntityIndex) bool {
-			return have.ResolvedName(et) == name
+		if !slices.ContainsFunc(s.regIndexes[et], func(r kvstore.EntityIndex) bool {
+			return r.FieldName == idx.FieldName && slices.Equal(r.FieldNames, idx.FieldNames)
 		}) {
 			s.regIndexes[et] = append(s.regIndexes[et], idx)
 		}

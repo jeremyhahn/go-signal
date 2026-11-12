@@ -19,12 +19,16 @@ func failProtectedBuffer(t *testing.T, injected error) {
 	t.Cleanup(func() { newProtectedBuffer = original })
 }
 
-// failProtectedSeal makes sealing the copied buffer fail, covering the second
-// allocation step independently of the first.
+// failProtectedSeal makes sealing a buffer fail, covering the second
+// allocation step independently of the first. Like the real
+// NewSecretFromBuffer, the double consumes the buffer it is handed.
 func failProtectedSeal(t *testing.T, injected error) {
 	t.Helper()
 	original := sealProtectedBuffer
-	sealProtectedBuffer = func(context.Context, *secure.Buffer) (*secure.Secret, error) { return nil, injected }
+	sealProtectedBuffer = func(_ context.Context, buf *secure.Buffer) (*secure.Secret, error) {
+		buf.Destroy()
+		return nil, injected
+	}
 	t.Cleanup(func() { sealProtectedBuffer = original })
 }
 

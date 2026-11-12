@@ -5,10 +5,12 @@ package main
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"runtime"
 
 	"github.com/jeremyhahn/go-signal/cmd/signal/cmd"
+	"github.com/jeremyhahn/go-signal/pkg/securemem"
 )
 
 func main() {
@@ -22,24 +24,43 @@ func main() {
 		forceCLI = true
 	}
 
+	logger := newLogger()
+	slog.SetDefault(logger)
+	mem := securemem.New(logger)
+
+	// CLI mode by default: every command but version and help starts the
+	// secure-memory lifecycle before it opens a store or handles a key.
+	run, label := func() error { return cmd.Execute(mem.Start) }, "Error"
 	if !forceCLI && (forceGUI || hasGUIEnvironment()) {
 		// GUI mode — delegates to runGUI which is build-tagged:
 		// desktop build: launches Wails app
 		// non-desktop build: prints error and exits
 		serverURL := extractFlag(args, "--server")
 		dataDir := extractFlag(args, "--config")
-		if err := runGUI(serverURL, dataDir); err != nil {
-			fmt.Fprintf(os.Stderr, "GUI error: %v\n", err)
-			os.Exit(1)
+		run = func() error {
+			// The desktop app's embedded store holds secrets from the start.
+			if err := mem.Start(); err != nil {
+				return err
+			}
+			return runGUI(serverURL, dataDir)
 		}
+		label = "GUI error"
 	} else {
-		// CLI mode
 		os.Args = stripFlags(os.Args, "--no-gui", "--gui")
-		if err := cmd.Execute(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
 	}
+
+	// Run wipes every protected allocation once a mode that started the
+	// lifecycle returns.
+	if err := mem.Run(run); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", label, err)
+		os.Exit(1)
+	}
+}
+
+// newLogger builds the client's logger: the one sink and format for every
+// record the process writes, the secure-memory lifecycle's included.
+func newLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 }
 
 // stripFlags removes the specified flags from the argument list.

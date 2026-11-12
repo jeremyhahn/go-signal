@@ -1,6 +1,7 @@
 # Development configuration for testing with Signal Desktop
 # Enables TLS (required by Signal Desktop) and FIDO2.
-# Usage: ./build/bin/signald start --config configs/signal-server-dev.yml
+# Usage: make test-tls && ./build/bin/signald start --config configs/signal-server-dev.yml
+# (`make test-tls` generates the test certificate and key under test/tls; they are not committed.)
 
 server:
   host: "0.0.0.0"

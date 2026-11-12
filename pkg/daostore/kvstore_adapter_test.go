@@ -133,6 +133,21 @@ func (m *mockKVServicer) Scan(_ context.Context, prefix string) (map[string][]by
 }
 
 // Unused interface stubs.
+func (m *mockKVServicer) CompareAndDelete(_ context.Context, key string, expected []byte) (bool, error) {
+	if v, ok := m.data[key]; !ok || !bytes.Equal(v, expected) {
+		return false, nil
+	}
+	return true, m.Delete(context.Background(), key)
+}
+func (m *mockKVServicer) CompareAndSwap(_ context.Context, key string, expected, next []byte) (bool, error) {
+	if v, ok := m.data[key]; !ok || !bytes.Equal(v, expected) {
+		return false, nil
+	}
+	return true, m.Put(context.Background(), key, next)
+}
+func (m *mockKVServicer) ListAll(_ context.Context, prefix string) ([]string, error) {
+	return m.List(context.Background(), prefix)
+}
 func (m *mockKVServicer) GetStale(_ context.Context, key string) ([]byte, error) {
 	return m.Get(context.Background(), key)
 }

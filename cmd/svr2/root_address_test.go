@@ -40,6 +40,7 @@ func rootAddressTestConfig(t *testing.T, fileVal string) string {
 // with args parsed onto start's flags, and returns the resolved config.
 func resolveThroughRoot(t *testing.T, path string, args ...string) *config.Config {
 	t.Helper()
+	stubSecureMemory(t, nil)
 	prevPath, prevCfg := cfgPath, cfg
 	t.Cleanup(func() {
 		cfgPath, cfg = prevPath, prevCfg

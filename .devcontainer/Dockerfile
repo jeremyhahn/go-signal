@@ -20,11 +20,13 @@
 # run 340. Baking the source in is also the honest CI shape: a test image should
 # contain the code under test rather than borrow it from its surroundings.
 #
-# Both stages build with the REPOSITORY ROOT as context, which is why the CA
-# cert below is addressed as .devcontainer/ca-cert.pem. .dockerignore excludes
-# .devcontainer/ wholesale and re-admits exactly that one file.
+# The test CA the image trusts is not in the repository. `make test-tls`
+# generates it under test/tls, and compose hands that directory to the build as
+# the named context `tls` (additional_contexts in docker-compose.yml). A plain
+# `docker build` supplies it the same way:
+#   docker build --build-context tls=test/tls -f .devcontainer/Dockerfile .
 
-FROM golang:1.27.2-bookworm AS toolchain
+FROM golang:1.27.3-bookworm AS toolchain
 
 # Install JRE 21 from Eclipse Temurin for signal-cli compatibility
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -42,16 +44,19 @@ RUN wget -qO- https://packages.adoptium.net/artifactory/api/gpg/key/public | tee
     apt-get update && apt-get install -y --no-install-recommends temurin-21-jre && \
     rm -rf /var/lib/apt/lists/*
 
-# Import test CA cert into Java trust store for signal-cli
-COPY .devcontainer/ca-cert.pem /tmp/ca-cert.pem
-RUN CACERTS=$(find /usr/lib/jvm -name cacerts -type f 2>/dev/null | head -1) && \
-    if [ -n "$CACERTS" ]; then \
-        keytool -importcert -trustcacerts -noprompt \
-            -alias signal-test-ca \
-            -file /tmp/ca-cert.pem \
-            -keystore "$CACERTS" \
-            -storepass changeit; \
-    fi && \
+# Import the generated test CA into the Java trust store for signal-cli.
+# Temurin's lib/security/cacerts is a symlink, so `find -L`: a plain
+# `-type f` matched nothing and the import was silently skipped. A missing
+# trust store now fails the build instead of producing an image that trusts
+# nothing.
+COPY --from=tls ca-cert.pem /tmp/ca-cert.pem
+RUN CACERTS=$(find -L /usr/lib/jvm -name cacerts -type f 2>/dev/null | head -1) && \
+    [ -n "$CACERTS" ] || { echo "no Java cacerts under /usr/lib/jvm" >&2; exit 1; }; \
+    keytool -importcert -trustcacerts -noprompt \
+        -alias signal-test-ca \
+        -file /tmp/ca-cert.pem \
+        -keystore "$CACERTS" \
+        -storepass changeit && \
     rm /tmp/ca-cert.pem
 
 # Install Go tools, at the versions the MAKEFILE declares.
@@ -82,6 +87,8 @@ RUN CACERTS=$(find /usr/lib/jvm -name cacerts -type f 2>/dev/null | head -1) && 
 # is a wrong scanner that nobody notices, while a slow rebuild is visible. This
 # image is built on the integration path, not on every PR.
 COPY Makefile /tmp/pins/Makefile
+# The Makefile includes mk/release-alpha.mk, which includes mk/release-common.mk.
+COPY mk/ /tmp/pins/mk/
 RUN set -eux; \
     cd /tmp/pins; \
     pin() { \

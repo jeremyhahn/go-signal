@@ -1,6 +1,6 @@
 module github.com/jeremyhahn/go-signal
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/alicebob/miniredis/v2 v2.34.0
@@ -11,8 +11,8 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/jeremyhahn/go-libsignal v0.1.2-alpha
-	github.com/jeremyhahn/go-qrdb v0.46.0-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.46.0-alpha
+	github.com/jeremyhahn/go-qrdb v0.47.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.47.0-alpha
 	github.com/prometheus/client_golang v1.24.1
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/robfig/cron/v3 v3.0.1
@@ -21,8 +21,8 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.12.1
-	golang.org/x/crypto v0.57.0
-	golang.org/x/term v0.46.0
+	golang.org/x/crypto v0.58.0
+	golang.org/x/term v0.47.0
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
@@ -64,9 +64,9 @@ require (
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
-	github.com/jeremyhahn/go-enclave v0.7.0-alpha // indirect
-	github.com/jeremyhahn/go-quicraft v0.18.0 // indirect
-	github.com/jeremyhahn/go-truststrap v0.4.0-alpha // indirect
+	github.com/jeremyhahn/go-enclave v0.8.0-alpha // indirect
+	github.com/jeremyhahn/go-quicraft v0.20.0 // indirect
+	github.com/jeremyhahn/go-truststrap v0.6.0-alpha // indirect
 	github.com/klauspost/compress v1.19.1 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
@@ -96,10 +96,10 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/exp v0.0.0-20260312153236-7ab1446f8b90 // indirect
 	golang.org/x/mod v0.41.0 // indirect
-	golang.org/x/net v0.60.0 // indirect
-	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/text v0.42.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.51.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260810153831-ec0a7760b754 // indirect

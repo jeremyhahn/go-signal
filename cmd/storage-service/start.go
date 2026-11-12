@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -36,9 +35,6 @@ var startCmd = &cobra.Command{
 func init() { rootCmd.AddCommand(startCmd) }
 
 func runStart(cmd *cobra.Command, _ []string) error {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	slog.SetDefault(logger)
-
 	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 

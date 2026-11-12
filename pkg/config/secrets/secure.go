@@ -18,6 +18,10 @@ const redacted = "[REDACTED]"
 // sealSecret is the protected-memory allocator. It is a variable rather than
 // a direct call so the fail-closed paths that depend on an allocation failure
 // can be exercised by fault injection; production code never reassigns it.
+//
+// SecureString's API carries no context, so every seal and open in this
+// package passes context.Background(): the same unbounded wait the secure
+// package applied before its calls took a context.
 var sealSecret = secure.NewSecret
 
 // stageBuffer is the locked-memory allocator a decode hook stages a value in

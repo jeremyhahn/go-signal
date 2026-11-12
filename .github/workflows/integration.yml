@@ -54,6 +54,9 @@ on:
       # it a tool-version change lands on main having never built the image it
       # changes (#71).
       - 'Makefile'
+      # The Makefile includes mk/release-alpha.mk and mk/release-common.mk,
+      # which the devcontainer image copies beside it.
+      - 'mk/**'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/integration.yml'
@@ -84,7 +87,7 @@ jobs:
       # runner every target starts with "make: go: No such file or directory".
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
 
       # The signal-server image resolves first-party modules from the internal
       # Gitea, and the test container compiles the suite itself, so credentials

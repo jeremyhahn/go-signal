@@ -214,12 +214,12 @@ func (m *CertificatesManager) useEd25519Key(ctx context.Context, fn func(priv ed
 	if err != nil {
 		return true, err
 	}
-	priv := make(ed25519.PrivateKey, buf.Size())
-	err = buf.WithBytes(func(b []byte) error {
-		copy(priv, b)
-		return nil
-	})
+	copied, err := secure.CopyOut(buf)
 	buf.Destroy()
+	if err != nil {
+		return true, err
+	}
+	priv := ed25519.PrivateKey(copied)
 	defer func() {
 		for i := range priv {
 			priv[i] = 0
