@@ -12,7 +12,10 @@ const (
 	TestTokenPrefix = "test-captcha-" // #nosec G101 -- not a credential, test token prefix for dev/integration
 )
 
-// TestVerifier accepts tokens in its allow-set or with TestTokenPrefix; for tests and local development only, never production.
+// TestVerifier is a CaptchaVerifier intended for integration testing and local
+// development. It accepts tokens that either appear in a configured allow-set
+// or carry the TestTokenPrefix prefix. All other tokens are rejected. It must
+// never be used in production.
 type TestVerifier struct {
 	// validTokens is the set of explicitly accepted tokens in addition to
 	// any token carrying TestTokenPrefix.

@@ -38,7 +38,11 @@ func NewAccountsManager(store AccountStore, maxDevices int) *AccountsManager {
 	}
 }
 
-// SetDirectoryEventBus attaches a bus that receives every committed mutation; nil detaches. Not safe concurrently with mutations.
+// SetDirectoryEventBus attaches a publish-only event bus to the
+// manager. Every successful Create/Update/Delete pathway publishes
+// to the bus after the underlying store has committed. Passing nil
+// detaches the bus. Safe to call before serving traffic; not safe to
+// call concurrently with mutating operations.
 func (m *AccountsManager) SetDirectoryEventBus(bus *DirectoryEventBus) {
 	m.bus = bus
 }
@@ -96,7 +100,11 @@ func (m *AccountsManager) Create(ctx context.Context, account *Account) error {
 	return nil
 }
 
-// RecreatePreserving restores a deleted account exactly, keeping CreatedAt, Version and hashed device tokens; used to roll back a displacement.
+// RecreatePreserving re-creates a previously-deleted account exactly as it
+// was, preserving CreatedAt, Version, and the existing hashed device tokens.
+// Unlike Create it does not re-initialize those fields. It is used to roll back
+// a failed re-registration (or other displacement) so the restored account is
+// indistinguishable from the original.
 func (m *AccountsManager) RecreatePreserving(ctx context.Context, account *Account) error {
 	if account == nil {
 		return &InvalidArgumentError{Field: "account", Message: "must not be nil"}
@@ -400,7 +408,13 @@ func (m *AccountsManager) clearDevicePush(ctx context.Context, uuid string, devi
 	return account, nil
 }
 
-// ChangeNumber moves an account to a new number, optionally replacing the PNI identity key; a different account holding the number is displaced.
+// ChangeNumber updates the phone number for the account identified by the given
+// UUID. If a PNI identity key is provided, it replaces the existing one. The
+// account version is incremented automatically.
+//
+// If the target number is already owned by a different account, that account is
+// deleted first (mirroring the Java Signal-Server behavior where proving
+// ownership of a number via verification displaces the previous holder).
 func (m *AccountsManager) ChangeNumber(ctx context.Context, accountUUID, newNumber string, pniIdentityKey []byte) (*Account, error) {
 	if accountUUID == "" {
 		return nil, &InvalidArgumentError{Field: "uuid", Message: "must not be empty"}
@@ -484,7 +498,10 @@ func (m *AccountsManager) SetPhoneNumberDiscoverability(ctx context.Context, uui
 	return nil
 }
 
-// ListAll streams every account to fn; an error from fn aborts.
+// ListAll streams every account to fn. fn returning an error aborts
+// iteration. Used by background workers (account-expiry sweeps,
+// orphaned-prekey GC, idle-device sweeps) to scan the full account
+// set without leaking the store interface.
 func (m *AccountsManager) ListAll(ctx context.Context, fn func(*Account) error) error {
 	return m.store.ListAll(ctx, fn)
 }

@@ -7,7 +7,25 @@ import (
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
-// Identity-namespaced pre-key access: pass accounts.IdentityTypeACI or IdentityTypePNI to the *ForIdentity helpers; the namespace is the UUID used as key prefix.
+// Identity-namespaced pre-key access.
+//
+// Every Signal account has two identifier namespaces (ACI and PNI; see
+// accounts.IdentityType). Pre-keys, signed pre-keys, and KEM keys each
+// live in their own namespace so clients authenticating against the PNI
+// cannot consume ACI-targeted keys and vice versa.
+//
+// The existing KeysManager methods take a bare UUID string. For ACI
+// flows callers pass Account.UUID; for PNI flows they pass Account.PNI.
+// The *ForIdentity helpers below make that choice explicit:
+//
+//	// ACI flow:
+//	m.StoreKeysForIdentity(ctx, acct, accounts.IdentityTypeACI, deviceID, req)
+//
+//	// PNI flow (bound to the phone-number identity):
+//	m.StoreKeysForIdentity(ctx, acct, accounts.IdentityTypePNI, deviceID, req)
+//
+// Both paths use the same underlying storage; the "namespace" is just
+// the key prefix chosen by which UUID string is passed to the store.
 
 // ErrIdentityNotSet is returned when the requested identity namespace
 // has no UUID on the account. PNI is optional on some legacy records;

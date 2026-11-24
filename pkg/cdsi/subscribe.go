@@ -35,7 +35,11 @@ type SubscribeConfig struct {
 	TokenStore ResumeTokenStore
 }
 
-// ResumeTokenStore persists the subscribe resume cursor across reconnects and restarts; safe for concurrent use.
+// ResumeTokenStore persists the directory subscribe resume cursor
+// across reconnects and process restarts. Implementations must be
+// safe for concurrent access — Save is called from the subscribe
+// loop goroutine while Load may be called by the same goroutine on
+// reconnect.
 type ResumeTokenStore interface {
 	Load(ctx context.Context) ([]byte, error)
 	Save(ctx context.Context, token []byte) error
@@ -69,7 +73,15 @@ func (s *MemoryResumeTokenStore) Save(_ context.Context, token []byte) error {
 	return nil
 }
 
-// SubscribeAndApply replicates the directory until ctx ends, resubscribing with backoff from the saved token or a fresh snapshot; returns ctx.Err().
+// SubscribeAndApply runs the live-replication loop until ctx is
+// canceled. On every disconnect it backs off exponentially and
+// resubscribes with the most recently persisted resume token. When
+// the server detects that token is too old it falls back to a fresh
+// snapshot — the cdsi loop applies it as a sequence of Upsert events,
+// so the local index converges to the server's view without losing
+// in-flight lookups.
+//
+// Returns ctx.Err() on clean shutdown.
 func SubscribeAndApply(ctx context.Context, cfg SubscribeConfig) error {
 	if cfg.Client == nil {
 		return errors.New("cdsi: SubscribeAndApply requires Client")

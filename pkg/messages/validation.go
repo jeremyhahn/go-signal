@@ -16,7 +16,13 @@ type DeviceMessage struct {
 	RegistrationID uint32
 }
 
-// ValidateDeviceSet returns *signalerrors.MismatchedDevicesError unless the addressed devices exactly match the enabled ones.
+// ValidateDeviceSet compares the set of device IDs addressed by the sender
+// against the enabled devices on the recipient account.
+//
+// Returns *signalerrors.MismatchedDevicesError when the sender failed to
+// address all active devices (missingDevices) or addressed device IDs that
+// do not exist on the account (extraDevices). Returns nil when the sets match
+// exactly.
 func ValidateDeviceSet(recipient *accounts.Account, messages []DeviceMessage) error {
 	// Build the set of device IDs the sender addressed.
 	sent := make(map[uint64]struct{}, len(messages))
@@ -53,7 +59,14 @@ func ValidateDeviceSet(recipient *accounts.Account, messages []DeviceMessage) er
 	return nil
 }
 
-// ValidateRegistrationIDs returns *signalerrors.StaleDevicesError for addressed devices whose registration ID differs; zero IDs are skipped.
+// ValidateRegistrationIDs checks that the registration ID supplied by the
+// sender for each addressed device matches the registration ID currently
+// stored on that device.
+//
+// Returns *signalerrors.StaleDevicesError listing the device IDs whose
+// registration IDs do not match. Returns nil when all supplied registration
+// IDs are current. Entries whose RegistrationID is zero are skipped (the
+// sender chose not to provide one).
 func ValidateRegistrationIDs(recipient *accounts.Account, messages []DeviceMessage) error {
 	var staleDevices []uint64
 

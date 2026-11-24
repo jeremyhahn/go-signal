@@ -51,7 +51,10 @@ func generateDirName() string {
 	return base64.RawURLEncoding.EncodeToString(b[:])[:16]
 }
 
-// SetPublicKey implements [backups.Store]: set once, idempotent when the key matches, refused when it differs.
+// SetPublicKey implements [backups.Store]. Uses INSERT … ON CONFLICT with a
+// WHERE clause that rejects updates when the supplied public_key differs
+// from the stored one — the canonical "set once, idempotent on re-set"
+// semantic for backup-id commitments.
 func (s *BackupStore) SetPublicKey(
 	ctx context.Context,
 	id backups.BackupID,
@@ -251,7 +254,10 @@ func (s *BackupStore) SetMediaUsageFor(ctx context.Context, attrs backups.Stored
 	return nil
 }
 
-// ScheduleBackupDeletion implements [backups.Store], rotating the directories and queueing the old one in one transaction.
+// ScheduleBackupDeletion implements [backups.Store]. Rotates the user's
+// directories in a single statement, queueing the old backup_dir into
+// backups_pending_deletion. Wrapped in a transaction so the pending-row
+// insert and the directory rotation either both succeed or neither does.
 func (s *BackupStore) ScheduleBackupDeletion(ctx context.Context, user backups.AuthenticatedUser) error {
 	hashed := hashBackupID(user.BackupID)
 	conn, ok := s.q.(beginner)
@@ -310,7 +316,10 @@ func (s *BackupStore) ScheduleBackupDeletion(ctx context.Context, user backups.A
 	return nil
 }
 
-// StartExpiration is a no-op: a single worker needs no lease.
+// StartExpiration is a no-op for postgres today (no lease semantics).
+// A future change may switch to SELECT … FOR UPDATE SKIP LOCKED to lease
+// rows across multiple worker replicas; the no-op default is correct as
+// long as a single worker runs.
 func (s *BackupStore) StartExpiration(_ context.Context, _ backups.ExpiredBackup) error {
 	return nil
 }

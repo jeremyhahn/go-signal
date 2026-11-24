@@ -26,7 +26,10 @@ type LowKeyEvent struct {
 	LowKEM bool
 }
 
-// LowKeyCallback receives a LowKeyEvent inline when a bundle GET leaves a device below the threshold; it must not block.
+// LowKeyCallback receives a LowKeyEvent whenever a consuming bundle GET
+// leaves a device below the configured threshold. Callbacks MUST NOT block
+// the calling goroutine; the manager invokes them inline so callbacks are
+// expected to dispatch their own goroutines or buffered channels.
 type LowKeyCallback func(LowKeyEvent)
 
 // KeysManager coordinates pre-key storage and retrieval operations. It wraps a
@@ -67,7 +70,10 @@ func (m *KeysManager) SetLowKeyThreshold(n int) {
 	m.lowKeyThreshold.Store(int32(n))
 }
 
-// StoreKeys stores every pre-key in req for the device and returns the first error; the KEM last-resort key is never consumed.
+// StoreKeys processes a SetKeysRequest and persists all provided pre-keys for
+// the given account and device. Each key type is stored independently; the first
+// encountered error is returned. The KEMLastResortPreKey, if present, is stored
+// separately and is never consumed during session establishment.
 func (m *KeysManager) StoreKeys(ctx context.Context, accountUUID string, deviceID uint64, req *SetKeysRequest) error {
 	if req == nil {
 		return signalerrors.New(signalerrors.ErrInvalidArgument, "set keys request must not be nil")
@@ -102,7 +108,18 @@ func (m *KeysManager) StoreKeys(ctx context.Context, accountUUID string, deviceI
 	return nil
 }
 
-// GetPreKeys returns a device's pre-key bundle, consuming one one-time EC key and one one-time KEM key; with no KEM keys left the last-resort key is returned unconsumed.
+// GetPreKeys retrieves the pre-key bundle for a target account and device. This
+// is used during session establishment by the sending client.
+//
+// One-time EC pre-keys are consumed (deleted) upon retrieval. If no one-time EC
+// pre-keys remain, the bundle is returned without a PreKey field.
+//
+// For KEM pre-keys the following precedence applies:
+//  1. If one-time KEM pre-keys are available, one is consumed and returned.
+//  2. If no one-time KEM pre-keys remain, the last-resort KEM pre-key is
+//     returned WITHOUT being consumed (deleted), so it remains available for
+//     future session establishments. This is the correct Signal protocol
+//     behavior: last-resort keys are never deleted by the server.
 func (m *KeysManager) GetPreKeys(ctx context.Context, targetUUID string, deviceID uint64) (*PreKeyResponseItem, error) {
 	signedPreKey, err := m.store.GetSignedPreKey(ctx, targetUUID, deviceID)
 	if err != nil {

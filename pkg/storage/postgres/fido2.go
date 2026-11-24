@@ -16,7 +16,10 @@ import (
 // Compile-time interface satisfaction check.
 var _ fido2.FIDO2AccountsStore = (*FIDO2AccountsStore)(nil)
 
-// FIDO2AccountsStore implements fido2.FIDO2AccountsStore on Postgres, with blobs in JSONB.
+// FIDO2AccountsStore is a Postgres-backed implementation of
+// fido2.FIDO2AccountsStore. Credential blobs and session blobs are stored
+// as JSONB in the data column; account_uuid and expires_at are promoted
+// columns used for indexed queries.
 type FIDO2AccountsStore struct {
 	q Querier
 }
@@ -148,7 +151,9 @@ func (s *FIDO2AccountsStore) DeleteCredential(ctx context.Context, credentialID 
 	return nil
 }
 
-// StoreSession upserts a WebAuthn session.
+// StoreSession persists a WebAuthn ceremony session. Uses INSERT...ON CONFLICT
+// DO UPDATE so callers can re-store an existing session (e.g., after nonce
+// refresh) without a prior delete — matching the qrdb upsert semantics.
 func (s *FIDO2AccountsStore) StoreSession(ctx context.Context, session *fido2.FIDO2Session) error {
 	if session == nil {
 		return signalerrors.New(signalerrors.ErrInvalidArgument, "postgres fido2: nil session")

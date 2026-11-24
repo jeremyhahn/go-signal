@@ -5,7 +5,10 @@ import (
 	"strings"
 )
 
-// SecretResolver resolves a secret URI to a SecureString the caller must Destroy.
+// SecretResolver resolves a secret URI to its plaintext value wrapped in a
+// SecureString. Implementations must treat the returned SecureString as the
+// authoritative owner and callers are responsible for calling Destroy when
+// the value is no longer needed.
 type SecretResolver interface {
 	// Scheme returns the URI scheme this resolver handles (e.g., "kms", "env").
 	Scheme() string
@@ -34,7 +37,11 @@ func (r *ResolverRegistry) Register(resolver SecretResolver) {
 	r.resolvers[resolver.Scheme()] = resolver
 }
 
-// Resolve dispatches a URI with a registered scheme to its resolver, wraps any other value, and returns nil for empty input.
+// Resolve resolves the given value. If the value is a URI with a registered
+// scheme (e.g., "kms://path"), the corresponding resolver is invoked and its
+// SecureString result is returned. If the value has no registered scheme, it
+// is wrapped in a new SecureString and returned. Returns a nil SecureString
+// for empty input.
 func (r *ResolverRegistry) Resolve(ctx context.Context, value string) (*SecureString, error) {
 	if value == "" {
 		return NewOptionalSecureString(value)

@@ -21,13 +21,23 @@ const (
 // specific group. The token binds the sender UUID and group ID to an
 // expiration timestamp using HMAC-SHA256.
 type GroupSendToken struct {
-	// Expiration is the Unix time (seconds) after which the token is invalid.
+	// Expiration is the Unix timestamp (seconds) after which the token is
+	// no longer valid.
 	Expiration int64
 	// HMAC is the 32-byte HMAC-SHA256 signature.
 	HMAC []byte
 }
 
-// GenerateGroupSendToken binds sender and group ID with an HMAC under key, valid for ttl; the caller zeroes key.
+// GenerateGroupSendToken creates a new GroupSendToken binding the given sender
+// and group ID. The token expires after ttl from the current time. The key
+// parameter is the server-side HMAC secret.
+//
+// Key zeroing: the caller is responsible for zeroing key after all calls that
+// use it are complete. This function does not zero key internally because the
+// same key slice is typically passed to both GenerateGroupSendToken and
+// VerifyGroupSendToken; zeroing here would corrupt subsequent calls in the
+// same request scope. Production callers should derive a fresh []byte copy
+// from secure storage for each independent operation and zero it afterward.
 func GenerateGroupSendToken(key []byte, senderUUID string, groupID string, ttl time.Duration) *GroupSendToken {
 	if ttl <= 0 {
 		ttl = DefaultGroupSendTokenTTL
@@ -42,7 +52,11 @@ func GenerateGroupSendToken(key []byte, senderUUID string, groupID string, ttl t
 	}
 }
 
-// VerifyGroupSendToken checks form, expiry and HMAC; the caller zeroes key.
+// VerifyGroupSendToken validates that the token is well-formed, not expired,
+// and has a valid HMAC for the given sender, group, and key.
+//
+// Key zeroing: see the note on GenerateGroupSendToken. The caller owns the
+// key lifecycle and must zero it once no further calls are needed.
 func VerifyGroupSendToken(key []byte, token *GroupSendToken, senderUUID string, groupID string) bool {
 	if token == nil || len(token.HMAC) != sha256.Size {
 		return false

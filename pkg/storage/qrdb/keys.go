@@ -319,7 +319,10 @@ func (s *PreKeyStore) DeleteAllForAccount(ctx context.Context, uuid string) erro
 	return nil
 }
 
-// ListAccountUUIDs returns every UUID that owns a pre-key row under any prefix.
+// ListAccountUUIDs returns every UUID that appears as the owner of
+// any pre-key row across the EC, KEM, KEM-last-resort, or signed
+// prefixes. Keys follow the layout `<prefix><uuid>:...`, so the UUID
+// is the second segment after the prefix.
 func (s *PreKeyStore) ListAccountUUIDs(ctx context.Context) ([]string, error) {
 	prefixes := []string{preKeyECPfx, preKeyKEMPfx, preKeyKEMLastResort, preKeySignedPfx}
 	seen := make(map[string]struct{})

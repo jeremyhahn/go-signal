@@ -14,7 +14,12 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
-// SecureStorageManager issues storage-service credentials: HMAC-SHA256(sharedSecret, accountUUID), the secret revealed only per computation.
+// SecureStorageManager mints credentials for the storage-service. Per
+// Java's SecureStorageController, the password is
+// HMAC-SHA256(sharedSecret, accountUUID) — storage-service validates
+// inbound credentials against the same secret.
+// The secret lives in protected memory for the process lifetime and is
+// revealed only for the length of a single HMAC computation.
 type SecureStorageManager struct {
 	logger *slog.Logger
 	// state is mode and key published as one immutable value, so readers never see them out of step.
@@ -48,8 +53,21 @@ func NewSecureStorageManager(logger *slog.Logger) *SecureStorageManager {
 	return &SecureStorageManager{logger: logger}
 }
 
-// SetSharedSecret installs a clone of secret, wiping any previous one; an unset secret selects random-UUID stub credentials.
-// It errors, leaving the manager unchanged, when the secret exists but cannot be protected; callers treat that as fatal.
+// SetSharedSecret installs the HMAC secret used to mint credentials.
+// An unset secret disables HMAC mode and falls back to random-UUID
+// passwords for non-storage-service deployments (legacy stub behavior).
+// The secret is cloned into an enclave the manager owns; the caller keeps
+// ownership of what it passed in.
+//
+// Any secret already installed is wiped before being replaced, so a rotation
+// leaves no copy of the superseded key resident.
+//
+// Returns an error only when the secret exists but could not be placed in
+// protected memory. That case leaves the manager untouched — the previously
+// installed configuration, key included, survives — and callers must treat it
+// as fatal rather than proceeding: continuing would run with GetAuth's legacy
+// stub, issuing random credentials the peer rejects. An absent secret is not
+// an error; it selects the stub deliberately.
 func (m *SecureStorageManager) SetSharedSecret(secret *secrets.SecureString) error {
 	// Never configured selects the stub; configured and usable selects HMAC; anything else errors. Presence and copy come from one snapshot.
 	clone, configured, err := cloneSecret(secret)
@@ -87,7 +105,24 @@ func (m *SecureStorageManager) SetSharedSecret(secret *secrets.SecureString) err
 	}
 }
 
-// Destroy wipes the secret and makes the manager terminal; idempotent. A configured manager then fails closed, an unconfigured one keeps the stub.
+// Destroy wipes the manager's copy of the shared secret and makes the manager
+// terminal: no later SetSharedSecret can install another one. Called from the
+// daemon's shutdown path. Safe to call more than once, and on a manager that
+// was never configured.
+//
+// Terminal is the point. Wiping what is installed at the instant Destroy runs
+// says nothing about a SetSharedSecret already in flight, which cloned its
+// secret before Destroy started and would publish it after Destroy returned —
+// a live protected allocation, installed after shutdown, that nothing would
+// ever wipe. The marker is what that setter checks.
+//
+// A manager that was minting HMAC credentials does not revert to the legacy
+// stub afterwards: GetAuth fails closed with a SharedSecretUnavailableError,
+// so a wipe can never be mistaken for a successful credential grant. A manager
+// that was never configured keeps serving the random-UUID stub after Destroy,
+// deliberately: there is no key to protect, and failing closed there would turn
+// shutdown into an outage for non-storage-service deployments in exchange for
+// nothing.
 func (m *SecureStorageManager) Destroy() {
 	if m == nil {
 		return
@@ -111,7 +146,9 @@ func (m *SecureStorageManager) Destroy() {
 	}
 }
 
-// SetManifestStore sets the storage backend; nil leaves the storage-service disabled.
+// SetManifestStore installs the persistence backend for the storage-service.
+// Passing nil (or never calling this) keeps the storage-service disabled and
+// the REST layer serves the safe 204 stub.
 func (m *SecureStorageManager) SetManifestStore(store ManifestStore) {
 	m.store = store
 }
@@ -133,7 +170,10 @@ func (m *SecureStorageManager) GetManifest(ctx context.Context, accountUUID stri
 	return manifest, nil
 }
 
-// Write applies a WriteOperation if its manifest version is greater than the current one, else returns the current manifest as the conflict (409); clearAll removes items first.
+// Write applies a WriteOperation. The new manifest version must be strictly
+// greater than the current one; otherwise the current manifest is returned as
+// the conflict (the caller maps this to HTTP 409) and no changes are made.
+// clearAll wipes all existing items before applying inserts.
 func (m *SecureStorageManager) Write(
 	ctx context.Context,
 	accountUUID string,
@@ -209,7 +249,12 @@ func (m *SecureStorageManager) Read(ctx context.Context, accountUUID string, key
 	return items, nil
 }
 
-// GetAuth returns storage-service credentials: HMAC when configured, else a random UUID; a failed reveal is SharedSecretUnavailableError.
+// GetAuth returns credentials for the storage-service. Without a configured
+// shared secret a random UUID is returned (the legacy stub behavior).
+//
+// Once a secret has been configured, a reveal that fails — the secret was
+// destroyed, or the enclave would not open — is a
+// SharedSecretUnavailableError, never a fallback to the stub.
 func (m *SecureStorageManager) GetAuth(_ context.Context, accountUUID string) (*StorageCredentials, error) {
 	// One Load: mode and key from the same state.
 	st := m.state.Load()

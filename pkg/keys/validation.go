@@ -32,7 +32,15 @@ func (e *InvalidPreKeySignatureError) Error() string {
 		" has invalid signature: " + e.Reason
 }
 
-// ValidateSignedPreKey verifies the XEdDSA signature on an EC signed pre-key with a 33-byte identity key; an empty identity key skips the check.
+// ValidateSignedPreKey verifies the XEdDSA signature on an EC signed pre-key.
+//
+// The identity key must be the 33-byte serialized Curve25519 public key
+// (DJB type byte 0x05 followed by 32 key bytes). The signature covers the
+// serialized public key bytes of the signed pre-key (also 33 bytes).
+//
+// If identityKey is empty the validation is skipped and nil is returned. This
+// accommodates the bootstrap case where the server does not yet hold an
+// identity key for the account.
 func ValidateSignedPreKey(identityKey []byte, spk *SignedPreKey) error {
 	if len(identityKey) == 0 {
 		return nil
@@ -87,7 +95,13 @@ func ValidateSignedPreKey(identityKey []byte, spk *SignedPreKey) error {
 	return nil
 }
 
-// ValidateKEMSignedPreKey verifies the XEdDSA signature over a KEM public key; an empty identity key skips the check.
+// ValidateKEMSignedPreKey verifies the XEdDSA signature on a KEM signed
+// pre-key.
+//
+// The identity key must be the 33-byte serialized Curve25519 public key.
+// The signature covers the raw KEM public key bytes as the message.
+//
+// If identityKey is empty the validation is skipped and nil is returned.
 func ValidateKEMSignedPreKey(identityKey []byte, kspk *KEMSignedPreKey) error {
 	if len(identityKey) == 0 {
 		return nil
@@ -142,7 +156,11 @@ func ValidateKEMSignedPreKey(identityKey []byte, kspk *KEMSignedPreKey) error {
 	return nil
 }
 
-// ValidateAllSignedKeys validates every EC and KEM signed pre-key and returns the first InvalidPreKeySignatureError.
+// ValidateAllSignedKeys validates all EC signed pre-keys and KEM signed
+// pre-keys against the provided identity key. It returns the first
+// InvalidPreKeySignatureError encountered.
+//
+// If identityKey is empty or both slices are empty, nil is returned.
 func ValidateAllSignedKeys(identityKey []byte, signedPreKeys []*SignedPreKey, kemPreKeys []*KEMSignedPreKey) error {
 	for _, spk := range signedPreKeys {
 		if err := ValidateSignedPreKey(identityKey, spk); err != nil {

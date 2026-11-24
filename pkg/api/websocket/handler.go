@@ -43,7 +43,13 @@ type Handler struct {
 	dummyHash *auth.SaltedTokenHash
 }
 
-// NewHandler returns a WebSocket Handler that forwards requests it does not handle through httpHandler; empty allowedOrigins means same-origin only.
+// NewHandler creates a new WebSocket Handler. The httpHandler parameter is the
+// HTTP mux/handler chain used for REST API routing. WebSocket requests that are
+// not handled directly (keepalive, message ack) are forwarded through
+// httpHandler, mirroring the Java Signal-Server's WebSocketResourceProvider.
+// allowedOrigins is the list of Origin header values that are permitted for
+// WebSocket upgrades. When non-empty, only those origins are accepted. When
+// empty, the library default (same-origin) check applies.
 func NewHandler(
 	accts *accounts.AccountsManager,
 	msgs *messages.MessagesManager,
@@ -181,7 +187,10 @@ func (h *Handler) HandleUnauthenticated(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// HandleProvisioning upgrades an unauthenticated connection for device provisioning and waits for the primary device.
+// HandleProvisioning upgrades the HTTP connection to a WebSocket for the
+// device provisioning flow. No authentication is required. The server assigns
+// a provisioning address and waits for the primary device to complete the
+// provisioning.
 func (h *Handler) HandleProvisioning(w http.ResponseWriter, r *http.Request) {
 	conn, err := ws.Accept(w, r, h.acceptOptions())
 	if err != nil {

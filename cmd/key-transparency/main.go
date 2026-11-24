@@ -1,4 +1,7 @@
-// Package main is the standalone key-transparency binary, serving the KeyTransparencyQueryService gRPC contract that signald reads.
+// Package main is the entry point for the standalone key-transparency
+// binary. Hosts the KeyTransparencyQueryService gRPC contract: signald
+// reads from this service to answer mobile-client KT REST endpoints
+// (handlers_keytransparency.go).
 package main
 
 import (

@@ -424,7 +424,9 @@ type DAOSenderKeyStore struct {
 	serializer *serialize.Serializer
 }
 
-// NewDAOSenderKeyStore returns a DAO-backed sender-key store using protobuf, since SenderKey records cannot be JSON-marshalled.
+// NewDAOSenderKeyStore creates a sender-key store backed by the DAO factory.
+// It uses the protobuf serializer for wire-safe binary storage of SenderKey
+// records, which contain only unexported fields and cannot be JSON-marshaled.
 func NewDAOSenderKeyStore(f *daostore.Factory) *DAOSenderKeyStore {
 	return &DAOSenderKeyStore{
 		dao:        f.SenderKeys,

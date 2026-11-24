@@ -1,6 +1,7 @@
 package devices
 
-// ProvisioningCodeExpiredError indicates the provisioning code has expired.
+// ProvisioningCodeExpiredError indicates the provisioning code has expired and
+// can no longer be used to link a device.
 type ProvisioningCodeExpiredError struct {
 	Code string
 }

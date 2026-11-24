@@ -59,14 +59,23 @@ func (e *EnvVarNotSetError) Error() string {
 	return "secrets: environment variable not set: " + e.VarName
 }
 
-// EmptySecretError reports sealing an empty value via NewSecureString; use NewOptionalSecureString where empty is legitimate.
+// EmptySecretError indicates an attempt to seal an empty value into
+// protected memory via NewSecureString. Credential and key material is never
+// legitimately empty, so this is reported rather than silently producing an
+// unset SecureString that a handler would go on to issue as a credential.
+// Configuration values whose absence is legitimate use
+// NewOptionalSecureString, which accepts an empty value.
 type EmptySecretError struct{}
 
 func (e *EmptySecretError) Error() string {
 	return "secrets: cannot seal an empty value into protected memory"
 }
 
-// UnavailableSecretError means a secret could not be read: unset, destroyed or unopenable.
+// UnavailableSecretError indicates a secret could not be read back out of
+// protected memory: it was never set, has been destroyed, or the enclave
+// could not be opened. Boundaries that put a secret on the wire report this
+// rather than serializing an empty value the peer would accept as a
+// credential.
 type UnavailableSecretError struct {
 	Cause error
 }
@@ -97,7 +106,11 @@ func (e *SealError) Unwrap() error {
 	return e.Cause
 }
 
-// AbsentSecretError means the secret was never configured; only this error may select a stub mode.
+// AbsentSecretError indicates a secret was never configured, as distinct from
+// one that was configured and is no longer readable. Only this error means
+// "not configured": a call site that selects a legacy or stub mode must do so
+// on this and nothing else, or an unopenable enclave silently downgrades a
+// deployment that does have a key installed.
 type AbsentSecretError struct{}
 
 func (e *AbsentSecretError) Error() string {

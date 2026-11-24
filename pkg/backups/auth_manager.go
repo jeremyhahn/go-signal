@@ -17,7 +17,10 @@ import (
 // MAX_CREDENTIAL_WINDOW (7 days).
 const MaxCredentialWindow = 7 * 24 * time.Hour
 
-// AuthManager handles the account-authenticated half of backups: committing backup-ids, issuing credentials, rotation limits and receipt redemption.
+// AuthManager handles the account-authenticated half of the backup
+// subsystem: committing blinded backup-ids, issuing ZK backup-auth
+// credentials, enforcing rotation rate limits, and redeeming paid-tier
+// receipts. Mirrors Java's BackupAuthManager.
 type AuthManager struct {
 	accounts                 *accounts.AccountsManager
 	setBackupIDLimiter       limits.RateLimiter
@@ -68,7 +71,11 @@ func NewAuthManager(opts AuthManagerOptions) *AuthManager {
 	}
 }
 
-// CommitBackupID stores the blinded credential requests (at least one) on the account, primary device only; re-committing identical bytes is a no-op.
+// CommitBackupID persists the blinded credential request(s) on the account.
+// Only the primary device may commit. At least one of req.MessagesBackupAuthCredentialRequest
+// / req.MediaBackupAuthCredentialRequest must be non-nil. Re-committing the
+// identical request bytes is a silent no-op (no rate-limit token consumed).
+// Mirrors Java BackupAuthManager.commitBackupId.
 func (m *AuthManager) CommitBackupID(
 	ctx context.Context,
 	accountUUID string,
@@ -148,7 +155,14 @@ func (m *AuthManager) CommitBackupID(
 	return m.accounts.Update(ctx, account)
 }
 
-// GetBackupIDLimits reports rotation cooldown per backup-id slot; the limiter has no non-consuming probe, so it always reports allowed now (a hint).
+// GetBackupIDLimits reports rotation cooldown for the account's two
+// backup-id slots. Returns zero times when rotation is allowed now.
+//
+// Note: the underlying token-bucket limiter does not expose a non-consuming
+// "has-tokens" probe today. Until [limits.RateLimiter] grows one, this
+// returns "allowed now" optimistically — callers should treat the response
+// as a hint, not a guarantee. Java's BackupAuthManager.checkBackupIdRotationLimit
+// uses hasAvailablePermitsAsync, which is the equivalent we should add.
 func (m *AuthManager) GetBackupIDLimits(ctx context.Context, accountUUID string) (*BackupIDLimits, error) {
 	if accountUUID == "" {
 		return nil, &InvalidArgumentError{Field: "accountUUID", Message: "must not be empty"}
@@ -156,7 +170,11 @@ func (m *AuthManager) GetBackupIDLimits(ctx context.Context, accountUUID string)
 	return &BackupIDLimits{}, nil
 }
 
-// GetBackupAuthCredentials issues one credential per type per day in [redemptionStart, redemptionEnd); the window must be day-aligned and within [MaxCredentialWindow].
+// GetBackupAuthCredentials issues a backup-auth credential per credential
+// type per day in [redemptionStart, redemptionEnd). Mirrors
+// BackupAuthManager.getBackupAuthCredentials. The window must be day-aligned
+// at both ends and not exceed [MaxCredentialWindow]; otherwise returns
+// [*InvalidArgumentError].
 func (m *AuthManager) GetBackupAuthCredentials(
 	ctx context.Context,
 	accountUUID string,

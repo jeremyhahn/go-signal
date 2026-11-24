@@ -6,7 +6,15 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
-// StorageCredentials are secure-storage credentials; Password is held in protected memory and MarshalJSON emits the plaintext to the client.
+// StorageCredentials contains authentication credentials for the secure
+// storage service.
+//
+// Password is the storage-service bearer credential and is held in protected
+// memory between issuance and serialization. The client is the intended
+// bearer, so MarshalJSON deliberately opens the secret and emits the
+// plaintext — the protection here is memory residency, not egress. That is why
+// this type carries an explicit marshaller instead of relying on
+// SecureString's default, which redacts.
 type StorageCredentials struct {
 	Username string
 	Password *secrets.SecureString
@@ -23,7 +31,13 @@ func (c *StorageCredentials) Destroy() {
 // Compile-time check that the credential serialises through secrets.JSONAppender.
 var _ secrets.JSONAppender = StorageCredentials{}
 
-// AppendJSON writes {"username":…,"password":…} into a buffer the caller owns and wipes; writeJSON uses it.
+// AppendJSON implements secrets.JSONAppender, emitting the credential in the
+// Signal-compatible `{"username":…,"password":…}` shape into a buffer the
+// CALLER owns and wipes.
+//
+// This, not MarshalJSON, is the production path: writeJSON prefers it so the
+// plaintext lands in exactly one buffer with exactly one owner. See the
+// JSONAppender doc for why a json.Marshaler cannot be made safe here.
 func (c StorageCredentials) AppendJSON(dst []byte) ([]byte, error) {
 	// The password goes from protected memory into dst; the username goes through encoding/json, in the original field order.
 	user, err := json.Marshal(c.Username)
@@ -49,7 +63,20 @@ func (c StorageCredentials) AppendJSON(dst []byte) ([]byte, error) {
 	return append(dst, '}'), nil
 }
 
-// MarshalJSON keeps the wire form for nested values; its buffer holds the plaintext unwiped, so responses use AppendJSON.
+// MarshalJSON implements encoding/json.Marshaler, emitting the credential in
+// the Signal-compatible `{"username":…,"password":…}` shape.
+//
+// WARNING: the returned buffer holds the plaintext storage-service password, and
+// encoding/json copies it into its own buffer and drops this one — leaving an
+// unwiped heap allocation that no later wipe can reach. That is a property of
+// the Marshaler contract, not of this implementation. Production responses do
+// not take this path; writeJSON uses AppendJSON.
+//
+// It is kept because removing it is worse: with no Marshaler, a value nested
+// in some other struct would marshal through SecureString's default, which
+// redacts, and the credential would silently become "[REDACTED]" on the wire
+// instead of failing loudly. Wire correctness with one unwiped buffer beats a
+// silent protocol break.
 func (c StorageCredentials) MarshalJSON() ([]byte, error) {
 	return c.AppendJSON(nil)
 }

@@ -18,7 +18,10 @@ func notifyChannel(uuid string, deviceID uint64) string {
 	return fmt.Sprintf("%s%s:%d", wsNotifyChannelPrefix, uuid, deviceID)
 }
 
-// MessageFlusher returns a device's queued messages in delivery order from the durable store.
+// MessageFlusher returns the queued messages for a destination device. It is
+// invoked by SessionManager when a wake-up notification arrives for a session
+// that is registered on this instance. Implementations should read from the
+// durable message store and return messages in delivery order.
 type MessageFlusher func(ctx context.Context, uuid string, deviceID uint64) ([]*messages.Envelope, error)
 
 // sessionKey uniquely identifies a WebSocket session by account UUID and device
@@ -28,7 +31,14 @@ type sessionKey struct {
 	deviceID uint64
 }
 
-// SessionManager tracks WebSocket sessions and delivers messages, across instances via pub/sub when built with a cache; safe for concurrent use.
+// SessionManager tracks active WebSocket sessions and delivers messages to
+// connected clients. It is safe for concurrent use.
+//
+// When constructed with NewSessionManagerWithCache, the manager subscribes to
+// a per-session pub/sub channel so that messages persisted on any instance in
+// the cluster wake up the socket on whichever instance currently holds it.
+// When constructed with NewSessionManager, the manager operates in local-only
+// mode: only sockets registered in this process can receive deliveries.
 type SessionManager struct {
 	mu       sync.RWMutex
 	sessions map[sessionKey]*Session
@@ -44,7 +54,11 @@ type SessionManager struct {
 	flusher MessageFlusher
 }
 
-// NewSessionManager returns a local-only SessionManager, for tests and single-instance use.
+// NewSessionManager creates a new SessionManager in local-only mode. Sessions
+// are tracked in-process and DeliverMessage routes envelopes to the matching
+// local session, if any. This constructor is intended for tests and single-
+// instance development; production deployments should use
+// NewSessionManagerWithCache to enable cross-instance delivery.
 func NewSessionManager(logger *slog.Logger) *SessionManager {
 	return &SessionManager{
 		sessions: make(map[sessionKey]*Session),
@@ -52,7 +66,13 @@ func NewSessionManager(logger *slog.Logger) *SessionManager {
 	}
 }
 
-// NewSessionManagerWithCache returns a SessionManager that wakes sessions on any instance through cache pub/sub and flusher; flusher must not be nil.
+// NewSessionManagerWithCache creates a new SessionManager wired for cross-
+// instance message delivery via the supplied pub/sub-capable cache.Client.
+// On Register, the manager subscribes to a wake-up channel keyed on the
+// session's account UUID and device ID. On NotifyMessageAvailable, it
+// publishes a payload-free notification on that channel; whichever instance
+// holds the session reacts by invoking flusher and pushing the resulting
+// envelopes to the local socket. flusher must not be nil.
 func NewSessionManagerWithCache(logger *slog.Logger, c cache.Client, flusher MessageFlusher) *SessionManager {
 	if c == nil {
 		// Defensive: treat a nil cache as local-only to avoid surprising
@@ -72,7 +92,11 @@ func NewSessionManagerWithCache(logger *slog.Logger, c cache.Client, flusher Mes
 	}
 }
 
-// Register stores the session, closing any previous one for the device, and subscribes it to wake-ups when a cache is set.
+// Register stores the session, closing any previous session for the same
+// account+device combination. This ensures only one active connection per
+// device. When the manager is configured with a cache, a per-session pub/sub
+// subscription is started so cross-instance notifications wake up this
+// session.
 func (m *SessionManager) Register(session *Session) {
 	key := sessionKey{uuid: session.UUID, deviceID: session.DeviceID}
 
@@ -97,7 +121,10 @@ func (m *SessionManager) Register(session *Session) {
 		slog.Uint64("deviceId", session.DeviceID))
 }
 
-// Unregister removes session unless it has been replaced.
+// Unregister removes the session from the manager. If the stored session for
+// the key differs from the provided session (due to a replacement), the
+// removal is skipped. The session's pub/sub subscription, if any, is closed
+// indirectly when the session is closed.
 func (m *SessionManager) Unregister(session *Session) {
 	key := sessionKey{uuid: session.UUID, deviceID: session.DeviceID}
 
@@ -113,7 +140,11 @@ func (m *SessionManager) Unregister(session *Session) {
 		slog.Uint64("deviceId", session.DeviceID))
 }
 
-// DeliverMessage sends envelope to a local session and reports whether it was queued; cross-instance delivery uses NotifyMessageAvailable.
+// DeliverMessage attempts to send a message envelope to an active session for
+// the specified account and device. It returns true if the message was
+// successfully enqueued for delivery. This is a fast-path used in single-
+// instance mode and for direct test injection; production cross-instance
+// delivery should use NotifyMessageAvailable.
 func (m *SessionManager) DeliverMessage(uuid string, deviceID uint64, envelope *messages.Envelope) bool {
 	// Rejected before anything else so the encoding-failure branch below can
 	// name the envelope it could not encode. A nil envelope is a caller bug,
@@ -154,7 +185,15 @@ func (m *SessionManager) DeliverMessage(uuid string, deviceID uint64, envelope *
 	return true
 }
 
-// NotifyMessageAvailable publishes a wake-up for the device when a cache is set, else flushes the local session in a goroutine; it never blocks on socket I/O.
+// NotifyMessageAvailable signals that one or more new messages are queued for
+// the given destination device. When the manager is configured with a cache,
+// the notification is published on a {uuid}:{deviceID} pub/sub channel so any
+// instance holding the session reacts by re-reading the durable store. When
+// no cache is configured but a flusher is, the local session (if any) is
+// flushed directly. When neither is configured the call is a no-op.
+//
+// This method does not block on socket I/O: it returns once the publish has
+// been issued (or the local flush has been kicked off in a goroutine).
 func (m *SessionManager) NotifyMessageAvailable(ctx context.Context, uuid string, deviceID uint64) error {
 	if m.cache != nil {
 		// Cross-instance fanout: the recipient instance(s) drive the flush.
@@ -204,7 +243,10 @@ func (m *SessionManager) GetSession(uuid string, deviceID uint64) *Session {
 	return session
 }
 
-// CloseAll closes every session and clears the map, for shutdown.
+// CloseAll closes all active sessions and clears the session map. It is used
+// during server shutdown to ensure all WebSocket connections are terminated
+// before the HTTP server stops accepting connections. Any per-session pub/sub
+// subscriptions are torn down indirectly when each session closes.
 func (m *SessionManager) CloseAll() {
 	m.mu.Lock()
 	sessions := make([]*Session, 0, len(m.sessions))

@@ -93,7 +93,10 @@ func (v *ReCAPTCHAVerifier) ValidSiteKeys(action Action) []string {
 	return v.siteKeysByAction[action]
 }
 
-// Verify posts the token to siteverify; an error is a network or parse failure, a failed challenge is Success == false. v3 fills Score and Action.
+// Verify sends a POST request to the reCAPTCHA siteverify endpoint and returns
+// the parsed result. A non-nil error indicates a network or parse failure;
+// a failed CAPTCHA challenge is reported through VerifyResult.Success == false.
+// For v3 tokens, VerifyResult.Score and VerifyResult.Action are populated.
 func (v *ReCAPTCHAVerifier) Verify(ctx context.Context, token string, remoteIP string, _ string) (*VerifyResult, error) {
 	form := url.Values{}
 	form.Set("secret", v.secretKey.Plaintext())

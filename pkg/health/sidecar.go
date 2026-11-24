@@ -14,7 +14,16 @@ import (
 // supplied. The address comes from the health.listen config key.
 var ErrNoListenAddr = signalerrors.New(signalerrors.ErrInvalidArgument, "health sidecar: listen address is required")
 
-// RunSidecar serves /healthz, /readyz and /metrics (nil metricsReg skips it) on listenAddr until ctx ends or the listener fails; empty listenAddr is ErrNoListenAddr.
+// RunSidecar starts a tiny HTTP server hosting /healthz, /readyz, and
+// /metrics on the supplied listen address. Used by gRPC-native
+// binaries (registration-service, cdsi, key-transparency) that don't
+// already have an HTTP listener available for kubelet probes +
+// Prometheus scrape.
+//
+// Returns once ctx is canceled (graceful shutdown) or once the
+// listener errors. Pass nil for metricsReg to skip the /metrics
+// endpoint. listenAddr is the resolved health.listen config value; an
+// empty address returns ErrNoListenAddr rather than binding a guess.
 func RunSidecar(ctx context.Context, p *Probes, metricsReg *metrics.Registry, listenAddr string) error {
 	if listenAddr == "" {
 		return ErrNoListenAddr

@@ -52,7 +52,14 @@ func (m *UsernamesManager) ReserveHash(ctx context.Context, uuid string, hashes 
 	return hash, token, nil
 }
 
-// ConfirmHash confirms a reserved hash with its token after verifying the zero-knowledge proof; a bad proof is *InvalidProofError.
+// ConfirmHash confirms a previously reserved username hash using the
+// reservation token. The caller must supply a zero-knowledge proof of
+// ownership of the nickname/discriminator pair behind the hash; the proof is
+// verified via go-libsignal/usernames.VerifyProof before any storage mutation
+// runs. Mirrors Java Signal-Server's `usernameHashZkProofVerifier.verifyProof`
+// invocation in `AccountController#confirmUsernameHash`.
+//
+// Returns *InvalidProofError if the proof does not validate against the hash.
 func (m *UsernamesManager) ConfirmHash(ctx context.Context, uuid string, hash []byte, token string, zkProof []byte) error {
 	if uuid == "" {
 		return &InvalidArgumentError{Field: "uuid", Message: "must not be empty"}
@@ -117,7 +124,12 @@ func (m *UsernamesManager) DeleteHash(ctx context.Context, uuid string) error {
 	return nil
 }
 
-// SetLink stores or replaces the account's username link; without a confirmed username it returns *UsernameNotFoundError.
+// SetLink stores or replaces the username link for the given account.
+//
+// The account must already have a confirmed username hash — Java's
+// AccountController#setUsernameLink returns 409 Conflict when the account
+// has no username, and this method mirrors that contract by returning
+// *UsernameNotFoundError so REST/gRPC handlers can translate.
 func (m *UsernamesManager) SetLink(ctx context.Context, link *UsernameLink) error {
 	if link == nil {
 		return &InvalidArgumentError{Field: "link", Message: "must not be nil"}
@@ -149,7 +161,10 @@ func (m *UsernamesManager) SetLink(ctx context.Context, link *UsernameLink) erro
 	return nil
 }
 
-// ExistingLinkHandle returns the account's link handle, or *UsernameLinkNotFoundError.
+// ExistingLinkHandle returns the handle of the account's currently-published
+// link if any, or *UsernameLinkNotFoundError when none exists. Used by the
+// REST handler to honor `keepLinkHandle=true` — re-publishing a fresh
+// ciphertext under the same handle keeps cached client references valid.
 func (m *UsernamesManager) ExistingLinkHandle(ctx context.Context, uuid string) (string, error) {
 	if uuid == "" {
 		return "", &InvalidArgumentError{Field: "uuid", Message: "must not be empty"}

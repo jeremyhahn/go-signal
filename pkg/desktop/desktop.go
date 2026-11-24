@@ -18,12 +18,24 @@ import (
 // newApp is a test seam for RunContext's shutdown-error path; production never reassigns it.
 var newApp = NewApp
 
-// Run starts the Wails app until the process exits; prefer RunContext where it must stop.
+// Run initializes and starts the Wails desktop application, running until the
+// process is killed. It is RunContext with a background context — the shape a
+// main function wants.
+//
+// Prefer RunContext anywhere the caller needs the application to stop: this
+// one cannot be stopped, so the embedded store it opens is only released by
+// process exit.
 func Run(serverURL, dataDir string) error {
 	return RunContext(context.Background(), serverURL, dataDir)
 }
 
-// RunContext starts the Wails app, runs until ctx is cancelled, then closes the client and its store; initialization always completes.
+// RunContext initializes and starts the Wails desktop application and runs
+// until ctx is canceled, then closes the client and the embedded store it
+// opened before returning.
+//
+// Initialization always completes: an already-canceled context skips the
+// waiting, not the setup, so a caller that cancels immediately still gets
+// either a real initialization error or a cleanly closed store.
 func RunContext(ctx context.Context, serverURL, dataDir string) (err error) {
 	if dataDir == "" {
 		home, err := os.UserHomeDir()

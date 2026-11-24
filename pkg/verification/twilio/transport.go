@@ -1,4 +1,13 @@
-// Package twilio implements verification.Transport on Twilio Verify, which generates, delivers and checks the code.
+// Package twilio implements a verification.Transport backed by the Twilio
+// Verify REST API. The server hosts a Verify Service in its Twilio account;
+// each SendCode call POSTs to that service's /Verifications endpoint with the
+// destination phone number. Twilio owns the code generation, delivery, and
+// expiry — our local Manager treats Twilio Verify as an opaque transport and
+// validates the user-supplied code through Twilio's /VerificationCheck
+// endpoint via the Verify method.
+//
+// Mirrors Java's TwilioVerifySender: minimum surface for a production SMS
+// transport with zero exposure of internal code material.
 package twilio
 
 import (
@@ -39,7 +48,11 @@ type Config struct {
 	HTTPClient *http.Client
 }
 
-// Transport implements verification.Transport on Twilio Verify; the code argument is ignored because Twilio generates it.
+// Transport is the verification.Transport implementation backed by Twilio
+// Verify. Send calls Twilio's create-Verification endpoint; the supplied
+// `code` argument is ignored because Twilio Verify generates the code itself
+// and never accepts a server-side override (this is the security guarantee
+// Twilio Verify provides over raw SMS APIs).
 type Transport struct {
 	client     *http.Client
 	baseURL    string
@@ -99,7 +112,10 @@ func (t *Transport) authorize(req *http.Request) error {
 // Name returns the transport identifier.
 func (t *Transport) Name() string { return "twilio" }
 
-// SendCode starts a Twilio Verify SMS; failures are verification.TransportError.
+// SendCode triggers a Twilio Verify SMS to the destination. The code
+// argument is ignored — Twilio generates and sends its own code, which the
+// caller later validates via Verify(). Returns a verification.TransportError
+// wrapping the underlying failure on transport or API errors.
 func (t *Transport) SendCode(ctx context.Context, destination string, _ string, opts ...verification.SendOption) error {
 	_ = verification.ApplySendOptions(opts...) // Twilio Verify ignores carrier.
 	form := url.Values{
@@ -128,7 +144,10 @@ func (t *Transport) SendCode(ctx context.Context, destination string, _ string, 
 	return t.wrapErr(destination, parseTwilioError(resp.StatusCode, body))
 }
 
-// Verify reports whether Twilio approved code; the error is only for transport or API failure.
+// Verify checks a user-submitted code against Twilio's stored verification.
+// Returns (true, nil) when Twilio reports status=approved; (false, nil) when
+// the code is pending or rejected (caller surfaces InvalidCodeError);
+// non-nil error only on transport/API failure.
 func (t *Transport) Verify(ctx context.Context, destination, code string) (bool, error) {
 	form := url.Values{
 		"To":   {destination},

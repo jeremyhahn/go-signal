@@ -23,7 +23,14 @@ type deliveryCallbackHolder struct {
 	fn DeliveryCallback
 }
 
-// MessagesManager wraps a MessageStore, assigning envelope metadata and rehydrating multi-recipient messages; its callback and MRM cache are atomic.
+// MessagesManager coordinates message storage and retrieval operations. It wraps
+// a MessageStore implementation and provides higher-level business logic such as
+// server-side envelope metadata assignment and (when configured) shared
+// multi-recipient message rehydration.
+//
+// deliveryCallback and mrmCache are stored in atomic.Values so that
+// SetDeliveryCallback / SetMRMCache and the read paths in Insert /
+// GetMessagesForDevice can run concurrently without a mutex.
 type MessagesManager struct {
 	store            MessageStore
 	logger           *slog.Logger
@@ -46,7 +53,11 @@ func NewMessagesManager(store MessageStore) *MessagesManager {
 	}
 }
 
-// SetMRMCache sets the cache used to rehydrate SharedMrmKey envelopes; nil disables MRM. Safe concurrently with reads.
+// SetMRMCache wires the multi-recipient message cache used to rehydrate
+// envelopes that carry a SharedMrmKey reference. When unset (nil), envelopes
+// referencing an MRM payload are returned to callers as-is and they are
+// expected to handle the cache lookup themselves; in practice this means
+// MRM is disabled for the deployment. Safe to call concurrently with reads.
 func (m *MessagesManager) SetMRMCache(c *MRMCache) {
 	m.mrmCache.Store(&mrmCacheHolder{cache: c})
 }
@@ -66,7 +77,10 @@ func (m *MessagesManager) SetDeliveryCallback(fn DeliveryCallback) {
 	m.deliveryCallback.Store(&deliveryCallbackHolder{fn: fn})
 }
 
-// Insert stores an envelope for the destination device with a server GUID and timestamp, then calls the delivery callback.
+// Insert persists a message envelope for delivery to the specified destination
+// device. The server assigns a unique GUID and timestamp to the envelope before
+// storage. If a delivery callback is registered, it is invoked after successful
+// storage.
 func (m *MessagesManager) Insert(ctx context.Context, destinationUUID string, destinationDeviceID uint64, envelope *Envelope) error {
 	if envelope == nil {
 		return signalerrors.New(signalerrors.ErrInvalidArgument, "envelope must not be nil")
@@ -90,7 +104,22 @@ func (m *MessagesManager) Insert(ctx context.Context, destinationUUID string, de
 	return nil
 }
 
-// HasMessagesForDevice reports whether the device has a pending envelope, without loading any.
+// GetMessagesForDevice retrieves pending message envelopes for the specified
+// destination device. Results are ordered by server timestamp ascending.
+// A limit of zero or negative returns all pending messages.
+//
+// Envelopes that carry a SharedMrmKey are rehydrated from the MRM cache
+// before being returned: their Content is set to the recipient's reconstructed
+// SealedSender v2 ReceivedMessage and SharedMrmKey/SharedMrmRecipientView are
+// cleared. If the shared MRM data has been evicted (TTL expired, or every
+// view was already delivered), the envelope is silently dropped from the
+// returned slice and best-effort deleted from the durable store, mirroring
+// Java's `getMessageWithSharedMrmData` stale-MRM handling.
+// HasMessagesForDevice reports whether the device has at least one
+// pending envelope. Cheaper than GetMessagesForDevice — backends
+// implement it as a LIMIT 1 (postgres) or key-existence check
+// (memory/qrdb) so a fleet-wide scan never pays the
+// envelope-marshaling cost.
 func (m *MessagesManager) HasMessagesForDevice(ctx context.Context, destinationUUID string, destinationDeviceID uint64) (bool, error) {
 	return m.store.HasMessagesForDevice(ctx, destinationUUID, destinationDeviceID)
 }
@@ -165,7 +194,8 @@ func (m *MessagesManager) rehydrateMRM(ctx context.Context, cache *MRMCache, env
 	return &rehydrated, nil
 }
 
-// Delete removes the envelope with the given server GUID; idempotent.
+// Delete removes a specific message envelope identified by its server-assigned
+// GUID. This operation is idempotent.
 func (m *MessagesManager) Delete(ctx context.Context, destinationUUID string, serverGUID string) error {
 	if serverGUID == "" {
 		return signalerrors.New(signalerrors.ErrInvalidArgument, "server GUID must not be empty")
@@ -193,7 +223,10 @@ func (m *MessagesManager) DeleteForAccount(ctx context.Context, uuid string) err
 	return nil
 }
 
-// RemoveExpired deletes envelopes whose expires_at is before cutoff and returns the count; backends without expiry return (0, nil).
+// RemoveExpired deletes every persisted envelope whose per-row expires_at is
+// strictly before the supplied cutoff. Returns the count of rows removed.
+// Backends that do not record an expiration timestamp (today: memory, qrdb)
+// report (0, nil), so the sweep is a uniform no-op there.
 func (m *MessagesManager) RemoveExpired(ctx context.Context, before time.Time) (int64, error) {
 	n, err := m.store.RemoveExpired(ctx, before)
 	if err != nil {

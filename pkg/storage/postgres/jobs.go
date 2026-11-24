@@ -56,7 +56,12 @@ func (s *JobsStore) Enqueue(ctx context.Context, job *jobs.Job) error {
 	return nil
 }
 
-// ClaimDue moves up to limit due pending jobs of types (all when empty) to running, using FOR UPDATE SKIP LOCKED.
+// ClaimDue atomically picks up to limit pending jobs whose fire_at
+// is at or before now and transitions them to running. When types
+// is non-empty the WHERE clause includes `job_type = ANY($4)` so
+// each Manager instance only sees its own registered types. Uses
+// SELECT ... FOR UPDATE SKIP LOCKED so concurrent workers don't
+// collide on the same rows.
 func (s *JobsStore) ClaimDue(ctx context.Context, now time.Time, limit int, types ...string) ([]*jobs.Job, error) {
 	var out []*jobs.Job
 	err := withTxQuerier(ctx, s.q, func(tx pgx.Tx) error {
@@ -125,7 +130,10 @@ func (s *JobsStore) MarkDone(ctx context.Context, id string) error {
 	return nil
 }
 
-// MarkFailed requeues with backoff, or marks Failed when attempts are exhausted, in one UPDATE.
+// MarkFailed re-queues with backoff or marks Failed when exhausted.
+// Single atomic UPDATE so a concurrent reader either sees the
+// pre-failure row or the post-failure row, never something in
+// between.
 func (s *JobsStore) MarkFailed(ctx context.Context, id string, now time.Time, backoff time.Duration, maxAttempts int) error {
 	return withTxQuerier(ctx, s.q, func(tx pgx.Tx) error {
 		var attempts int
@@ -151,7 +159,10 @@ func (s *JobsStore) MarkFailed(ctx context.Context, id string, now time.Time, ba
 	})
 }
 
-// ResetToPending returns a Running job to Pending without counting an attempt; idempotent.
+// ResetToPending transitions a Running row back to Pending without
+// bumping Attempts. Idempotent for missing or non-Running rows. The
+// UPDATE filters on status=Running so a concurrent MarkDone /
+// MarkFailed cannot be clobbered.
 func (s *JobsStore) ResetToPending(ctx context.Context, id string, fireAt time.Time) error {
 	_, err := s.q.Exec(ctx,
 		`UPDATE scheduled_jobs SET status = $1, fire_at = $2, claimed_at = NULL
@@ -163,7 +174,9 @@ func (s *JobsStore) ResetToPending(ctx context.Context, id string, fireAt time.T
 	return nil
 }
 
-// RecoverStale requeues Running jobs claimed before olderThan or never stamped.
+// RecoverStale re-queues Running rows whose claimed_at is NULL or
+// before olderThan. The partial index on (claimed_at) where
+// status=running keeps this scan cheap.
 func (s *JobsStore) RecoverStale(ctx context.Context, olderThan time.Time) (int, error) {
 	tag, err := s.q.Exec(ctx,
 		`UPDATE scheduled_jobs SET status = $1, claimed_at = NULL

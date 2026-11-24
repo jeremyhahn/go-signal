@@ -25,9 +25,27 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/service"
 )
 
-// Worker implementations; each Name is also its leader-lease key and must stay stable, and Schedule uses robfig/cron/v3 syntax.
+// This file catalogs the Worker implementations ported from Java
+// Signal-Server's Dropwizard command layer.
+//
+// Each Worker has:
+//
+//   - A stable Name that matches its Java counterpart where reasonable.
+//     The name doubles as the leader-election lease key, so it must not
+//     change across deployments.
+//   - A Schedule describing when the Scheduler fires it. Cron specs use
+//     github.com/robfig/cron/v3 syntax ("@every 1h", "0 3 * * *", etc.).
+//   - A Run body that does the work.
+//
+// Phase 1 registers every known Java command as a Worker here. Bodies
+// that need storage layers that are still in development are labeled
+// below; they log and return nil until the underlying support lands.
+// As each subsystem is implemented through Phase 2 the body is replaced
+// with real logic.
 
-// RemoveExpiredAccountsWorker deletes accounts idle longer than ExpiryThreshold (default 120 days).
+// RemoveExpiredAccountsWorker deletes accounts idle for longer than
+// ExpiryThreshold. Java default is 120 days; CLAUDE.md's retention policy
+// can override.
 type RemoveExpiredAccountsWorker struct {
 	svc             *service.SignalService
 	ExpiryThreshold time.Duration
@@ -49,7 +67,14 @@ func (*RemoveExpiredAccountsWorker) Name() string { return "remove-expired-accou
 // typical deployment cadence.
 func (*RemoveExpiredAccountsWorker) Schedule() Schedule { return "0 3 * * *" }
 
-// Run deletes accounts whose primary device's LastSeen is before now - ExpiryThreshold, logging and skipping failed deletes.
+// Run scans the account store and deletes any account whose most
+// recent activity was before now - ExpiryThreshold. Activity is the
+// primary device's LastSeen; matches Java
+// RemoveExpiredAccountsCommand.isExpired.
+//
+// Errors on individual deletes are logged-and-continued so a single
+// poison row doesn't stall the sweep. The aggregate count is logged
+// at INFO so deployments can monitor churn over time.
 func (w *RemoveExpiredAccountsWorker) Run(ctx context.Context) error {
 	if w.svc == nil || w.svc.Accounts == nil {
 		return nil
@@ -113,7 +138,11 @@ func (*RemoveExpiredLinkedDevicesWorker) Name() string { return "remove-expired-
 // Schedule runs hourly.
 func (*RemoveExpiredLinkedDevicesWorker) Schedule() Schedule { return "@every 1h" }
 
-// Run unlinks non-primary devices whose LastSeen is before now - LinkExpiryThreshold.
+// Run scans every account and unlinks linked (non-primary) devices
+// whose LastSeen is before now - LinkExpiryThreshold. Mirrors Java
+// RemoveExpiredLinkedDevicesCommand. The primary device is never
+// touched here; account-level expiry is handled by
+// [RemoveExpiredAccountsWorker].
 func (w *RemoveExpiredLinkedDevicesWorker) Run(ctx context.Context) error {
 	if w.svc == nil || w.svc.Accounts == nil {
 		return nil
@@ -217,7 +246,23 @@ func (*RemoveOrphanedPreKeyPagesWorker) Schedule() Schedule { return "@every 168
 // orphanPreKeySweepAbortRatio is the share of ambiguous lookups at which the sweep aborts, so a degraded account store cannot trigger mass deletion.
 const orphanPreKeySweepAbortRatio = 0.10
 
-// Run deletes pre-keys whose account is gone: only on *accounts.AccountNotFoundError, aborting before any delete past orphanPreKeySweepAbortRatio; failed deletes are logged and skipped.
+// Run scans the pre-key store for every account UUID with rows and
+// deletes those whose owning account is gone from the accounts
+// store. Mirrors the intent of Java's
+// RemoveOrphanedPreKeyPagesCommand (which sweeps unreferenced
+// DynamoDB pages) — go-signal's schema stores keys per-account
+// rather than in pages, so the orphan criterion is "no matching
+// account row" rather than "no current page reference."
+//
+// Safety invariants:
+//   - Deletion fires ONLY when Accounts.Get returns a typed
+//     *accounts.AccountNotFoundError. Transient errors (network,
+//     timeout, cancellation) are surfaced via the
+//     orphanPreKeySweepAbortRatio guard — a sweep with too many
+//     ambiguous lookups aborts before deleting anything, on the
+//     theory that the account store itself is degraded.
+//   - Errors on individual deletes are logged and the sweep
+//     continues; a poison row never stalls the whole job.
 func (w *RemoveOrphanedPreKeyPagesWorker) Run(ctx context.Context) error {
 	if w.svc == nil || w.svc.Accounts == nil || w.svc.Keys == nil {
 		return nil
@@ -302,7 +347,20 @@ func (w *RemoveOrphanedPreKeyPagesWorker) Run(ctx context.Context) error {
 	return nil
 }
 
-// NotifyIdleDevicesWorker pushes a wake-up to devices with a push token, idle longer than NotifyInterval, that have queued messages.
+// NotifyIdleDevicesWorker wakes devices that have not connected
+// recently AND have pending messages waiting. Mirrors Java's
+// NotifyIdleDevicesCommand — Java schedules the notification via a
+// scheduled-jobs table; we dispatch immediately through the
+// PushManager because go-signal does not yet have a scheduled-jobs
+// table.
+//
+// Eligibility (must hold all):
+//   - The device has a push token (APNs or FCM).
+//   - The device's LastSeen is more than NotifyInterval ago.
+//   - At least one undelivered message envelope is queued for the
+//     device. (Sending a wake-up push to a device with an empty
+//     queue burns the APNs/FCM quota for nothing — Java's
+//     IdleWakeupEligibilityChecker has the same precondition.)
 type NotifyIdleDevicesWorker struct {
 	svc            *service.SignalService
 	pushMgr        *push.PushManager
@@ -414,7 +472,11 @@ func buildIdleWakeup(accountUUID string, d *accounts.Device, cutoff time.Time) (
 	return nil, false
 }
 
-// UnlinkIdlePrimaryDevicesWorker deletes accounts whose primary device is idle longer than PrimaryIdleThreshold (180 days).
+// UnlinkIdlePrimaryDevicesWorker deletes accounts whose primary
+// device has been idle longer than the Java primary-idle threshold
+// (180 days). Distinct from [RemoveExpiredAccountsWorker] which
+// applies a tighter 120-day account-level threshold by default —
+// deployments may run both with different cadences.
 type UnlinkIdlePrimaryDevicesWorker struct {
 	svc                  *service.SignalService
 	PrimaryIdleThreshold time.Duration
@@ -436,7 +498,12 @@ func (*UnlinkIdlePrimaryDevicesWorker) Name() string { return "unlink-idle-prima
 // Schedule runs daily.
 func (*UnlinkIdlePrimaryDevicesWorker) Schedule() Schedule { return "@every 24h" }
 
-// Run deletes accounts whose primary device's LastSeen is before now - PrimaryIdleThreshold, logging and skipping failed deletes.
+// Run scans every account; for any whose primary device's LastSeen
+// is before now - PrimaryIdleThreshold, the account is deleted. An
+// account cannot exist without a primary device, so this is
+// functionally an account-level sweep at a more conservative
+// threshold than [RemoveExpiredAccountsWorker]. Errors on individual
+// deletes are logged-and-continued.
 func (w *UnlinkIdlePrimaryDevicesWorker) Run(ctx context.Context) error {
 	if w.svc == nil || w.svc.Accounts == nil {
 		return nil
@@ -483,7 +550,17 @@ func (w *UnlinkIdlePrimaryDevicesWorker) Run(ctx context.Context) error {
 	return nil
 }
 
-// MessagePersisterWorker continuously drains the message cache into durable storage; a nil persister makes Run a no-op.
+// MessagePersisterWorker drains the Redis message cache into persistent
+// storage. Continuous — the worker scheduler invokes Run repeatedly with
+// a small idle yield between successful runs. This is the Go port of
+// Java's MessagePersisterServiceCommand.
+//
+// In production the *messages.MessagePersister is constructed in
+// cmd/signald/start.go with the wired-up cache queue, durable
+// MessageStore, and PersisterDeviceLister; the worker is just the
+// scheduling shim around it. When persister is nil (e.g. in test
+// fixtures that haven't wired the message pipeline) Run is a no-op
+// so the worker can still be registered safely.
 type MessagePersisterWorker struct {
 	svc       *service.SignalService
 	persister *messages.MessagePersister
@@ -511,10 +588,18 @@ func (w *MessagePersisterWorker) Run(ctx context.Context) error {
 	return w.persister.RunOnce(ctx)
 }
 
-// DefaultMessageExpiryGrace is how long past expires_at [RemoveExpiredMessagesWorker] waits before purging.
+// DefaultMessageExpiryGrace is the period after a per-message expires_at
+// timestamp before [RemoveExpiredMessagesWorker] purges the row. Java
+// Signal-Server's RemoveExpiredMessagesCommand sweeps with zero grace; we
+// keep the constant configurable so deployments with skewed clocks can
+// soften the cutoff if needed.
 const DefaultMessageExpiryGrace = 0
 
-// RemoveExpiredMessagesWorker purges messages expired before now - ExpiryGrace; backends without expires_at remove nothing.
+// RemoveExpiredMessagesWorker periodically sweeps the messages table for
+// rows whose per-row expires_at is strictly before time.Now() - ExpiryGrace.
+// Today only the postgres backend records expires_at, so the worker is
+// effectively a postgres-only sweep; memory and qrdb implementations return
+// zero rows removed. Mirrors Java's RemoveExpiredMessagesCommand.
 type RemoveExpiredMessagesWorker struct {
 	svc         *service.SignalService
 	ExpiryGrace time.Duration
@@ -534,7 +619,10 @@ func (*RemoveExpiredMessagesWorker) Name() string { return "remove-expired-messa
 // inserts while remaining cheap on a healthy database.
 func (*RemoveExpiredMessagesWorker) Schedule() Schedule { return "@every 5m" }
 
-// Run deletes messages whose expires_at is before now - ExpiryGrace.
+// Run sweeps every message whose expires_at is strictly before
+// (now - ExpiryGrace). The deletion runs against whichever MessageStore is
+// wired into the service; backends without an expires_at column return 0
+// rows so the worker is a uniform no-op there.
 func (w *RemoveExpiredMessagesWorker) Run(ctx context.Context) error {
 	if w.svc == nil || w.svc.Messages == nil {
 		return nil
@@ -601,7 +689,17 @@ func (*APNPushSenderWorker) Name() string { return "scheduled-apn-sender" }
 // Schedule runs continuously.
 func (*APNPushSenderWorker) Schedule() Schedule { return ScheduleContinuous }
 
-// Run drains APNs jobs through jobs.Manager.RunOnce, scheduled separately so it can be throttled on its own.
+// Run is a thin shim over the scheduled-jobs manager that processes
+// only APNs-typed jobs. Job payloads are JSON-encoded
+// push.PushNotification structures; the registered handler
+// dispatches them via push.PushManager.Send.
+//
+// The actual draining loop is delegated to jobs.Manager.RunOnce —
+// the APN worker is just a separate scheduler entry so operators
+// can throttle / pause it independently from the general
+// process-scheduled-jobs worker (matches Java's split between
+// ProcessScheduledJobsServiceCommand and
+// ScheduledApnPushNotificationSenderServiceCommand).
 func (w *APNPushSenderWorker) Run(ctx context.Context) error {
 	if w.mgr == nil {
 		return nil
@@ -610,7 +708,21 @@ func (w *APNPushSenderWorker) Run(ctx context.Context) error {
 	return err
 }
 
-// CertificateRotationWorker generates a new delivery-certificate Ed25519 key on demand, installs it, and logs the public key and keyId; other instances need a restart or reload.
+// CertificateRotationWorker regenerates the delivery-certificate
+// signing key on demand and installs it on the live
+// CertificatesManager. Matches Java's `certificate` command: the
+// operator runs it once at deployment time to mint a fresh
+// Ed25519 keypair and a server-certificate id. The new public key +
+// keyId are emitted via structured log so the operator can publish
+// them to mobile clients and persist them in yaml config to survive
+// process restart.
+//
+// Multi-instance safety: the scheduler's leader election prevents
+// concurrent generation across the fleet. After the leader runs the
+// rotation, follower instances must be restarted (or their cert
+// managers receive the new key via reload) to pick up the new
+// material. This matches the Java operator workflow exactly — Java's
+// command is a one-shot deployment task, not a live cron.
 type CertificateRotationWorker struct {
 	svc        *service.SignalService
 	certsMgr   *certificates.CertificatesManager
@@ -643,7 +755,16 @@ var reservedCertificateKeyIDs = []uint32{
 	0x7357C357, // libsignal "test cert" — signed by the testing trust root
 }
 
-// Run generates an Ed25519 key, installs it and logs the public key with keyId (seconds since certKeyIDEpoch); errors if the keyId would overflow uint32.
+// Run generates a fresh Ed25519 keypair, installs the private key on
+// the CertificatesManager, and emits a structured log of the public
+// key + keyId so the operator can publish the new material. keyId is
+// monotonic seconds since certKeyIDEpoch so Signal clients always
+// pick the most recent verifying key.
+//
+// Returns an error rather than wrapping silently when the keyId
+// would overflow uint32. That moment is ~year 2162; long before then
+// the proto field will need widening to uint64 and this code can be
+// updated in lock-step.
 func (w *CertificateRotationWorker) Run(ctx context.Context) error {
 	if w.certsMgr == nil {
 		return nil
@@ -696,12 +817,31 @@ func (w *CertificateRotationWorker) Run(ctx context.Context) error {
 	return nil
 }
 
-// ZKParamsWorker generates new ZK group parameters on demand, installs them, writes the 32-byte master seed to SeedSink and logs only its SHA-256 fingerprint; the seed reproduces the params via zkConfig.serverSecret.
+// ZKParamsWorker regenerates the ZK group parameters and installs
+// them on the live CertificatesManager. On-demand; matches Java's
+// `zkparams` command — the seed material is delivered via the
+// configured SeedSink (typically a one-shot 0600 file) so it never
+// enters the structured log stream. The INFO log carries only a
+// SHA-256 fingerprint so the run is observable without leaking the
+// secret.
+//
+// Mirrors the Java command surface:
+//   - Java prints base64(serverPublicParams) and base64(serverSecretParams)
+//   - go-libsignal does not yet expose bincode Serialize for the secret
+//     params, but the params are derived deterministically from a
+//     32-byte randomness seed via GenerateServerSecretParams. The
+//     master seed is written verbatim to SeedSink (when configured)
+//     so the operator can paste it into yaml `zkConfig.serverSecret`
+//     and restart to reproduce identical params.
 type ZKParamsWorker struct {
 	svc        *service.SignalService
 	certsMgr   *certificates.CertificatesManager
 	randSource func([]byte) (int, error)
-	// SeedSink receives exactly the 32 raw seed bytes right after generation; nil only in tests.
+	// SeedSink, when non-nil, receives the 32-byte master seed
+	// IMMEDIATELY after generation. The worker writes exactly 32
+	// bytes (no encoding, no newline) so the sink can be a
+	// 0600-mode file the operator captures and securely transports
+	// out-of-band. Leave nil only in tests or dry-runs.
 	SeedSink io.Writer
 }
 
@@ -717,7 +857,22 @@ func (*ZKParamsWorker) Name() string { return "generate-zk-params" }
 // Schedule is on-demand.
 func (*ZKParamsWorker) Schedule() Schedule { return ScheduleOnDemand }
 
-// Run derives domain-separated seeds from fresh randomness, builds and installs the server params, persists the master seed first and fails if SeedSink cannot take it.
+// Run generates fresh randomness, domain-separates it into per-type
+// seeds, derives a new zkgroup.ServerSecretParams +
+// GenericServerSecretParams, installs both on the certificates
+// manager, writes the master seed to SeedSink (when configured),
+// and logs only a SHA-256 fingerprint of the seed so secret
+// material never enters the structured log stream.
+//
+// Domain separation: the master seed is *never* fed directly into
+// zkgroup's randomness slot. Instead each derivation is keyed with
+// a unique HKDF-style label so a future leak of one parameter set
+// cannot be used to recover the other.
+//
+// Returns an error if SeedSink fails to accept the bytes — the
+// operator cannot rotate without successful persistence and
+// surfacing the error loudly is safer than installing live params
+// the operator can't reproduce on the next restart.
 func (w *ZKParamsWorker) Run(ctx context.Context) error {
 	if w.certsMgr == nil {
 		return nil
@@ -813,7 +968,11 @@ func (*CheckDynamicConfigurationWorker) Name() string { return "check-dynamic-co
 // Schedule is on-demand.
 func (*CheckDynamicConfigurationWorker) Schedule() Schedule { return ScheduleOnDemand }
 
-// Run reloads every remote-config row into the cache, surfacing store parse errors.
+// Run re-fetches every row from the configured remote-config store
+// and replaces the in-memory cache. Underlying validation (empty
+// names, out-of-range percentages) lives in Store.Put — Refresh
+// surfaces store-side parse errors so operators see them before they
+// hit live traffic.
 func (w *CheckDynamicConfigurationWorker) Run(ctx context.Context) error {
 	if w.mgr == nil {
 		return nil
@@ -821,7 +980,23 @@ func (w *CheckDynamicConfigurationWorker) Run(ctx context.Context) error {
 	return w.mgr.Refresh(ctx)
 }
 
-// RegisterDefaults registers the standard workers on s; backup workers only when svc.Backups is set, and a nil manager leaves its workers as no-ops. apnJobsMgr drains only APN jobs.
+// RegisterDefaults registers the standard set of workers on s. Callers
+// may register additional workers before Start. Backup workers register
+// only when svc.Backups is wired so deployments without the backup
+// subsystem do not run no-op scans on every tick.
+//
+// remoteCfgMgr is consumed by the check-dynamic-config worker.
+// certsMgr is consumed by the generate-certificate and
+// generate-zk-params workers — pass nil to leave them as no-ops.
+// pushMgr is consumed by the notify-idle-devices worker — pass nil
+// when the deployment has no push pipeline.
+// jobsMgr is consumed by the process-scheduled-jobs worker — pass
+// nil when the deployment has not wired the scheduled-jobs store.
+// apnJobsMgr is the dedicated jobs.Manager that drains the APN
+// notification queue. Production deployments typically share the
+// same Store between the two managers but register only the APN
+// handler on apnJobsMgr so the workers' batches stay
+// throttle-independent.
 func RegisterDefaults(s *Scheduler, svc *service.SignalService, remoteCfgMgr *remoteconfig.Manager, certsMgr *certificates.CertificatesManager, pushMgr *push.PushManager, jobsMgr *jobs.Manager, apnJobsMgr *jobs.Manager) error {
 	all := []Worker{
 		NewRemoveExpiredAccountsWorker(svc, 0),

@@ -14,7 +14,13 @@ import (
 // Compile-time interface satisfaction check.
 var _ profiles.ProfileStore = (*ProfileStore)(nil)
 
-// ProfileStore implements profiles.ProfileStore in Postgres; a partial unique index allows one latest row per account, and Set demotes then upserts in a transaction.
+// ProfileStore is a Postgres-backed implementation of profiles.ProfileStore.
+//
+// Schema: profiles(account_uuid, version) PRIMARY KEY with a partial unique
+// index profiles_latest_idx ON (account_uuid) WHERE is_latest=TRUE enforces
+// at most one latest row per account. Set promotes the supplied version to
+// latest atomically inside a transaction: it first demotes all existing rows
+// for the account, then upserts the new row with is_latest=TRUE.
 type ProfileStore struct {
 	q Querier
 }

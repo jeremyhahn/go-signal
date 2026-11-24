@@ -83,7 +83,8 @@ func (s *MemoryManifestStore) GetItem(_ context.Context, accountUUID string, key
 	return cloneStorageItem(item), nil
 }
 
-// PutItem stores or replaces an item for the account.
+// PutItem stores an item under the given key for the given account UUID,
+// replacing any previously stored value.
 func (s *MemoryManifestStore) PutItem(_ context.Context, accountUUID string, item *securestorage.StorageItem) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -34,7 +34,10 @@ func (c *Client) DeleteStickerPack(packID string) error {
 	return c.store.DeleteStickerPack(packID)
 }
 
-// StickerPath returns a sticker's CDN path; id -1 is the manifest.
+// StickerPath formats the CDN object path for one sticker in a pack.
+// id=-1 selects the manifest slot; id>=0 selects sticker index id.
+// Mirrors the path layout pkg/stickers/manager.go writes when
+// signing upload forms.
 func StickerPath(packID string, id int) string {
 	if id < 0 {
 		return "/cdn3/stickers/" + packID + "/manifest.proto"
@@ -42,7 +45,15 @@ func StickerPath(packID string, id int) string {
 	return "/cdn3/stickers/" + packID + "/full/" + strconv.Itoa(id)
 }
 
-// GetSticker downloads one sticker (id -1 for the manifest) from the server's embedded CDN, verifies and decrypts it with packKey.
+// GetSticker downloads a single sticker payload from the configured
+// signal server's embedded CDN, verifies the HMAC, decrypts it with
+// packKey, and returns the plaintext bytes. Use id=-1 to retrieve
+// the encoded Pack manifest instead.
+//
+// Production deployments that serve stickers from S3 must surface a
+// signed-GET endpoint on the server side; this SDK method only
+// targets the embedded-CDN path that ships with go-signal's REST
+// server.
 func (c *Client) GetSticker(ctx context.Context, packID string, id int, packKey []byte) ([]byte, error) {
 	if packID == "" {
 		return nil, signalerrors.New(signalerrors.ErrInvalidArgument, "signal: packID is required")
@@ -80,7 +91,19 @@ type StickerPackUpload struct {
 	URL     string
 }
 
-// UploadStickerPack encrypts a pack (directory, manifest.json path or .zip) under a fresh key, uploads it and returns the share URL; the caller MUST keep the key.
+// UploadStickerPack reads manifest.json + every referenced sticker
+// image from path, encrypts everything with a fresh pack key, fetches
+// a signed CDN upload form from the configured Signal server, and
+// uploads each payload. Returns the share URL on success.
+//
+// path may be:
+//   - a directory containing manifest.json
+//   - a path ending in `manifest.json` (parent treated as the pack root)
+//   - a .zip archive of the same layout
+//
+// The pack key MUST be persisted by the caller — Signal stores no
+// copy of it server-side, so losing the key means the pack can never
+// be decrypted again.
 func (c *Client) UploadStickerPack(ctx context.Context, path string) (*StickerPackUpload, error) {
 	pack, err := stickers.LoadPack(path)
 	if err != nil {

@@ -1,6 +1,7 @@
 package calling
 
-// TurnToken is a TURN credential set.
+// TurnToken describes a TURN server credential set matching the Java Signal
+// Server's TurnToken record.
 type TurnToken struct {
 	Username    string   `json:"username"`
 	Password    string   `json:"password"`

@@ -19,7 +19,11 @@ var _ usernames.UsernameStore = (*UsernameStore)(nil)
 
 const reservationTTL = 5 * time.Minute
 
-// UsernameStore implements usernames.UsernameStore in Postgres; multi-statement methods use c.WithTx.
+// UsernameStore is a Postgres-backed implementation of usernames.UsernameStore.
+//
+// Single-statement methods use the pool via q directly. ReserveHash,
+// ConfirmHash, DeleteHash, and SetLink each need atomicity across multiple
+// statements and use c.WithTx.
 type UsernameStore struct {
 	q Querier
 	c *Client
@@ -30,7 +34,10 @@ func NewUsernameStore(c *Client) *UsernameStore {
 	return &UsernameStore{q: c.Pool(), c: c}
 }
 
-// ReserveHash reserves the first candidate hash no other account holds and returns it with a random token; re-reserving replaces the account's prior reservation.
+// ReserveHash selects the first candidate hash that is neither confirmed by
+// another account nor actively reserved by another account, reserves it for
+// uuid, and returns the chosen hash and a random token. The same account
+// calling again replaces its prior reservation via ON CONFLICT DO UPDATE.
 func (s *UsernameStore) ReserveHash(ctx context.Context, uuid string, hashes [][]byte) ([]byte, string, error) {
 	if uuid == "" {
 		return nil, "", &usernames.InvalidArgumentError{Field: "uuid", Message: "empty UUID"}
@@ -268,7 +275,9 @@ func (s *UsernameStore) LinkForUUID(ctx context.Context, uuid string) (*username
 	return &link, nil
 }
 
-// SetLink stores the username link for link.UUID, removing the account's other link first.
+// SetLink stores or replaces the username link for link.UUID. Any prior link
+// for the same account UUID is removed first so the UNIQUE constraint on
+// account_uuid is never violated by a stale row with a different handle.
 func (s *UsernameStore) SetLink(ctx context.Context, link *usernames.UsernameLink) error {
 	if link == nil {
 		return &usernames.InvalidArgumentError{Field: "link", Message: "nil link"}

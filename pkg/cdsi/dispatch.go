@@ -20,7 +20,13 @@ const (
 	responseEntryLen  = e164SerializedLen + uuidSerializedLen + uuidSerializedLen // e164 || PNI || ACI
 )
 
-// Dispatcher maps decoded CDSI ClientRequests onto the Directory and returns ClientResponse bytes; shared by all sessions.
+// Dispatcher routes decoded CDSI ClientRequest payloads onto the
+// Directory and returns the corresponding ClientResponse bytes.
+//
+// One Dispatcher instance is shared by all sessions; the per-session
+// state (rate-limit counters, continuation tokens) is the WebSocket
+// handler's responsibility — minimal tokens are emitted here to keep
+// the proto wire shape stable.
 type Dispatcher struct {
 	directory Directory
 }
@@ -33,7 +39,13 @@ func NewDispatcher(directory Directory) *Dispatcher {
 	return &Dispatcher{directory: directory}
 }
 
-// Handle answers a ClientRequest: PNIs for every registered E.164, ACIs only for pairs whose access key matches.
+// Handle decodes a ClientRequest, performs the directory lookups,
+// and returns the encoded ClientResponse bytes.
+//
+// Authorization model: aci_uak_pairs are checked against the
+// directory's recorded access_key — only matched pairs unlock ACI
+// disclosure in the response. PNI bytes are returned for every
+// registered E.164 (PNI is non-secret per Signal's model).
 func (d *Dispatcher) Handle(ctx context.Context, frame []byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

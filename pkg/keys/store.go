@@ -10,7 +10,9 @@ type PreKeyStore interface {
 	// StoreKEMPreKeys persists a batch of KEM one-time pre-keys for a device.
 	StoreKEMPreKeys(ctx context.Context, uuid string, deviceID uint64, preKeys []*KEMSignedPreKey) error
 
-	// StoreKEMLastResortPreKey replaces a device's last-resort KEM pre-key, which is never consumed.
+	// StoreKEMLastResortPreKey persists the last-resort KEM pre-key for a device.
+	// This key must never be consumed (deleted) during session establishment.
+	// Calling this method replaces any previously stored last-resort key.
 	StoreKEMLastResortPreKey(ctx context.Context, uuid string, deviceID uint64, preKey *KEMSignedPreKey) error
 
 	// StoreSignedPreKey persists the current signed pre-key for a device.
@@ -40,6 +42,10 @@ type PreKeyStore interface {
 	// DeleteAllForAccount removes all pre-keys associated with an account.
 	DeleteAllForAccount(ctx context.Context, uuid string) error
 
-	// ListAccountUUIDs returns every account UUID with stored pre-keys, possibly duplicated, in no order.
+	// ListAccountUUIDs returns every account UUID that has pre-keys
+	// stored in any of the underlying tables (EC, KEM, KEM-last-resort,
+	// signed). Used by the orphan-prekey sweeper to find rows whose
+	// owning account no longer exists. Implementations may return
+	// duplicates; the caller deduplicates. Ordering is undefined.
 	ListAccountUUIDs(ctx context.Context) ([]string, error)
 }

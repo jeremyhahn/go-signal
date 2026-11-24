@@ -29,7 +29,15 @@ type CircuitBreakerConfig struct {
 	OpenTimeout time.Duration
 }
 
-// CircuitBreaker opens after FailureThreshold consecutive failures, rejects with ErrCircuitOpen for OpenTimeout, then probes half-open. Safe for concurrent use.
+// CircuitBreaker guards an unreliable downstream (Cloudflare TURN here).
+// Once FailureThreshold consecutive calls fail, the breaker opens and
+// short-circuits subsequent calls with ErrCircuitOpen until OpenTimeout
+// elapses. The next call then runs as a half-open probe — success closes
+// the breaker; failure re-opens it for another OpenTimeout window.
+//
+// Safe for concurrent use. State changes are guarded by a single mutex
+// since the typical call rate against TURN credentials is < 100/s and
+// the lock window is small.
 type CircuitBreaker struct {
 	mu                  sync.Mutex
 	state               breakerState

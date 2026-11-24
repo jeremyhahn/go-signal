@@ -51,7 +51,12 @@ type velocityEntry struct {
 // fraudCleanupInterval is the period between background eviction passes.
 const fraudCleanupInterval = 60 * time.Second
 
-// DefaultFraudChecker scores registrations by velocity per IP and number prefix; call Stop (idempotent) to end its cleanup goroutine.
+// DefaultFraudChecker implements RegistrationFraudChecker with heuristic
+// scoring based on registration velocity per IP and phone number prefix
+// patterns.
+//
+// A background goroutine evicts expired entries every fraudCleanupInterval.
+// Call Stop to release resources; Stop is idempotent.
 type DefaultFraudChecker struct {
 	// maxPerIP is the maximum registrations allowed per IP within the window.
 	maxPerIP int

@@ -14,7 +14,13 @@ import (
 // Compile-time interface satisfaction check.
 var _ groups.GroupStore = (*GroupStore)(nil)
 
-// GroupStore implements groups.GroupStore in Postgres: the group as JSONB, with the revision column as the optimistic lock.
+// GroupStore is a Postgres-backed implementation of groups.GroupStore with
+// optimistic locking on Group.Revision.
+//
+// Schema: groups(id TEXT PRIMARY KEY, revision BIGINT, data JSONB,
+// created_at, updated_at). The full Group struct is serialized to JSONB; the
+// promoted `revision` column is the authoritative lock field and is kept in
+// sync with Group.Revision on every write.
 type GroupStore struct {
 	q Querier
 }
@@ -74,7 +80,10 @@ func (s *GroupStore) Get(ctx context.Context, groupID string) (*groups.Group, er
 	return &g, nil
 }
 
-// Update writes group when its Revision is exactly one above the stored one; a missing group and a conflict get distinct errors.
+// Update persists a modified group state with optimistic locking. The incoming
+// group.Revision must be exactly one greater than the currently stored
+// revision. Zero rows updated: a follow-up SELECT distinguishes a missing
+// group from a version conflict so the correct typed error is returned.
 func (s *GroupStore) Update(ctx context.Context, g *groups.Group) error {
 	if g == nil {
 		return &groups.InvalidGroupArgumentError{Field: "group", Message: "nil group"}

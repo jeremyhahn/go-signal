@@ -15,7 +15,8 @@ import (
 	pebble "github.com/jeremyhahn/go-qrdb/pkg/storage/pebble"
 )
 
-// NewEmbeddedKVStore returns an in-process QRDB KVStore on PebbleDB.
+// NewEmbeddedKVStore creates an in-process QRDB KVStore backed by PebbleDB.
+// This uses PebbleDB storage directly with KVEngine for index management.
 func NewEmbeddedKVStore(dataDir string) (kvstore.KVStore, error) {
 	pebbleCfg := pebble.DefaultConfig(filepath.Join(dataDir, "pebble"))
 	stg, err := pebble.New(pebbleCfg)
@@ -183,7 +184,14 @@ func incrementPrefixBytes(b []byte) []byte {
 	return append(result, 0)
 }
 
-// Close releases PebbleDB and its directory lock; NewDefaultDAOStore reaches it through io.Closer.
+// Close releases the underlying PebbleDB.
+//
+// kvstore.KVStore does not declare Close, so this is reachable only through an
+// io.Closer assertion — which is exactly how NewDefaultDAOStore reaches it.
+// Without it nothing in the chain could release the database: the adapter is
+// the only thing holding the storage handle, and PebbleDB keeps an exclusive
+// lock on its directory for as long as it is open. That lock outliving its
+// owner is #55.
 func (a *engineKVStoreAdapter) Close() error {
 	if a.stg == nil {
 		return nil

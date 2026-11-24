@@ -28,7 +28,11 @@ type migration struct {
 	down    string
 }
 
-// Migrate applies the versions above schema_migrations' maximum, serialized by an advisory lock.
+// Migrate brings the connected database to the latest schema version. It is
+// safe to call concurrently from multiple processes — a Postgres advisory
+// lock serializes execution. A schema_migrations bookkeeping table records
+// applied versions; only versions strictly greater than the recorded
+// maximum are applied.
 func (c *Client) Migrate(ctx context.Context) error {
 	migrations, err := loadMigrations()
 	if err != nil {

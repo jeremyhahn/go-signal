@@ -11,7 +11,10 @@ import (
 	"time"
 )
 
-// Manager evaluates per-account dynamic configuration from a Store through a periodically refreshed cache.
+// Manager evaluates per-account dynamic configuration. It holds a Store
+// for the source-of-truth rows and a periodic-refresh cache so the
+// hot path doesn't take a Store round-trip on every request — Java
+// Signal-Server uses the same pattern with a 10s refresh interval.
 type Manager struct {
 	store           Store
 	refreshInterval time.Duration
@@ -61,7 +64,11 @@ func NewManager(ctx context.Context, cfg ManagerConfig) (*Manager, error) {
 	return mgr, nil
 }
 
-// Refresh re-reads and validates the store and replaces the cache.
+// Refresh re-reads the store and replaces the in-memory cache. The
+// background refresh goroutine calls this every refreshInterval; the
+// check-dynamic-config worker calls it on-demand to validate that
+// the live store still parses + that every row passes the same
+// invariants Put enforces.
 func (m *Manager) Refresh(ctx context.Context) error {
 	return m.refresh(ctx)
 }
@@ -112,7 +119,18 @@ func (m *Manager) Stop() {
 	}
 }
 
-// Evaluate returns the config map for an account and user agent: platform-prefixed configs only to that platform, Value for in-bucket or listed accounts, else DefaultValue; deterministic.
+// Evaluate returns the rendered key→value map for accountUUID +
+// userAgent. Per Java:
+//   - Configs prefixed with a platform tag are filtered to that
+//     platform; non-platform-prefixed configs ship to every client.
+//   - For each delivered config, the account is hashed into a 0–99
+//     bucket; in-bucket accounts (or those explicitly listed in
+//     UUIDs) receive Value; everyone else receives DefaultValue.
+//   - Globals (cfg.Name starts with "global.") are passed through
+//     verbatim — bucketing still applies but most globals are 100%.
+//
+// The returned map is deterministic for a given (accountUUID, cache)
+// pair so callers can compute a stable ETag.
 func (m *Manager) Evaluate(accountUUID, userAgent string) map[string]string {
 	cache := m.cache
 	if cache == nil {
@@ -213,7 +231,11 @@ func uuidToUint64Pair(s string) (msb, lsb uint64, ok bool) {
 	return msb, lsb, true
 }
 
-// PlatformFromUserAgent returns "ios", "android", "desktop" or "" for a Signal User-Agent.
+// PlatformFromUserAgent classifies a Signal client User-Agent string
+// into one of "ios", "android", "desktop", or "" (unrecognized). The
+// detection is conservative — matching Java's UserAgentUtil flow —
+// because misclassifying a client into the wrong bucket misroutes a
+// feature flag for that user.
 func PlatformFromUserAgent(ua string) string {
 	if ua == "" {
 		return ""

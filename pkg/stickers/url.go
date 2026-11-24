@@ -8,13 +8,21 @@ import (
 	"unicode"
 )
 
-// PackURL is a sticker share URL: https://signal.art/addstickers/#pack_id=<16-byte hex>&pack_key=<32-byte hex>.
+// PackURL is a parsed Signal sticker share URL. The canonical text
+// form is `https://signal.art/addstickers/#pack_id=<hex>&pack_key=<hex>`
+// — pack_id is 16 hex bytes, pack_key is 32 hex bytes. Both halves
+// are required to fetch and decrypt the pack.
 type PackURL struct {
 	PackID  string
 	PackKey []byte
 }
 
-// ParsePackURL extracts and checks the hex pack_id and pack_key from the fragment, or returns *PackURLError.
+// ParsePackURL decodes a Signal sticker pack share URL into its
+// pack-id + pack-key components. The hash fragment is parsed as
+// query-style key=value pairs; both pack_id and pack_key are
+// required, hex-encoded, and length-checked.
+//
+// Returns *PackURLError when the URL is malformed.
 func ParsePackURL(raw string) (*PackURL, error) {
 	if raw == "" {
 		return nil, &PackURLError{Reason: "empty URL"}

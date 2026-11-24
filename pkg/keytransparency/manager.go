@@ -15,7 +15,11 @@ type RemoteClient interface {
 	Distinguished(ctx context.Context, req *ktpb.DistinguishedRequest) (*ktpb.DistinguishedResponse, error)
 }
 
-// KeyTransparencyManager proxies REST calls to a remote key-transparency service, or returns stubs when none is configured.
+// KeyTransparencyManager fronts the optional remote
+// key-transparency service for signald's REST handlers. When no
+// remote is configured the manager returns stub responses
+// (monolithic deployment); when a remote is wired the REST
+// handlers' inbound calls are proxied through.
 type KeyTransparencyManager struct {
 	logger *slog.Logger
 	remote RemoteClient

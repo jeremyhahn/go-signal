@@ -15,7 +15,17 @@ import (
 // Compile-time interface satisfaction check.
 var _ accounts.AccountStore = (*AccountStore)(nil)
 
-// AccountStore implements accounts.AccountStore on Postgres: the data JSONB is authoritative, promoted columns index it, and Update requires Version = stored + 1.
+// AccountStore is a Postgres-backed implementation of accounts.AccountStore.
+//
+// Schema design: the `data` JSONB column is the authoritative serialization
+// of the Account struct (including embedded Devices). The promoted columns
+// (aci, pni, e164, username_hash, username_link_handle, version) are
+// projections used for indexing and uniqueness; they are written from the
+// Account struct on every insert/update and stay in sync with `data`.
+//
+// Optimistic locking: Update applies WHERE version = current_version - 1,
+// matching the qrdb contract that account.Version must be exactly one
+// greater than the stored version.
 type AccountStore struct {
 	q Querier
 }
@@ -27,7 +37,9 @@ func NewAccountStore(q Querier) *AccountStore {
 	return &AccountStore{q: q}
 }
 
-// Create stores a new account as JSONB; a duplicate aci, pni, e164 or username hash is AccountAlreadyExistsError.
+// Create persists a new account, enforcing unique aci/pni/e164/username_hash
+// via Postgres UNIQUE constraints. Conflicts on any of those are mapped to
+// AccountAlreadyExistsError. The whole Account is serialized to JSONB.
 func (s *AccountStore) Create(ctx context.Context, account *accounts.Account) error {
 	if account == nil {
 		return &accounts.InvalidArgumentError{Field: "account", Message: "nil account"}
@@ -135,7 +147,10 @@ func (s *AccountStore) Update(ctx context.Context, account *accounts.Account) er
 	}
 }
 
-// ListAll streams every account to fn.
+// ListAll iterates every row in `accounts`, decoding the JSONB into
+// Account and yielding to fn. Uses a single SELECT over the data
+// column; pgx's row iteration streams server-side rather than
+// materializing the whole result set in memory.
 func (s *AccountStore) ListAll(ctx context.Context, fn func(*accounts.Account) error) error {
 	rows, err := s.q.Query(ctx, `SELECT data FROM accounts`)
 	if err != nil {

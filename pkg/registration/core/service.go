@@ -1,4 +1,13 @@
-// Package core is the registration-service engine: sessions, code generation, per-session rate limits and transport delivery. Captcha is handled by pkg/registration/sessionshim.
+// Package core is the lower half of the verification stack: session
+// lifecycle, code generation, per-session SMS/voice rate-limit
+// bookkeeping, and transport delivery. It is what the standalone
+// registration-service binary runs.
+//
+// Everything captcha-related lives in pkg/registration/sessionshim on
+// the chat-server (signald) side. Per Java's split, the registration
+// service is unaware of captcha — that is a property the chat-server
+// requests of the client to decide whether to forward a send-code call
+// at all.
 package core
 
 import (
@@ -14,7 +23,10 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/verification"
 )
 
-// DefaultMaxSessions caps concurrent sessions (then *verification.SessionLimitExceededError); zero uses it, negative disables the cap.
+// DefaultMaxSessions caps concurrent sessions. CreateSession returns
+// *verification.SessionLimitExceededError once the store size meets it.
+// Zero in config means "use this default"; pass a negative value to
+// disable the cap entirely (production deployments should not).
 const DefaultMaxSessions = 10_000
 
 // DefaultSessionTTL is the session lifetime — 10 minutes, matching the
@@ -25,7 +37,10 @@ const DefaultSessionTTL = 10 * time.Minute
 // the session store for expired entries.
 const DefaultCleanupInterval = 60 * time.Second
 
-// DefaultRequestCodeCooldowns is the per-session cooldown schedule: immediate, then 60s, 5m, 30m, capped at 1h.
+// DefaultRequestCodeCooldowns is the production cooldown schedule
+// applied per session. The first request goes through immediately; the
+// next is gated by 60s, then 5m, then 30m, then capped at 1h. Mirrors
+// the Java registration-service progression.
 var DefaultRequestCodeCooldowns = []time.Duration{
 	0,
 	60 * time.Second,
@@ -43,7 +58,15 @@ type Config struct {
 	MaxSessions     int
 	SessionTTL      time.Duration
 	CleanupInterval time.Duration
-	// RequestCodeCooldowns is indexed by CodeRequests and clamps to its last value; empty disables per-session limits.
+	// RequestCodeCooldowns is the schedule of per-session cooldowns
+	// applied after each successful SendCode, indexed by the running
+	// CodeRequests count: the first send (CodeRequests=1) selects
+	// sched[1], the second selects sched[2], and so on. sched[0] is
+	// therefore the cooldown before any code has been sent — zero in the
+	// default schedule, since the first request is never delayed. The
+	// index clamps to the final value so a misbehaving client cannot
+	// drive the cooldown back to zero. An empty schedule disables
+	// per-session rate limiting.
 	RequestCodeCooldowns []time.Duration
 	// FixedCode replaces the random code with a static value. Intended
 	// exclusively for integration testing against the stub transport;
@@ -86,7 +109,9 @@ type Service struct {
 	shutdownOnce  sync.Once
 }
 
-// NewService returns a Service and starts its cleanup goroutine; call Shutdown when done.
+// NewService constructs a Service. The background cleanup goroutine
+// starts immediately; the caller must call Shutdown when the Service
+// is no longer needed.
 func NewService(store verification.VerificationSessionStore, transport verification.VerificationTransport, config Config) *Service {
 	cfg := defaultConfig(config)
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
@@ -146,7 +171,11 @@ func (s *Service) CreateSession(ctx context.Context, number string) (*verificati
 	return session, nil
 }
 
-// SendCode generates, stores and sends a code; within the cooldown it returns *verification.RequestCodeRateLimitedError with the remaining wait.
+// SendCode generates a code, persists it, and dispatches it via the
+// configured transport. Per-session cooldown is checked before
+// generation; if the prior NextCodeRequestAt has not elapsed
+// *verification.RequestCodeRateLimitedError is returned with the
+// remaining wait.
 func (s *Service) SendCode(ctx context.Context, sessionID string) (*verification.VerificationSession, error) {
 	session, err := s.store.Get(ctx, sessionID)
 	if err != nil {
@@ -197,7 +226,10 @@ func (s *Service) SendCode(ctx context.Context, sessionID string) (*verification
 	return session, nil
 }
 
-// SubmitCode compares codes in constant time; a mismatch is *verification.InvalidCodeError, and past MaxAttempts *MaxAttemptsExceededError.
+// SubmitCode compares the user-supplied code with the stored one in
+// constant time. On mismatch the attempts counter is advanced and
+// *verification.InvalidCodeError is returned; once attempts >=
+// MaxAttempts further calls fail with *MaxAttemptsExceededError.
 func (s *Service) SubmitCode(ctx context.Context, sessionID, code string) (*verification.VerificationSession, error) {
 	session, err := s.store.Get(ctx, sessionID)
 	if err != nil {

@@ -244,7 +244,10 @@ func (s *KVAccountStore) Delete(ctx context.Context, uuid string) error {
 	return nil
 }
 
-// ListAll yields every primary account record under kvAccountPrefix, skipping the nested index entries.
+// ListAll iterates every primary account record under the KV's
+// kvAccountPrefix, decoding the JSON payload and yielding to fn. The
+// secondary-index entries under kvByNumberPrefix / kvByPNIPrefix are
+// nested inside the same root prefix so we filter them out here.
 func (s *KVAccountStore) ListAll(ctx context.Context, fn func(*Account) error) error {
 	return s.kv.Scan(ctx, kvAccountPrefix, func(key string, value []byte) error {
 		// Skip secondary-index entries — those live under nested

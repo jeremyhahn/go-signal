@@ -14,7 +14,10 @@ type SignedPreKey struct {
 	Signature []byte
 }
 
-// KEMSignedPreKey is a post-quantum KEM signed pre-key; a last-resort key is never consumed and is served when one-time keys run out.
+// KEMSignedPreKey represents a post-quantum KEM signed pre-key.
+// When IsLastResort is true, the key is a last-resort key and must never be
+// consumed (deleted) during session establishment. It is returned when
+// one-time KEM pre-keys are exhausted.
 type KEMSignedPreKey struct {
 	KeyID        uint64
 	PublicKey    []byte
@@ -60,7 +63,9 @@ type SetKeysRequest struct {
 	PreKeys      []*PreKey          `json:"preKeys"`
 	SignedPreKey *SignedPreKey      `json:"signedPreKey"`
 	KEMPreKeys   []*KEMSignedPreKey `json:"pqPreKeys"`
-	// KEMLastResortPreKey replaces the stored last-resort KEM pre-key.
+	// KEMLastResortPreKey is the last-resort KEM pre-key that is never consumed.
+	// It is stored separately and returned only when one-time KEM pre-keys are
+	// exhausted. Setting this field replaces any previously stored last-resort key.
 	KEMLastResortPreKey *KEMSignedPreKey `json:"pqLastResortPreKey,omitempty"`
 }
 

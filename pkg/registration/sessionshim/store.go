@@ -1,4 +1,13 @@
-// Package sessionshim wraps a remote registration-service with signald's captcha gate, blocking SendCode until a required captcha is cleared.
+// Package sessionshim is the chat-server (signald) wrapper around a
+// remote registration-service. It augments the underlying
+// verification-session metadata with the chat-server's captcha-required
+// gate — the property of "the user must clear a captcha before the next
+// send-code call is forwarded".
+//
+// The split mirrors the Java reference: registration-service tracks
+// only transport state (codes, rate limits, attempts). signald carries
+// the requestedInformation:[CAPTCHA] state in its own local store and
+// blocks SendCode on it before any RPC is issued.
 package sessionshim
 
 import (

@@ -35,17 +35,27 @@ type CaptchaManagerConfig struct {
 	// is configured. Required when Checker is nil; ignored otherwise.
 	Verifier CaptchaVerifier
 
-	// Checker parses `provider.sitekey.action.token`, enforces the per-action site-key allowlist and dispatches; nil uses the single Verifier.
+	// Checker is the token-format-aware multi-provider dispatcher
+	// (Phase 3.3). When non-nil, handleCaptchaChallenge parses the
+	// captcha solution as `provider.sitekey.action.token`, enforces the
+	// per-action site-key allowlist, and delegates to the resolved
+	// provider. Leave nil to retain the legacy single-verifier flow.
 	Checker *Checker
 
-	// ScoreThreshold is the minimum reCAPTCHA v3 score; zero uses DefaultScoreThreshold, and scoreless providers skip it.
+	// ScoreThreshold is the minimum VerifyResult.Score required to accept a
+	// token. Scores are only emitted by reCAPTCHA v3; for other providers the
+	// returned score is 0 and the threshold check is skipped. A zero value
+	// uses DefaultScoreThreshold.
 	ScoreThreshold float64
 
 	// Logger is used for debug and error output. Required.
 	Logger *slog.Logger
 }
 
-// NewCaptchaManager returns a manager with the TestVerifier; use NewCaptchaManagerWithConfig for a real backend.
+// NewCaptchaManager creates a new CaptchaManager with the given logger.
+// The manager uses a TestVerifier that accepts any token carrying the
+// TestTokenPrefix. Use NewCaptchaManagerWithConfig to supply a production
+// CAPTCHA backend.
 func NewCaptchaManager(logger *slog.Logger) *CaptchaManager {
 	return NewCaptchaManagerWithConfig(CaptchaManagerConfig{
 		Verifier:       NewTestVerifier(TestVerifierConfig{}),

@@ -5,12 +5,31 @@ import (
 	"time"
 )
 
-// Store is the backup metadata contract per backend; methods take the raw [BackupID] and hash it with SHA-256 themselves. Safe for concurrent use.
+// Store is the metadata-storage contract for backups. Each persistence
+// backend (memory, qrdb, postgres) implements this directly. Mirrors the
+// surface of Java Signal-Server's BackupsDb DynamoDB adapter.
+//
+// All methods accept the un-hashed [BackupID] from the credential; the
+// implementation is responsible for applying the canonical SHA-256 hash
+// before keying into storage. This keeps the hashing rule (Java's
+// BackupsDb.hashedBackupId) in one place — the backend — and prevents
+// callers from accidentally double-hashing.
+//
+// Implementations must be safe for concurrent use.
 type Store interface {
-	// SetPublicKey registers the XEd25519 key and level for a backup-id; a different key is [*PublicKeyConflictError].
+	// SetPublicKey registers the XEd25519 public key that subsequent
+	// presentations of this backup-id must be signed with. The level is
+	// recorded so the same backup-id cannot be silently upgraded or
+	// downgraded later.
+	//
+	// Returns [*PublicKeyConflictError] if a different public key is already
+	// registered for this backup-id.
 	SetPublicKey(ctx context.Context, id BackupID, level BackupLevel, publicKey []byte) error
 
-	// RetrieveAuthenticationData returns the public key and CDN directories; ok=false means no row, a verification failure.
+	// RetrieveAuthenticationData returns the public key + per-user CDN
+	// directories needed to authenticate a presentation. ok=false means
+	// no row exists yet for this backup-id; callers should treat that
+	// as a verification failure rather than a hard error.
 	RetrieveAuthenticationData(ctx context.Context, id BackupID) (data *AuthenticationData, ok bool, err error)
 
 	// AddMessageBackup records that an upload form has been issued for the
@@ -27,7 +46,10 @@ type Store interface {
 	// current usage figure.
 	DescribeBackup(ctx context.Context, user AuthenticatedUser) (*Description, error)
 
-	// TrackMedia atomically adjusts media bytes and object counters; negative deltas refund quota.
+	// TrackMedia atomically adjusts the media bytes-used + object-count
+	// counters. Negative deltas are used after deletes and after failed
+	// copy operations to refund quota. Implementations must apply the
+	// update atomically with respect to other TrackMedia calls.
 	TrackMedia(ctx context.Context, user AuthenticatedUser, countDelta, bytesDelta int64) error
 
 	// GetMediaUsage returns the current cached usage figure together with
@@ -39,10 +61,16 @@ type Store interface {
 	// at the implementation's clock.
 	SetMediaUsage(ctx context.Context, user AuthenticatedUser, usage UsageInfo) error
 
-	// SetMediaUsageFor is [Store.SetMediaUsage] for a [StoredAttributes] row, for the recalculation worker.
+	// SetMediaUsageFor is the worker-side variant of [Store.SetMediaUsage]
+	// that operates on a [StoredAttributes] row obtained from
+	// [Store.ListBackupAttributes]; used by the usage-recalculation worker
+	// where there is no [AuthenticatedUser] available.
 	SetMediaUsageFor(ctx context.Context, attrs StoredAttributes, usage UsageInfo) error
 
-	// ScheduleBackupDeletion swaps in fresh directories and queues the old ones for expiry; [*PendingDeletionError] if one is queued.
+	// ScheduleBackupDeletion swaps the backupDir / mediaDir pointers so
+	// future authentications see fresh empty directories; the old prefixes
+	// are queued for the expiration worker. Returns
+	// [*PendingDeletionError] if a swap is already queued.
 	ScheduleBackupDeletion(ctx context.Context, user AuthenticatedUser) error
 
 	// StartExpiration marks an [ExpiredBackup] row as in-progress so the
@@ -53,7 +81,10 @@ type Store interface {
 	// prefix has been fully deleted.
 	FinishExpiration(ctx context.Context, expired ExpiredBackup) error
 
-	// ListBackupAttributes streams every row to fn; an error aborts. segments is a parallelism hint backends may ignore.
+	// ListBackupAttributes streams every row in the backups table to the
+	// supplied callback. Returning a non-nil error from the callback
+	// aborts iteration. segments hints at how many partitions to read in
+	// parallel (>= 1); backends free to ignore for non-DDB stores.
 	ListBackupAttributes(ctx context.Context, segments int, fn func(StoredAttributes) error) error
 
 	// GetExpiredBackups streams every backup whose last-refresh (or
@@ -62,8 +93,17 @@ type Store interface {
 	GetExpiredBackups(ctx context.Context, segments int, purgeTime time.Time, fn func(ExpiredBackup) error) error
 }
 
-// RedeemedReceiptsStore records redeemed receipt serials so one receipt extends only one account's voucher.
+// RedeemedReceiptsStore tracks ZK receipt-credential serials that have
+// already been redeemed, ensuring a single receipt cannot extend the
+// backup voucher of more than one account. Mirrors Java's
+// RedeemedReceiptsManager. Implemented per-backend in pkg/storage/.
 type RedeemedReceiptsStore interface {
-	// Put records serial as redeemed until expiration and reports whether this is the first redemption.
+	// Put attempts to record the receipt serial as redeemed by accountUUID
+	// with the supplied expiration and receipt level. Returns true on
+	// first redemption, false if the same serial was already redeemed
+	// (regardless of which account); callers translate false into a
+	// [*BadReceiptError] for the client. Implementations enforce TTL
+	// against expiration so reused serials past their natural expiry
+	// fall out of the dedup set.
 	Put(ctx context.Context, receiptSerial []byte, expiration time.Time, receiptLevel uint64, accountUUID string) (bool, error)
 }

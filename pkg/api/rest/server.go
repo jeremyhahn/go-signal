@@ -39,7 +39,8 @@ import (
 	signalws "github.com/jeremyhahn/go-signal/pkg/websocket"
 )
 
-// Server implements the Signal Server REST API on net/http pattern routing.
+// Server implements the Signal Server REST API using the standard net/http
+// package with Go 1.22+ pattern matching.
 type Server struct {
 	httpServer *http.Server
 	// listener is the active network listener. Access is protected by
@@ -154,11 +155,18 @@ type ServerConfig struct {
 	TLSCertFile string
 	TLSKeyFile  string
 	Logger      *slog.Logger
-	// Audit receives events for sensitive operations; nil skips them.
+	// Audit is the structured event sink for sensitive ops
+	// (ChangeNumber / DeleteAccount / LinkDevice /
+	// SetRegistrationLock). Optional — when nil, handlers skip
+	// emission. Production deployments wire a *audit.Logger backed by
+	// a dedicated sink so audit records outlive normal log rotation.
 	Audit    *audit.Logger
 	Accounts *accounts.AccountsManager
 	Captcha  *captcha.CaptchaManager
-	// CaptchaChecker verifies captcha submissions; nil accepts none.
+	// CaptchaChecker is the multi-provider dispatcher used by PATCH
+	// /v1/verification/session/{id} (challenge action) and by the
+	// registration captcha manager. Optional — when nil, captcha
+	// submissions are not accepted.
 	CaptchaChecker *captcha.Checker
 	// RemoteConfig backs GET /v2/config with per-account dynamic feature
 	// flag evaluation. Optional — when nil the endpoint returns an empty
@@ -182,7 +190,10 @@ type ServerConfig struct {
 	Backups         service.BackupService
 	KeyTransparency *keytransparency.KeyTransparencyManager
 	Usernames       *usernames.UsernamesManager
-	// RecoveryPasswords stores and verifies recovery passwords; nil rejects a recoveryPassword field with 400.
+	// RecoveryPasswords manages registration recovery password storage and
+	// verification. When nil, the registration handler treats any inbound
+	// `recoveryPassword` field as unsupported and returns 400; the
+	// session-based registration path is unaffected.
 	RecoveryPasswords *recoverypassword.Manager
 	Devices           *devices.DevicesManager
 	WSSessions        *signalws.SessionManager
@@ -191,7 +202,11 @@ type ServerConfig struct {
 	// When nil, rate limiting is disabled. Production deployments should
 	// always supply a registry; use limits.NewDefaultRegistry().
 	RateLimits *limits.Registry
-	// IsProduction makes a missing spam or fraud checker deny all traffic instead of allowing it.
+	// IsProduction selects the fail mode for missing abuse checkers. In
+	// development (false) a nil SpamChecker/FraudChecker falls back to the
+	// allow-all NoOp policy. In production (true) the fallback is the
+	// fail-closed DenyAll policy, so a misconfiguration blocks traffic
+	// loudly rather than silently admitting unfiltered traffic.
 	IsProduction bool
 	// SpamChecker is the spam detection policy applied before each message
 	// send. When nil, a NoOpChecker is used and all messages are allowed.
@@ -207,7 +222,11 @@ type ServerConfig struct {
 	// consulted before each message store operation. When nil, loop detection is
 	// disabled.
 	LoopDetector *messages.DeliveryLoopDetector
-	// MRMCache stores Sealed Sender v2 payloads once for binary multi-recipient sends; nil makes that endpoint return 503.
+	// MRMCache holds shared multi-recipient message payloads. When non-nil,
+	// the binary multi-recipient endpoint stores the SSv2 ciphertext once
+	// and per-recipient envelopes reference it via SharedMrmKey. When nil,
+	// the binary endpoint returns 503; the legacy JSON multi-recipient path
+	// is unaffected.
 	MRMCache *messages.MRMCache
 	// ReadTimeout is the maximum duration for reading the entire request,
 	// including the body. Zero uses DefaultReadTimeout (30s).
@@ -218,8 +237,11 @@ type ServerConfig struct {
 	// IdleTimeout is the maximum amount of time to wait for the next request
 	// when keep-alives are enabled. Zero uses DefaultIdleTimeout (120s).
 	IdleTimeout time.Duration
-	// AllowedOrigins lists Origin values permitted for WebSocket upgrades; empty means same-origin only.
-	// Attachments stores CDN attachments; nil discards uploads.
+	// AllowedOrigins is the list of Origin header values permitted for
+	// WebSocket upgrade requests. When empty, only same-origin requests are
+	// accepted (the coder/websocket library default).
+	// Attachments is the storage backend for CDN attachment uploads/downloads.
+	// When nil, uploads are accepted but discarded (dev mode).
 	Attachments attachments.Store
 	// StaticResourcesDir is the root directory for serving static resources
 	// (emoji, dictionaries, release notes) at /resources/{path} and /updates/{path}.
@@ -229,12 +251,21 @@ type ServerConfig struct {
 	// ClientVersion controls the client version deprecation and blocking
 	// policy. When nil, no version checks are applied.
 	ClientVersion *ClientVersionConfig
-	// TrustedProxies are CIDRs whose X-Forwarded-For is trusted; empty ignores the header.
+	// TrustedProxies is a list of CIDR ranges for trusted reverse proxies.
+	// When set, the X-Forwarded-For header is only trusted if the request's
+	// RemoteAddr falls within one of these ranges. When empty, XFF is ignored
+	// and RemoteAddr is used directly.
 	TrustedProxies []string
-	// FrontendFS is the built SPA (internal/frontend.FS()); nil serves no web UI.
+	// FrontendFS is the file system for the compiled React/Vite SPA. When
+	// non-nil a catch-all GET handler is registered after all API routes that
+	// serves the SPA with SPA fallback routing and appropriate cache headers.
+	// Pass the value returned by internal/frontend.FS() to enable the web UI.
+	// When nil the web UI is not served.
 	FrontendFS fs.FS
 
-	// WebUIHandler serves the web UI's /api/v1/* endpoints when non-nil.
+	// WebUIHandler provides the client-facing /api/v1/* REST endpoints for
+	// the web UI. When non-nil, the web UI API is available alongside the
+	// Signal protocol endpoints.
 	WebUIHandler *WebUIHandler
 
 	// WebUIEventHub provides the /api/v1/events WebSocket endpoint for
@@ -741,7 +772,10 @@ func (s *Server) SetAttachmentTus(uri string, gen *external.Generator) {
 	s.tusGenerator = gen
 }
 
-// Listen binds the listener without serving; Addr then returns the bound address. Follow with Serve.
+// Listen binds the network listener without starting to serve requests. This
+// is useful for tests that need the resolved listen address before serving
+// begins. After calling Listen the Addr method returns the actual address.
+// Callers must follow up with Serve to begin accepting connections.
 func (s *Server) Listen() error {
 	ln, err := net.Listen("tcp", s.httpServer.Addr)
 	if err != nil {
@@ -753,7 +787,10 @@ func (s *Server) Listen() error {
 	return nil
 }
 
-// Serve accepts connections on the bound listener until shutdown, over HTTPS when TLSCertFile and TLSKeyFile are set.
+// Serve begins accepting connections on the previously bound listener. It
+// blocks until the server is shut down and returns http.ErrServerClosed on
+// graceful shutdown. Listen must be called before Serve. When TLSCertFile
+// and TLSKeyFile are configured, the server serves HTTPS; otherwise HTTP.
 func (s *Server) Serve() error {
 	s.listenerMu.RLock()
 	ln := s.listener
@@ -821,7 +858,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpServer.Shutdown(ctx)
 }
 
-// Addr returns the bound address once listening, otherwise the configured address.
+// Addr returns the listen address of the server. If the server has been started
+// and a listener is bound, the actual address (including the resolved port) is
+// returned. Otherwise, the configured address is returned.
+//
+// The listener's Addr() call is made while holding the read lock so that the
+// underlying net.TCPAddr fields (populated during net.Listen) are not read
+// concurrently with their initialization.
 func (s *Server) Addr() string {
 	s.listenerMu.RLock()
 	defer s.listenerMu.RUnlock()

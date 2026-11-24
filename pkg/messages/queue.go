@@ -11,7 +11,23 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/cache"
 )
 
-// CacheQueue stages envelopes between Insert and the store: sorted set `q:{aci-or-pni}:{device}` by server timestamp, hash `qm:{uuid}:{device}` by GUID; MessagePersister drains it (keys in docs/storage/redis-keys.md).
+// CacheQueue is the Redis-shaped staging buffer that sits between Insert
+// and the persistent store. The flow mirrors Java Signal-Server:
+//
+//  1. Insert places an envelope into the per-device sorted set
+//     `q:{aci-or-pni}:{device}` with score = ServerTimestamp. The
+//     sorted set yields strict per-device delivery order without
+//     coordination across instances.
+//  2. A side hash `qm:{uuid}:{device}` maps server GUID → JSON
+//     envelope so Delete-by-GUID does not need to scan the queue.
+//  3. The MessagePersister worker (pkg/workers) drains the queue into
+//     a persistent MessageStore, removing entries from the cache as
+//     they're persisted.
+//  4. GetMessagesForDevice returns the union of cache-resident and
+//     persisted envelopes; the consumer doesn't need to know which
+//     half a given message came from.
+//
+// Key conventions match docs/storage/redis-keys.md.
 type CacheQueue struct {
 	cache cache.Client
 	// ttl bounds how long an envelope stays cached before the persister moves it.
@@ -74,7 +90,10 @@ func (q *CacheQueue) Enqueue(ctx context.Context, uuid string, device uint64, en
 	return nil
 }
 
-// Drain returns up to max queued envelopes, oldest first, without removing them; call Remove after each is persisted.
+// Drain returns up to max envelopes currently waiting in the queue,
+// in score order (oldest first). Drain does not remove anything; the
+// caller is expected to invoke Remove on each envelope after it has
+// been durably persisted.
 func (q *CacheQueue) Drain(ctx context.Context, uuid string, device uint64, max int64) ([]*Envelope, error) {
 	if max <= 0 {
 		max = 100
@@ -108,7 +127,8 @@ func (q *CacheQueue) Drain(ctx context.Context, uuid string, device uint64, max 
 	return out, nil
 }
 
-// Remove deletes the envelope with the given ServerGUID; idempotent.
+// Remove deletes a single envelope from the queue, identified by its
+// ServerGUID. It is idempotent — removing a missing GUID returns nil.
 func (q *CacheQueue) Remove(ctx context.Context, uuid string, device uint64, serverGUID string) error {
 	if err := q.cache.ZRem(ctx, queueKey(uuid, device), []byte(serverGUID)); err != nil {
 		return &QueueError{Op: "zrem", Cause: err}

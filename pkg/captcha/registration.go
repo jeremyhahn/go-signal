@@ -16,7 +16,14 @@ func NewRegistrationCaptchaManager(checker *Checker) *RegistrationCaptchaManager
 	return &RegistrationCaptchaManager{checker: checker}
 }
 
-// Assess runs the registration captcha check and returns a typed error on failure; a nil token returns (nil, nil).
+// Assess runs the registration-action captcha pipeline. Returns a populated
+// Assessment on success; a typed error on parse / provider / score failure
+// so handlers can surface 400 / 422 distinctions.
+//
+// A nil `token` indicates no captcha was supplied; the result is (nil, nil)
+// so callers can decide whether the absence is acceptable (e.g. first-time
+// registration may not require a captcha; required-on-failure escalation
+// is enforced higher in the flow).
 func (m *RegistrationCaptchaManager) Assess(ctx context.Context, token *string, remoteIP string) (*Assessment, error) {
 	if token == nil || *token == "" {
 		return nil, nil

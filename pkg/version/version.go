@@ -1,4 +1,6 @@
-// Package version parses and compares MAJOR.MINOR.PATCH version strings.
+// Package version provides utilities for parsing and comparing semantic
+// version strings in the form MAJOR.MINOR.PATCH (e.g. "5.1.0"). Each
+// component must be a non-negative decimal integer.
 package version
 
 import (
@@ -43,7 +45,9 @@ func IsValid(s string) bool {
 	return ok
 }
 
-// Less reports whether a < b; false if either is invalid.
+// Less reports whether version a is strictly less than version b.
+// Both strings must be valid MAJOR.MINOR.PATCH versions; if either is
+// unparsable Less returns false.
 func Less(a, b string) bool {
 	va, ok := parse(a)
 	if !ok {
@@ -62,7 +66,13 @@ func Less(a, b string) bool {
 	return va.patch < vb.patch
 }
 
-// Compare returns -1, 0 or +1 for a < b, a == b, a > b; an invalid version sorts below any valid one.
+// Compare returns an integer comparing two version strings:
+//
+//	-1 if a < b
+//	 0 if a == b
+//	+1 if a > b
+//
+// Unparsable version strings are treated as less than any valid version.
 func Compare(a, b string) int {
 	va, aOK := parse(a)
 	vb, bOK := parse(b)

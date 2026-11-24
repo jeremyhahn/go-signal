@@ -1,4 +1,14 @@
-// Package apple verifies Apple App Attest attestations and assertions per Apple's DeviceCheck documentation, with stdlib and cbor only.
+// Package apple implements Apple App Attest attestation + assertion
+// verification. Mirrors Java Signal-Server's
+// org.whispersystems.textsecuregcm.storage.devicecheck.AppleDeviceCheckManager
+// which delegates to webauthn4j-appattest. We hand-roll the verifier
+// against Apple's published spec rather than pulling in a third-party
+// library — it's pure stdlib + cbor/v2 (already a workspace dep).
+//
+// Apple's reference docs:
+//
+//	https://developer.apple.com/documentation/devicecheck/validating-apps-that-connect-to-your-server
+//	https://developer.apple.com/documentation/devicecheck/establishing-your-app-s-integrity
 package apple
 
 import (
@@ -36,7 +46,10 @@ var (
 // nonceOID is the App Attest nonce extension (1.2.840.113635.100.8.2): SEQUENCE { [0] OCTET STRING <32-byte nonce> }.
 var nonceOID = asn1.ObjectIdentifier{1, 2, 840, 113635, 100, 8, 2}
 
-// Verifier holds the root CA and team and bundle IDs for App Attest checks; safe to share.
+// Verifier holds the configured root CA + Apple team/bundle IDs used to
+// validate App Attest attestations + assertions. One Verifier is safe to
+// share across requests; the root cert pool is computed once at
+// construction.
 type Verifier struct {
 	roots    *x509.CertPool
 	teamID   string
@@ -48,7 +61,8 @@ type Verifier struct {
 	allowDevelopment bool
 }
 
-// Config configures NewVerifier; TeamID and BundleID are required.
+// Config configures NewVerifier. TeamID/BundleID are required; AAGUID
+// pinning falls back to production-only when allowDevelopment is false.
 type Config struct {
 	TeamID           string
 	BundleID         string
@@ -84,7 +98,10 @@ func NewVerifier(cfg Config) (*Verifier, error) {
 	}, nil
 }
 
-// AttestationResult is the verified device key (ES256), credential ID and initial counter (0), stored for later assertions.
+// AttestationResult is the parsed + verified output of VerifyAttestation:
+// the device public key (ES256), the credential ID, and the initial sign
+// counter (must be 0). Stored against the account so subsequent assertions
+// can be verified.
 type AttestationResult struct {
 	PublicKey    *ecdsa.PublicKey
 	CredentialID []byte
@@ -92,7 +109,12 @@ type AttestationResult struct {
 	Receipt      []byte // opaque Apple receipt; relayed back to Apple later if needed
 }
 
-// VerifyAttestation verifies a new device key's App Attest attestation for clientChallenge; keyID is the SHA-256 of the device public key.
+// VerifyAttestation runs the full Apple App Attest verification flow for a
+// new device key. clientChallenge is the original challenge string Signal
+// issued; attestation is the CBOR blob the client returned; keyID is the
+// SHA-256 of the device's public key (base64 in transit, decoded by caller).
+//
+// Returns a stored-device record on success or a typed error.
 func (v *Verifier) VerifyAttestation(challenge string, keyID, attestation []byte) (*AttestationResult, error) {
 	if len(keyID) != 32 {
 		return nil, errInvalid("keyId must be SHA-256 length (32 bytes)")
@@ -168,7 +190,13 @@ func (v *Verifier) VerifyAttestation(challenge string, keyID, attestation []byte
 	}, nil
 }
 
-// VerifyAssertion verifies an assertion over request with the stored key and counter, returning the new counter to persist.
+// VerifyAssertion runs the assertion verification flow. devicePublicKey is
+// the previously-stored ECDSA key from VerifyAttestation; storedCounter is
+// the last seen sign-count for this device; request is the application-
+// level bytes the client signed (Signal embeds the challenge in this);
+// assertion is the CBOR blob returned by the client.
+//
+// Returns the new sign-count on success so the caller can persist it.
 func (v *Verifier) VerifyAssertion(
 	devicePublicKey *ecdsa.PublicKey,
 	storedCounter uint32,

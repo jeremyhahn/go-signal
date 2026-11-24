@@ -15,12 +15,18 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/limits"
 )
 
-// SVRBCredentialGenerator issues per-user SVRB (Secure Value Recovery for Backups) credentials.
+// SVRBCredentialGenerator issues per-user credentials for the SVRB
+// (Secure Value Recovery for Backups) service. Implementations live in the
+// SVRB integration layer; pkg/backups provides a disabled default for
+// deployments that don't run SVRB yet.
 type SVRBCredentialGenerator interface {
 	GenerateFor(ctx context.Context, svrbID string) (*ExternalServiceCredentials, error)
 }
 
-// SVRBClient deletes a user's SVRB state when the whole backup is deleted.
+// SVRBClient performs server-side maintenance against the SVRB service.
+// Today only the delete path is needed (called from DeleteEntireBackup so
+// SVRB state does not outlive the user's backup). Real implementations
+// land alongside the SVRB binary in Phase 4.
 type SVRBClient interface {
 	RemoveData(ctx context.Context, svrbID string) error
 }
@@ -39,7 +45,9 @@ type disabledSVRBClient struct{}
 // RemoveData is a no-op.
 func (disabledSVRBClient) RemoveData(context.Context, string) error { return nil }
 
-// NewDisabledSVRBCredentialGenerator returns the generator for deployments without SVRB.
+// NewDisabledSVRBCredentialGenerator returns the default no-op generator
+// for deployments that haven't wired SVRB yet. Suitable for tests and
+// dev environments.
 func NewDisabledSVRBCredentialGenerator() SVRBCredentialGenerator {
 	return disabledSVRBGenerator{}
 }
@@ -49,7 +57,10 @@ func NewDisabledSVRBClient() SVRBClient {
 	return disabledSVRBClient{}
 }
 
-// Manager runs the ZK-authenticated backup operations: presentations, public keys, backup info, CDN copy, list and delete, and TTL refresh.
+// Manager handles the ZK-authenticated half of the backup subsystem:
+// authenticating presentations, registering public keys, reading/writing
+// backup info, brokering CDN copy/list/delete operations, and refreshing
+// TTLs. Mirrors Java's BackupManager.
 type Manager struct {
 	store              Store
 	blob               BlobStore
@@ -71,9 +82,11 @@ type ManagerOptions struct {
 	// AttachmentLimiter rate-limits CreateTemporaryAttachmentUploadDescriptor.
 	// Keyed by base64(hashedBackupID).
 	AttachmentLimiter limits.RateLimiter
-	// SVRB issues SVRB credentials; nil defaults to [NewDisabledSVRBCredentialGenerator].
+	// SVRB issues per-user credentials for the SVRB service. Nil
+	// defaults to [NewDisabledSVRBCredentialGenerator].
 	SVRB SVRBCredentialGenerator
-	// SVRBClient deletes SVRB state on full-backup deletion; nil defaults to [NewDisabledSVRBClient].
+	// SVRBClient deletes per-user SVRB state during full-backup deletion.
+	// Nil defaults to [NewDisabledSVRBClient] (no-op).
 	SVRBClient SVRBClient
 	// Clock is the time source; nil defaults to time.Now in UTC.
 	Clock func() time.Time
@@ -134,7 +147,13 @@ func svrbIdentifier(user *AuthenticatedUser) string {
 	return hex.EncodeToString(hashedBackupID(user.BackupID))
 }
 
-// SetPublicKey verifies the presentation and the signature over the supplied XEd25519 key, then stores it unless a different key is stored.
+// SetPublicKey registers the XEd25519 public key for the presented
+// backup-id. The presentation is verified first (so we don't permanently
+// bind a malformed credential), then the supplied signature is verified
+// against the supplied public key (this is the single bootstrap case
+// where signature verification cannot use the stored key — we are
+// setting it now). Storage uses a conditional-write to reject a different
+// previously-stored key.
 func (m *Manager) SetPublicKey(
 	ctx context.Context,
 	presentationBytes []byte,
@@ -306,7 +325,8 @@ func (m *Manager) GenerateReadAuth(
 	return m.blob.ReadHeaders(ctx, user.BackupDir)
 }
 
-// GenerateSVRBAuth issues SVRB credentials for the messages credential type only.
+// GenerateSVRBAuth issues SVRB service credentials. Requires the messages
+// credential type (clients only use SVRB with the messages backup-id).
 func (m *Manager) GenerateSVRBAuth(ctx context.Context, user *AuthenticatedUser) (*ExternalServiceCredentials, error) {
 	if err := requireLevel(user, BackupLevelFree); err != nil {
 		return nil, err
@@ -317,7 +337,11 @@ func (m *Manager) GenerateSVRBAuth(ctx context.Context, user *AuthenticatedUser)
 	return m.svrb.GenerateFor(ctx, svrbIdentifier(user))
 }
 
-// GetCopyQuota splits copy requests into those within the media quota and the rest, recomputing usage once before rejecting any.
+// GetCopyQuota splits a batch of copy requests into those that fit in the
+// remaining media quota and those that must be rejected. If the cached
+// usage indicates no remaining quota, the user's actual usage is
+// recalculated against the CDN once before any reject occurs (matching
+// Java's "double-check before forbidding" semantic).
 func (m *Manager) GetCopyQuota(
 	ctx context.Context,
 	user *AuthenticatedUser,
@@ -362,7 +386,10 @@ func (m *Manager) GetCopyQuota(
 	return makeCopyQuota(*user, toCopy, m.maxQuota-usage.BytesUsed), nil
 }
 
-// CopyToBackup copies the in-quota items, calling fn per result; source-not-found and wrong-length failures refund their bytes.
+// CopyToBackup performs the copies in quota, invoking fn for each per-item
+// result. Successful copies update the quota; failures with explicit copy
+// outcomes (source-not-found, source-wrong-length) refund the
+// pre-reserved bytes.
 func (m *Manager) CopyToBackup(ctx context.Context, quota CopyQuota, fn func(CopyResult) error) error {
 	cdn := m.blob.CDNNumber()
 	for _, params := range quota.RequestsToCopy {

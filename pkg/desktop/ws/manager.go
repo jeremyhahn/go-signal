@@ -14,7 +14,12 @@ import (
 	signal "github.com/jeremyhahn/go-signal/sdk/go"
 )
 
-// Manager keeps an authenticated and an unauthenticated WebSocket to the server, reconnecting with backoff and dispatching messages on the event bus.
+// Manager maintains dual WebSocket connections to the Signal server:
+//   - Authenticated: persistent connection for message delivery
+//   - Unauthenticated: rotated connection for public operations
+//
+// It handles automatic reconnection with exponential backoff and
+// dispatches incoming messages through the event bus.
 type Manager struct {
 	client   *signal.Client
 	eventBus *events.Bus
@@ -86,7 +91,15 @@ func NewManager(client *signal.Client, eventBus *events.Bus, handler MessageHand
 	}
 }
 
-// Start runs the connection loop until Stop or a later Start, which cancels this one; the loop gets its context as an argument.
+// Start begins the WebSocket connection loop. It runs until Stop is called, or
+// until a later Start supersedes it.
+//
+// A second Start cancels the first. Without that, the earlier loop kept
+// reconnecting forever with nothing holding its cancel func — Stop could only
+// reach the newest — so every restart leaked a goroutine and a socket.
+//
+// The loop's context is passed to it rather than stored on the struct: a
+// field read inside the goroutine is unsynchronised against this write.
 func (m *Manager) Start(ctx context.Context) {
 	loopCtx, cancel := context.WithCancel(ctx)
 	gen := &loopGeneration{cancel: cancel, done: make(chan struct{})}
@@ -113,7 +126,12 @@ func (m *Manager) Start(ctx context.Context) {
 	go m.connectionLoop(loopCtx, gen)
 }
 
-// Stop cancels the loop's context without waiting for it, so a subscriber may call it from a handler. Safe before Start and more than once.
+// Stop shuts the WebSocket connections down by canceling the loop's context.
+// It does not wait for the loop to exit: status events are emitted
+// synchronously from the loop goroutine, so a subscriber that calls Stop from
+// its handler would otherwise block the loop Stop waits for.
+//
+// Safe before Start and more than once.
 func (m *Manager) Stop() {
 	var (
 		gen     *loopGeneration

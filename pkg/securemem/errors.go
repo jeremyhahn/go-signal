@@ -22,7 +22,10 @@ func (e *BudgetError) Error() string {
 
 func (e *BudgetError) Unwrap() error { return e.Err }
 
-// LimitTooSmallError reports an RLIMIT_MEMLOCK below HeadroomBytes plus MinimumBytes; raise the memlock limit.
+// LimitTooSmallError reports a bounded RLIMIT_MEMLOCK too small to leave the
+// minimum budget once the headroom for unbudgeted locked memory is set aside.
+// The remedy is a host memlock limit (ulimit -l, or the container's memlock
+// ulimit) of at least HeadroomBytes plus MinimumBytes.
 type LimitTooSmallError struct {
 	LimitBytes    int64
 	HeadroomBytes int64

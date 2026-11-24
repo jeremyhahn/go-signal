@@ -91,7 +91,12 @@ func (s *MessageStore) GetMessagesForDevice(ctx context.Context, destinationUUID
 	return out, nil
 }
 
-// HasMessagesForDevice stops the Scan at the first pending envelope.
+// HasMessagesForDevice reports whether any pending envelope exists
+// for the device. Uses a Scan with an early-exit sentinel so the
+// underlying KV store stops iterating after the first match — a
+// device with 10K pending envelopes still pays only one read here.
+// The prior implementation used List which materialized every
+// matching key into a slice just to compare len > 0.
 func (s *MessageStore) HasMessagesForDevice(ctx context.Context, destinationUUID string, destinationDevice uint64) (bool, error) {
 	found := false
 	err := s.kv.Scan(ctx, messageDevicePrefix(destinationUUID, destinationDevice), func(_ string, _ []byte) error {
@@ -134,7 +139,10 @@ func (s *MessageStore) DeleteForAccount(ctx context.Context, uuid string) error 
 	return s.deletePrefix(ctx, prefix, uuid)
 }
 
-// RemoveExpired is a no-op: stored envelopes carry no expiry.
+// RemoveExpired is a no-op for the qrdb backend: the envelope JSON stored
+// today carries no expires_at field, so there is nothing to sweep. The
+// method exists to satisfy [messages.MessageStore] and lets the sweep
+// worker run uniformly against every backend.
 func (s *MessageStore) RemoveExpired(_ context.Context, _ time.Time) (int64, error) {
 	return 0, nil
 }

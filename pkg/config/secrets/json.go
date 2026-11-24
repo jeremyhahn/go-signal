@@ -11,13 +11,52 @@ import (
 	"github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 )
 
-// JSONAppender is implemented by values that append their JSON to a caller buffer, so the plaintext has one owner who can wipe it.
+// JSONAppender is implemented by values that build their own JSON into a
+// buffer supplied by the caller, so that the caller — not encoding/json —
+// owns the only allocation the plaintext ever lands in and can wipe it.
+//
+// It exists because encoding/json.Marshaler cannot be made safe for secret
+// material. MarshalJSON's contract is to RETURN a fresh buffer; encoding/json
+// copies that buffer into its own and drops the original, and the marshaller
+// has no hook that runs afterwards. So a credential marshaled through
+// json.Marshal always abandons one unwiped heap buffer holding the plaintext,
+// no matter how carefully MarshalJSON is written. Handing the destination
+// buffer in is the only shape that keeps a single owner.
 type JSONAppender interface {
-	// AppendJSON appends the JSON encoding to dst; the caller wipes it. Implementations must escape <, > and & as encoding/json does.
+	// AppendJSON appends the value's JSON encoding to dst and returns the
+	// extended buffer. The caller owns the result and must wipe it.
+	//
+	// Implementations MUST escape `<`, `>` and `&` as encoding/json does by
+	// default. The output is written to HTTP responses, and an implementation
+	// that stopped escaping would reintroduce the cross-site-scripting surface
+	// that encoding/json's default removes.
 	AppendJSON(dst []byte) ([]byte, error)
 }
 
-// AppendJSONString appends the value to dst as a JSON string, byte-identical to encoding/json, without making a Go string; errors and appends nothing when unreadable.
+// AppendJSONString appends the protected value to dst as a JSON string
+// literal — quotes and escaping included — without the plaintext ever existing
+// as a Go string.
+//
+// This is the serialization counterpart to WithBytes, and it exists because
+// the obvious spelling is unsafe in a way that cannot be repaired afterwards.
+// Marshaling a credential normally means Reveal() into a Go string and handing
+// that to encoding/json, which puts the plaintext in memory that CANNOT be
+// wiped: strings are immutable by contract, the compiler places literals in a
+// read-only section, and the runtime is free to copy and share them. Writing
+// through a string's backing array to "clear it afterwards" faults outright on
+// a literal and corrupts runtime internals on a heap string — jeremyhahn/go-frost#15,
+// where exactly that helper killed a process with a SIGSEGV no recover can catch.
+//
+// So there is no cleanup to add: the material has to never become a string.
+// The escaping below is byte-for-byte what encoding/json produces, which is a
+// property the tests assert against encoding/json itself rather than a claim
+// made here — a hand-rolled encoder that merely looks right would be a silent
+// protocol change wearing a security fix's clothes.
+//
+// dst is the caller's buffer and still holds the plaintext afterwards; the
+// caller owns wiping it. Reports an error, and appends nothing, when the secret
+// is nil, unset, destroyed or unopenable — a credential that cannot be read must
+// fail the response rather than emit an empty one a client would treat as valid.
 func (s *SecureString) AppendJSONString(dst []byte) ([]byte, error) {
 	var out []byte
 	ran := s.WithBytes(func(b []byte) {
@@ -29,7 +68,14 @@ func (s *SecureString) AppendJSONString(dst []byte) ([]byte, error) {
 	return out, nil
 }
 
-// Grow returns b with room for n more bytes, wiping the old array if it reallocated.
+// Grow returns b with room for n more bytes, wiping the old backing array if a
+// reallocation was needed.
+//
+// This exists because plain append() is unsafe for secret material in a way
+// that is easy to miss: when it reallocates it copies the contents into a new
+// array and ABANDONS the old one, which still holds the plaintext and which
+// nothing holds a reference to any more, so nothing can ever wipe it. Growing
+// once, deliberately, is the only way to keep every copy accounted for.
 func Grow(b []byte, n int) []byte {
 	if cap(b)-len(b) >= n {
 		return b
@@ -111,7 +157,15 @@ func safeJSONByte(c byte) bool {
 // ErrMalformedJSONString reports a value that is not a JSON string literal.
 var ErrMalformedJSONString = errors.New("secrets: malformed JSON string")
 
-// AppendUnquotedJSONString decodes a quoted JSON string from src into dst; the caller wipes dst.
+// AppendUnquotedJSONString decodes a JSON string literal from src — quotes
+// included — appending the decoded bytes to dst.
+//
+// It is the parsing counterpart, and it exists for the same reason: the normal
+// path is json.Unmarshal into a string field, which lands the credential in
+// memory that cannot be wiped before it is ever sealed. Decoding to bytes keeps
+// the material in a buffer the caller owns from the first moment it exists.
+//
+// Callers own wiping dst, and src still holds the encoded credential.
 func AppendUnquotedJSONString(dst, src []byte) ([]byte, error) {
 	if len(src) < 2 || src[0] != '"' || src[len(src)-1] != '"' {
 		return dst, ErrMalformedJSONString
@@ -187,7 +241,20 @@ var jsonLiteralKinds = map[byte]string{
 	'f': "bool",
 }
 
-// JSONStringBytes decodes a JSON string field into a wipeable buffer, rejecting wrong-typed duplicates as a string field would; null leaves it unchanged. Call Wipe when done.
+// JSONStringBytes is the decode target for a credential carried as a JSON
+// string: a struct field of this type decodes like a string field, but lands
+// the plaintext in a buffer the caller owns and wipes instead of an immutable
+// Go string.
+//
+// It replaces json.RawMessage for that job because RawMessage accepts a value
+// of any type and keeps only the last occurrence of a duplicated key, so
+// {"password":123,"password":"ok"} decoded — where the string field it stands
+// in for rejected it. encoding/json calls UnmarshalJSON once per occurrence,
+// so validating here checks every occurrence of the key, and a wrong-typed one
+// fails with the same *json.UnmarshalTypeError a string field reported.
+//
+// null leaves the value unchanged, as it does for a string field. The zero
+// value is ready to use; call Wipe when done, on success and failure alike.
 type JSONStringBytes struct {
 	b []byte
 }

@@ -55,7 +55,14 @@ func derivePackKeys(packKey []byte) (aesKey, hmacKey []byte, err error) {
 	return out[:32], out[32:], nil
 }
 
-// EncryptPackPayload returns IV(16) || AES-256-CBC(aesKey, IV, PKCS7(plaintext)) || HMAC-SHA256(hmacKey, IV||ciphertext), keys from derivePackKeys.
+// EncryptPackPayload wraps plaintext (the manifest protobuf or a single
+// sticker image) in Signal's sticker-pack envelope:
+//
+//	output = IV(16) || AES-256-CBC(aesKey, IV, PKCS7(plaintext)) || HMAC-SHA256(hmacKey, IV||ciphertext)
+//
+// where (aesKey, hmacKey) are derived from packKey via HKDF as described
+// in derivePackKeys. The returned slice is suitable for upload to the
+// sticker CDN without further wrapping.
 func EncryptPackPayload(packKey, plaintext []byte) ([]byte, error) {
 	aesKey, hmacKey, err := derivePackKeys(packKey)
 	if err != nil {
@@ -85,7 +92,10 @@ func EncryptPackPayload(packKey, plaintext []byte) ([]byte, error) {
 	return out, nil
 }
 
-// DecryptPackPayload reverses EncryptPackPayload; a bad tag (checked in constant time) is ErrInvalidEnvelope.
+// DecryptPackPayload reverses EncryptPackPayload. Useful for round-trip
+// tests and for the get-sticker download path. Returns
+// (plaintext, error). The HMAC is verified in constant time; a tag
+// mismatch returns ErrInvalidEnvelope without leaking timing.
 func DecryptPackPayload(packKey, envelope []byte) ([]byte, error) {
 	if len(envelope) < envelopeIVLen+envelopeMACLen+aes.BlockSize {
 		return nil, ErrInvalidEnvelope

@@ -1,4 +1,8 @@
-// Package memory is an in-process cache.Client for tests, `make dev` and single-instance deployments; it does not scale like Redis.
+// Package memory provides an in-process implementation of cache.Client.
+// It is intended for unit tests, `make dev`, and any deployment that does
+// not need cross-instance coordination. It is NOT a drop-in replacement
+// for Redis in production — pub/sub and atomic script execution are
+// serialized through a single mutex and therefore do not scale.
 package memory
 
 import (
@@ -191,7 +195,8 @@ func (c *Client) Incr(ctx context.Context, key string) (int64, error) {
 	return c.IncrBy(ctx, key, 1)
 }
 
-// IncrBy atomically increments by delta, storing a decimal string as INCRBY does.
+// IncrBy atomically increments by delta. The value is stored as a decimal
+// string, matching Redis's INCRBY semantics.
 func (c *Client) IncrBy(ctx context.Context, key string, delta int64) (int64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -475,7 +480,11 @@ func (c *Client) HLen(ctx context.Context, key string) (int64, error) {
 
 // --- Pub/sub ----------------------------------------------------------
 
-// Publish sends to every subscriber without blocking (drops on a full buffer), under the mutex that subscription.Close uses.
+// Publish broadcasts a message to all subscribers of channel. The send is
+// non-blocking (drops on a full buffer, matching Redis's best-effort pub/sub
+// semantics), so holding the client mutex through the send loop cannot
+// deadlock and is required to serialize against subscription.Close, which
+// closes the underlying channels under the same mutex.
 func (c *Client) Publish(ctx context.Context, channel string, message []byte) (int64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -551,7 +560,10 @@ func (s *subscription) Close() error {
 
 // --- Scripts ----------------------------------------------------------
 
-// Eval is a stub: the in-memory client does not run Lua; use the redis backend for that.
+// Eval runs a Lua script. The in-memory client does not execute Lua; this
+// is a stub meant to keep tests that exercise the interface compiling. A
+// real Lua runtime would be significant scope; callers that need actual
+// Lua semantics must use the redis backend.
 func (c *Client) Eval(ctx context.Context, script string, keys []string, args ...interface{}) (interface{}, error) {
 	return nil, errors.New("cache/memory: Eval not supported; use the redis backend")
 }

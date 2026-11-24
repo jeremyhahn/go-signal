@@ -13,7 +13,11 @@ import (
 // Compile-time interface satisfaction check.
 var _ jobs.Store = (*MemoryJobsStore)(nil)
 
-// MemoryJobsStore implements jobs.Store in memory; claimedAt records when each Running row was claimed, for RecoverStale.
+// MemoryJobsStore implements jobs.Store with an in-process map.
+// claimedAt tracks the wall-clock at which each Running row was
+// claimed; RecoverStale uses it to re-queue rows whose worker
+// crashed or otherwise never reported completion. Rows in a state
+// other than Running carry the zero value.
 type MemoryJobsStore struct {
 	mu        sync.Mutex
 	rows      map[string]*jobs.Job
@@ -53,7 +57,10 @@ func (s *MemoryJobsStore) Enqueue(_ context.Context, job *jobs.Job) error {
 	return nil
 }
 
-// ClaimDue moves due Pending jobs of the given types (all when empty) to Running and timestamps the claim.
+// ClaimDue selects pending jobs whose FireAt <= now and transitions
+// them to Running. When types is non-empty, only rows whose Type is
+// in the set are eligible. Each claim is timestamped so RecoverStale
+// can detect rows whose worker died mid-execution.
 func (s *MemoryJobsStore) ClaimDue(_ context.Context, now time.Time, limit int, types ...string) ([]*jobs.Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -142,7 +149,10 @@ func (s *MemoryJobsStore) ResetToPending(_ context.Context, id string, fireAt ti
 	return nil
 }
 
-// RecoverStale re-queues Running rows claimed before olderThan, or with no claim time, and returns the count.
+// RecoverStale re-queues Running rows whose claim is older than
+// olderThan. Returns the number of rows transitioned. A Running
+// row with no recorded claim time (zero) is treated as stale —
+// that state can only occur after an unclean shutdown.
 func (s *MemoryJobsStore) RecoverStale(_ context.Context, olderThan time.Time) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

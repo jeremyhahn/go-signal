@@ -15,8 +15,22 @@ var envelopeTypes = map[EnvelopeType]textsecurepb.Envelope_Type{
 	EnvelopeTypePlaintextContent:   textsecurepb.Envelope_PLAINTEXT_CONTENT,
 }
 
-// MarshalEnvelope encodes the textsecure.Envelope protobuf clients read from PUT /api/v1/message; types without a wire value are rejected.
-// ID, DestinationDevice, DestinationIdentityType and SharedMrmRecipientView are not sent; ephemeral is never set.
+// MarshalEnvelope serializes an envelope into the `textsecure.Envelope`
+// protobuf every Signal client expects in the body of
+// `PUT /api/v1/message`. This is the only wire form of an envelope: a client
+// parses these bytes with the generated protobuf reader, so any other
+// encoding — JSON in particular — surfaces as a parse failure rather than as
+// an empty inbox.
+//
+// An envelope whose type has no wire representation is rejected rather than
+// downgraded; see envelopeTypes.
+//
+// Not every field of the internal Envelope crosses the wire. ID is the
+// WebSocket request identifier, not envelope content; DestinationDevice and
+// DestinationIdentityType are routing state the server has already acted on
+// by this point; and SharedMrmRecipientView is resolved server-side into
+// Content before delivery. `ephemeral` is never set, matching Java, which
+// clears it in WebSocketConnection.serializeMessage.
 func MarshalEnvelope(env *Envelope) ([]byte, error) {
 	if env == nil {
 		return nil, &NilEnvelopeError{}

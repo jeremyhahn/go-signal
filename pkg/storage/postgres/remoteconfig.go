@@ -9,7 +9,10 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/remoteconfig"
 )
 
-// RemoteConfigStore implements remoteconfig.Store on the remote_config table.
+// RemoteConfigStore persists feature-flag rows to the
+// `remote_config` table. Implements remoteconfig.Store. The
+// dynamic-config manager polls GetAll on its refresh interval; the
+// admin REST surface drives Put/Delete.
 type RemoteConfigStore struct {
 	q Querier
 }
@@ -62,7 +65,9 @@ func (s *RemoteConfigStore) GetAll(ctx context.Context) ([]remoteconfig.Config, 
 	return out, nil
 }
 
-// Put inserts or replaces the row for cfg.Name; an empty Name is the same error as the memory store's.
+// Put inserts or replaces a row keyed by cfg.Name. Empty Name is
+// rejected with the same error type the memory store uses so callers
+// (admin REST handler) get a consistent shape across backends.
 func (s *RemoteConfigStore) Put(ctx context.Context, cfg remoteconfig.Config) error {
 	if cfg.Name == "" {
 		return &remoteconfig.InvalidConfigError{Reason: "Name is required"}

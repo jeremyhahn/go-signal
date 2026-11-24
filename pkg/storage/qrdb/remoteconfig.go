@@ -14,7 +14,10 @@ import (
 // row set in lexicographic order.
 const remoteConfigKeyPrefix = "remoteconfig:"
 
-// RemoteConfigStore implements remoteconfig.Store on a KVStore; the "file" backend uses it to persist config edits.
+// RemoteConfigStore is a KVStore-backed implementation of
+// remoteconfig.Store. Used by the "file" storage backend in
+// cmd/signald so file-mode deployments can persist live config edits
+// across restarts.
 type RemoteConfigStore struct {
 	kv KVStore
 }

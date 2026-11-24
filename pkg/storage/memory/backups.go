@@ -19,7 +19,10 @@ var (
 	_ backups.RedeemedReceiptsStore = (*MemoryRedeemedReceiptsStore)(nil)
 )
 
-// MemoryBackupStore is an in-memory [backups.Store] keyed by the hashed backup-id, for tests and dev.
+// MemoryBackupStore is an in-memory implementation of [backups.Store]
+// used by tests and single-node dev deployments. State is keyed by the
+// hashed backup-id (SHA-256-truncated-to-16 of the raw BackupID) to mirror
+// the DynamoDB/qrdb/postgres backends.
 type MemoryBackupStore struct {
 	mu      sync.RWMutex
 	entries map[string]*backupEntry // hex(hashedBackupID) → metadata
@@ -295,7 +298,10 @@ func (s *MemoryBackupStore) ListBackupAttributes(_ context.Context, _ int, fn fu
 	return nil
 }
 
-// GetExpiredBackups streams rows with lastRefresh < purgeTime: ExpireAll when media is also stale, else ExpireMedia; pending deletions are ExpireGarbageCollection.
+// GetExpiredBackups streams every row whose lastRefresh < purgeTime to fn.
+// A row whose lastMediaRefresh is also < purgeTime is reported as
+// ExpireAll; otherwise as ExpireMedia. Pending-deletion rows are emitted
+// as ExpireGarbageCollection.
 func (s *MemoryBackupStore) GetExpiredBackups(
 	_ context.Context,
 	_ int,

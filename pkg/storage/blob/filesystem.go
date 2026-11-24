@@ -1,4 +1,9 @@
-// Package blob provides [backups.BlobStore] implementations: a local-filesystem store for development and tests.
+// Package blob provides [backups.BlobStore] implementations.
+//
+// The current implementation is a single-root local-filesystem store,
+// intended for development and integration tests. Production deployments
+// substitute an S3 / GCS / Azure adapter constructed alongside the rest
+// of the storage layer in cmd/signald/start.go.
 package blob
 
 import (
@@ -18,7 +23,14 @@ import (
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
-// FilesystemStore is a [backups.BlobStore] in one local directory tree, keys as slash-separated paths; single node only.
+// FilesystemStore is a [backups.BlobStore] backed by a single local
+// directory tree. All objects live as files under root; keys are
+// path-segmented (slashes preserved). Listing is in-memory and bounded
+// by the configurable Limit on individual calls.
+//
+// Suitable for unit tests and single-node dev/self-host deployments where
+// "the CDN" is just a directory on disk. Not safe across machine
+// boundaries.
 type FilesystemStore struct {
 	root      string
 	cdnNumber int
@@ -61,7 +73,10 @@ func (s *FilesystemStore) pathFor(key string) (string, error) {
 	return filepath.Join(s.root, key), nil
 }
 
-// GenerateUpload implements [backups.BlobStore] with a file:// URL.
+// GenerateUpload implements [backups.BlobStore]. The "upload form" for
+// filesystem-backed blobs is a file:// URL the client (i.e. a test) can
+// open and write to directly. Real CDNs return a signed PUT URL; the
+// shape of the response is identical.
 func (s *FilesystemStore) GenerateUpload(_ context.Context, key string) (*backups.UploadDescriptor, error) {
 	full, err := s.pathFor(key)
 	if err != nil {
@@ -85,7 +100,12 @@ func (s *FilesystemStore) ReadHeaders(_ context.Context, _ string) (map[string]s
 	return map[string]string{}, nil
 }
 
-// Copy implements [backups.BlobStore]: it writes IV || AES-256-CBC ciphertext || HMAC-SHA256 tag of the source to destPath; [*SourceNotFoundError] or [*InvalidLengthError] on a bad source.
+// Copy implements [backups.BlobStore]. Reads the source object, AES-256-CBC
+// encrypts under params.EncryptionKey with a fresh random IV, computes an
+// HMAC-SHA256 tag with params.MACKey over (IV || ciphertext), then writes
+// IV || ciphertext || tag to destPath. Returns [*SourceNotFoundError] if
+// the source is missing and [*InvalidLengthError] if the read returns a
+// length different from sourceLength.
 func (s *FilesystemStore) Copy(
 	_ context.Context,
 	_ int, // sourceCDN: ignored — filesystem store treats all CDNs as the same root
@@ -147,7 +167,10 @@ func (s *FilesystemStore) Delete(_ context.Context, path string) (int64, error) 
 	return info.Size(), nil
 }
 
-// List implements [backups.BlobStore]: up to limit entries (default 1000) under prefix after cursor.
+// List implements [backups.BlobStore]. Walks the prefix directory,
+// returning at most limit entries (defaulting to 1000 when zero/negative).
+// Cursor is the key of the last entry returned by a previous call; nil
+// starts from the beginning.
 func (s *FilesystemStore) List(_ context.Context, prefix string, cursor *string, limit int) (*backups.BlobListResult, error) {
 	if limit <= 0 {
 		limit = 1000

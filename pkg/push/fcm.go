@@ -86,7 +86,10 @@ type FCMProvider struct {
 	now func() time.Time
 }
 
-// NewFCMProvider parses and validates the service-account JSON without network calls; ProjectID may come from the JSON.
+// NewFCMProvider parses the service-account JSON, validates the private key,
+// and returns a ready-to-use provider. No network calls are made until the
+// first Send. ProjectID may be empty when the service-account JSON embeds a
+// project_id field.
 func NewFCMProvider(cfg FCMConfig) (*FCMProvider, error) {
 	var sa serviceAccount
 	if err := json.Unmarshal(cfg.ServiceAccountJSON, &sa); err != nil {

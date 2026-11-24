@@ -46,7 +46,10 @@ func NewUsernameStore(kv KVStore) *UsernameStore {
 	return &UsernameStore{kv: kv, now: time.Now, random: rand.Read}
 }
 
-// ReserveHash reserves the first unclaimed hash for uuid with a token, expiring after reservationTTL.
+// ReserveHash attempts to reserve one of the provided hashes for the account
+// UUID. Semantics match MemoryUsernameStore: the first unclaimed candidate
+// wins, a reservation token is generated, and the entry expires after
+// reservationTTL.
 func (s *UsernameStore) ReserveHash(ctx context.Context, uuid string, hashes [][]byte) ([]byte, string, error) {
 	if uuid == "" {
 		return nil, "", &usernames.InvalidArgumentError{Field: "uuid", Message: "empty UUID"}
