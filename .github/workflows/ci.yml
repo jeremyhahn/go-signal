@@ -134,6 +134,7 @@ jobs:
         run: |
           python3 -I .github/workflows/testdata/code-review-v51213-tests.py .github/workflows/code-review.yml
           python3 -I .github/workflows/testdata/code-review-v51214-tests.py .github/workflows/code-review.yml
+          python3 -I .github/workflows/testdata/code-review-v51215-tests.py .github/workflows/code-review.yml
 
       # v1.32 (2026-11-08, Company Agent m2098 item 2, InfoSec finding): the
       # internal-name gate. Its patterns are internal values, so they never
