@@ -73,7 +73,7 @@ jobs:
   integration-test:
     name: Integration Tests
     runs-on: ubuntu-latest
-    # Measured on vm-host-1, 2026-08-14: api 3864s (64m) + cli 690s (11.5m)
+    # Measured 2026-08-14: api 3864s (64m) + cli 690s (11.5m)
     # + image build, ~86m wall on an idle workstation. 150 leaves headroom for a
     # shared runner without being fiction — an honest slow gate beats a fast
     # lying one. It must also exceed the suite's own `go test -timeout 120m`, or

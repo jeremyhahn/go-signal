@@ -107,6 +107,6 @@ require (
 )
 
 // Cross-repo dependency resolution for local development is handled by the
-// parent go.work `use` directives (single source of truth: /mnt/vm-host-1).
+// parent go.work `use` directives.
 // No cross-repo local-path replaces are committed here; the `require` versions
 // are what GitHub builds use once those modules are published.
