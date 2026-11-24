@@ -139,7 +139,7 @@ simply never moved out of the unreleased section.
 ### Changed
 
 - REST `Server` fields are now `pkg/service` interfaces rather than concrete managers, per the service-layer convention. (`pkg/api/rest/server.go`)
-- `go.mod` now includes `replace` directives pointing local module dependencies (`go-libsignal`, `go-qrdb`, `go-qrdb/sdk/go`, `go-quicraft`) at their `/mnt/vm-host-1/...` paths.
+- `go.mod` now includes `replace` directives pointing local module dependencies (`go-libsignal`, `go-qrdb`, `go-qrdb/sdk/go`, `go-quicraft`) at local checkout paths.
 
 ### Docs scaffold (Phase 0)
 
