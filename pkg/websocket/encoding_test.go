@@ -10,11 +10,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/messages"
 )
 
-// decodeBody reverses what encodeEnvelopeBody produces and parses the result
-// the way a client does — as a textsecure.Envelope protobuf. These tests
-// previously parsed it as JSON, which is precisely how the wire-format defect
-// went unnoticed, so parsing as protobuf here is the point rather than an
-// implementation detail.
+// decodeBody decodes encodeEnvelopeBody output as a textsecure.Envelope protobuf, as clients do.
 func decodeBody(t *testing.T, encoded string) *textsecurepb.Envelope {
 	t.Helper()
 	if encoded == "" {
@@ -100,9 +96,7 @@ func TestEncodeEnvelopeBody_OutputIsValidBase64(t *testing.T) {
 }
 
 func TestEncodeEnvelopeBody_AllEnvelopeTypes(t *testing.T) {
-	// Every type the wire protocol declares maps to its own enum value.
-	// EnvelopeTypeKeyExchange is deliberately absent: field 2 is reserved in
-	// textsecure.proto, so it is sent as UNKNOWN — asserted separately below.
+	// Each declared type maps to its own enum value; KeyExchange (reserved field 2) is checked separately below.
 	want := map[messages.EnvelopeType]textsecurepb.Envelope_Type{
 		messages.EnvelopeTypeCiphertext:         textsecurepb.Envelope_CIPHERTEXT,
 		messages.EnvelopeTypePrekeyBundle:       textsecurepb.Envelope_PREKEY_BUNDLE,
@@ -123,9 +117,7 @@ func TestEncodeEnvelopeBody_AllEnvelopeTypes(t *testing.T) {
 	}
 }
 
-// A reserved type has no wire representation, so the body cannot be built and
-// the caller drops the delivery. Encoding it as UNKNOWN would hand the client
-// a different kind of message than the sender sent.
+// A reserved type has no wire form, so the body is not built and the delivery is dropped.
 func TestEncodeEnvelopeBody_ReservedTypeYieldsNoBody(t *testing.T) {
 	got := encodeEnvelopeBody(&messages.Envelope{
 		ID:              1,

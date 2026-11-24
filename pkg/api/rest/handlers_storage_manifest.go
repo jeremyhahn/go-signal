@@ -18,23 +18,7 @@ const storageContentType = "application/x-protobuf"
 // maxStorageBodyBytes bounds a storage write/read request body.
 const maxStorageBodyBytes = 8 * 1024 * 1024
 
-// handleGetStorageManifestVersion is the entry point for all storage-service
-// requests. When no manifest store is configured it returns 204 (the safe
-// "nothing to sync" stub, used when an external storage-service is wired).
-// When a store IS configured it serves the real Signal storage protocol:
-// manifest fetch, write operations, and reads.
-//
-// The protocol is validated against the canonical Signal client library
-// (libsignal-service-java): the StorageService.proto message field numbers and
-// the PushServiceSocket paths/methods match exactly —
-//   - GET  /v1/storage/manifest                    → current manifest
-//   - GET  /v1/storage/manifest/version/{version}  → manifest if newer, else 204
-//   - PUT  /v1/storage                             → WriteOperation
-//   - PUT  /v1/storage/read                        → ReadOperation → StorageItems
-//
-// Routing: the registered routes funnel manifest GETs, write PUTs, and read
-// PUTs here; this handler dispatches on method and path. All routes are wrapped
-// with account auth, so the authenticated account UUID scopes every operation.
+// handleGetStorageManifestVersion dispatches the storage protocol (manifest GETs, write and read PUTs), scoped to the authenticated account; 204 when no store is configured.
 func (s *Server) handleGetStorageManifestVersion(w http.ResponseWriter, r *http.Request) {
 	if s.secureStorage == nil || !s.secureStorage.StorageEnabled() {
 		// Storage-service disabled: report nothing to sync.

@@ -16,26 +16,13 @@ type VerificationConfig struct {
 	// the stub transport. It MUST be left empty in production configurations.
 	FixedCode string `yaml:"fixedCode"`
 
-	// RemoteAddr is the gRPC host:port of an external registration-service
-	// binary. When non-empty, signald opens a gRPC channel to that address
-	// and the verification subsystem runs as a thin client; the local
-	// session store and transport are NOT instantiated. When empty,
-	// signald embeds the verification stack in-process (monolithic
-	// topology). The chat-server captcha gate runs on the signald side
-	// either way; see pkg/registration/sessionshim.
+	// RemoteAddr is an external registration-service's gRPC host:port; set, signald is a thin client, empty, it runs verification in-process.
 	RemoteAddr string `yaml:"remoteAddr"`
 
-	// RemoteInsecure permits a plaintext gRPC channel to RemoteAddr.
-	// Required for development / docker-compose; production deployments
-	// must leave this false and supply mTLS via dial options that are
-	// wired through the binary entry-point (registrationServiceDialOptions
-	// in cmd/signald/start.go).
+	// RemoteInsecure allows plaintext gRPC to RemoteAddr; development only.
 	RemoteInsecure bool `yaml:"remoteInsecure"`
 
-	// GRPCListen is the host:port the standalone registration-service
-	// binary binds its gRPC listener to. Defaults to
-	// DefaultVerificationGRPCListen. Only consumed by
-	// cmd/registration-service; signald ignores this field.
+	// GRPCListen is cmd/registration-service's gRPC listen address (default DefaultVerificationGRPCListen); signald ignores it.
 	GRPCListen string `yaml:"grpcListen"`
 }
 

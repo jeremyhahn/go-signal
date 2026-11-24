@@ -67,8 +67,7 @@ func TestVerifyAttestation_ChallengeMismatchRejected(t *testing.T) {
 func TestVerifyAttestation_RPIDMismatchRejected(t *testing.T) {
 	f := newFakeAppAttest(t)
 	att := f.buildAttestation(t, "c")
-	// Verifier configured with a DIFFERENT bundle ID must reject the
-	// fixture's RP-ID hash.
+	// A verifier with a different bundle ID must reject the fixture's RP ID hash.
 	v, err := NewVerifier(Config{TeamID: f.teamID, BundleID: "WRONG", RootCAPEM: f.rootPEM})
 	if err != nil {
 		t.Fatalf("NewVerifier: %v", err)
@@ -158,9 +157,7 @@ func TestVerifyAssertion_RPIDMismatch(t *testing.T) {
 func TestManager_FullAttestationFlow(t *testing.T) {
 	f := newFakeAppAttest(t)
 	const challenge = "deterministic-challenge"
-	// Build the attestation FIRST so f.rootPEM is populated before the
-	// verifier is constructed against it. fixtureVerifier reads rootPEM
-	// during NewVerifier; ordering matters.
+	// Build the attestation first: NewVerifier reads f.rootPEM.
 	att := f.buildAttestation(t, challenge)
 
 	v := fixtureVerifier(t, f)
@@ -220,8 +217,7 @@ func TestManager_DuplicatePublicKeyAcrossAccountsRejected(t *testing.T) {
 		Keys:       keysStore,
 	})
 	ctx := context.Background()
-	// Seed the fixture's public key DER under a DIFFERENT account so
-	// the second account's registration trips ErrDuplicatePublicKey.
+	// Seed the key under another account so this registration trips ErrDuplicatePublicKey.
 	pubDER, err := f.leafKey.PublicKey.Bytes()
 	if err == nil {
 		// PublicKey.Bytes returns SEC1 bytes; we need PKIX DER for the

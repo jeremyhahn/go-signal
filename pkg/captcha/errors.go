@@ -11,10 +11,7 @@ func (e *ChallengeFailedError) Error() string {
 	return "challenge failed: " + e.Message
 }
 
-// CaptchaUnavailableError indicates the server has no CAPTCHA backend
-// configured, so a submission can be neither accepted nor rejected on its
-// merits. Callers map it to HTTP 503: refusing the request is correct, and
-// silently accepting an unverifiable token would defeat the challenge.
+// CaptchaUnavailableError means no captcha backend is configured; callers answer 503.
 type CaptchaUnavailableError struct{}
 
 // Error returns a human-readable description.
@@ -33,9 +30,7 @@ func (e *InvalidChallengeTypeError) Error() string {
 	return "invalid challenge type: " + e.Type
 }
 
-// CaptchaVerificationFailedError is returned by CaptchaManager when the
-// upstream CAPTCHA service rejects the token or the score falls below the
-// configured threshold.
+// CaptchaVerificationFailedError means the upstream rejected the token or its score is below the threshold.
 type CaptchaVerificationFailedError struct {
 	// ErrorCodes holds the provider-specific codes returned by the upstream
 	// service. Empty when the failure is due to a low score.
@@ -54,8 +49,7 @@ func (e *CaptchaVerificationFailedError) Error() string {
 	return msg
 }
 
-// CaptchaNetworkError indicates that the HTTP request to the upstream CAPTCHA
-// service could not be completed.
+// CaptchaNetworkError means the request to the upstream captcha service failed.
 type CaptchaNetworkError struct {
 	// Provider names the CAPTCHA backend ("hcaptcha", "recaptcha", …).
 	Provider string
@@ -70,8 +64,7 @@ func (e *CaptchaNetworkError) Error() string {
 // Unwrap returns the underlying transport error.
 func (e *CaptchaNetworkError) Unwrap() error { return e.Cause }
 
-// CaptchaParseError indicates that the response body returned by the upstream
-// CAPTCHA service could not be decoded.
+// CaptchaParseError means the upstream response could not be decoded.
 type CaptchaParseError struct {
 	// Provider names the CAPTCHA backend.
 	Provider string

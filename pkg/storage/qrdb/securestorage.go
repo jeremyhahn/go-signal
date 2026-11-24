@@ -10,14 +10,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/securestorage"
 )
 
-// Key layout:
-//
-//	ss:{accountUUID}:manifest      → JSON StorageManifest
-//	ss:{accountUUID}:item:{b64key} → JSON StorageItem
-//
-// Item keys are client-supplied bytes; we base64-encode them to keep them
-// safe to use inside key strings (they may contain binary / non-printable
-// bytes). DeleteAll scans "ss:{accountUUID}:" to clear everything.
+// Keys: ss:{accountUUID}:manifest is the manifest JSON, ss:{accountUUID}:item:{b64key} an item; DeleteAll scans ss:{accountUUID}:.
 
 const (
 	secureStoragePrefix = "ss:"

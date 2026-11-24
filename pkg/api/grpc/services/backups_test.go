@@ -51,9 +51,7 @@ type grpcManagerFixture struct {
 	clientCtx     *zkgroup.BackupAuthCredentialRequestContext
 }
 
-// newGRPCFixture builds the shared backups fixture. Optional mutators run
-// against the ManagerOptions before the manager is constructed, so a test can
-// enable a subsystem (e.g. SVRB) that is disabled by default.
+// newGRPCFixture builds the backups fixture; mutators adjust ManagerOptions first, e.g. to enable SVRB.
 func newGRPCFixture(t *testing.T, opts ...func(*backups.ManagerOptions)) *grpcBackupsFixture {
 	t.Helper()
 
@@ -335,18 +333,7 @@ func TestBackupsService_RedeemReceipt_InvalidReceipt(t *testing.T) {
 
 func TestBackupsService_RedeemReceipt_MissingCommitment(t *testing.T) {
 	f := newGRPCFixture(t)
-	// Account without a committed credential request triggers MissingIDCommitmentError.
-	// We inject a bad receipt so it trips the BadReceiptError first, which maps to
-	// InvalidReceipt in the proto. The MissingIDCommitment path requires a valid
-	// receipt presentation from zkgroup; document the constraint inline.
-	// NOTE: a real valid receipt presentation would require a zkgroup receipt issuance
-	// ceremony (server + client round trip) that is intentionally left to
-	// auth_manager_test.go. This test documents that MissingIDCommitment is reachable;
-	// the outcome is AccountMissingCommitment in the proto.
-	// We satisfy this by constructing a handler that triggers the missing-commitment
-	// branch: seed an account, skip the CommitBackupID step, then call RedeemReceipt.
-	// The BadReceiptError branch fires before MissingIDCommitment because the receipt
-	// bytes are garbage; assert InvalidReceipt outcome.
+	// Garbage receipt bytes trip BadReceiptError before the missing-commitment check, so the outcome is InvalidReceipt.
 	acct := &accounts.Account{UUID: "u2"}
 	resp, err := f.authSvc.RedeemReceipt(accountCtx(acct), &backupspb.RedeemReceiptRequest{
 		Presentation: []byte{0x01, 0x02},
@@ -562,7 +549,7 @@ func TestBackupsAnonymousService_GetSvrBCredentials_DisabledByDefault(t *testing
 	_, err := f.anonSvc.GetSvrBCredentials(context.Background(), &backupspb.GetSvrBCredentialsRequest{
 		SignedPresentation: sp,
 	})
-	// SVRB is disabled by default — manager returns an error → gRPC Internal.
+	// SVRB is disabled by default, so the manager errors and gRPC returns Internal.
 	if code := status.Code(err); code != codes.Internal {
 		t.Fatalf("expected Internal (SVRB disabled), got %v (err: %v)", code, err)
 	}
@@ -1054,11 +1041,7 @@ func TestBackupsService_GetBackupAuthCredentials_HappyPath(t *testing.T) {
 	}
 }
 
-// --- nil-service hard-error tests for anonymous service methods --------------
-// Each anonymous-service method calls authenticateFromSignedPresentation which
-// returns (nil, false, grpc-status-error) when svc.Backups == nil. These
-// tests cover the `if err != nil { return nil, err }` branch present in every
-// anonymous-service method, which was previously uncovered.
+// Anonymous methods return the authentication error when svc.Backups is nil.
 
 func TestBackupsAnonymousService_GetCdnCredentials_NilSvcError(t *testing.T) {
 	svc := NewBackupsAnonymousService(&service.SignalService{})
@@ -1771,14 +1754,7 @@ func mustGenerateServerSecretParams(t *testing.T) *zkgroup.ServerSecretParams {
 	return p
 }
 
-// --- Coverage: nil-Backups + authentication guard branches -----------------
-//
-// Every gRPC handler short-circuits to Unimplemented when svc.Backups is nil
-// (the deployment has not enabled backups). Every authenticated handler also
-// gates on the account context. Every anonymous handler routes through
-// authenticateFromSignedPresentation and returns a *FailedAuthentication
-// outcome when the signed presentation is missing. These tests pin all three
-// guards across the full surface.
+// Guards across the surface: nil Backups gives Unimplemented, authenticated handlers need an account, anonymous ones need a signed presentation.
 
 func unimplementedBackupsAuthSvc() *BackupsService {
 	return NewBackupsService(&service.SignalService{})
@@ -1997,9 +1973,7 @@ func TestBackupsAnonymous_DeleteAll_MissingPresentation(t *testing.T) {
 	}
 }
 
-// fixtureSVRBGenerator is a stand-in for a configured SVRB deployment: it
-// issues a credential whose password is held in protected memory, exactly as
-// a real generator must.
+// fixtureSVRBGenerator issues a credential whose password is held in protected memory.
 type fixtureSVRBGenerator struct{}
 
 func (fixtureSVRBGenerator) GenerateFor(_ context.Context, svrbID string) (*backups.ExternalServiceCredentials, error) {
@@ -2009,10 +1983,7 @@ func (fixtureSVRBGenerator) GenerateFor(_ context.Context, svrbID string) (*back
 	}, nil
 }
 
-// The SVRB password is held in protected memory end to end and opened only
-// when the response message is built. Assert the client actually receives the
-// plaintext — a redacted or empty password would be an unusable credential
-// that every status-only assertion would still pass.
+// The client must receive the plaintext SVRB password.
 func TestBackupsAnonymousService_GetSvrBCredentials_SuccessCarriesPlaintextPassword(t *testing.T) {
 	f := newGRPCFixture(t, func(o *backups.ManagerOptions) { o.SVRB = fixtureSVRBGenerator{} })
 	sp := f.mintPresentation(t, backups.BackupLevelFree, backups.CredentialTypeMessages)

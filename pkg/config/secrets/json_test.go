@@ -110,9 +110,7 @@ func TestAppendJSONStringFromBytes_AppendsToExistingBuffer(t *testing.T) {
 	}
 }
 
-// Round trip: whatever encoding/json produces, the byte decoder must recover
-// the original bytes exactly — including for input encoding/json itself alters
-// (invalid UTF-8 becomes U+FFFD before it is ever encoded).
+// The byte decoder must recover exactly what encoding/json would.
 func TestAppendUnquotedJSONString_RoundTripsEncodingJSON(t *testing.T) {
 	for _, s := range jsonCorpus {
 		t.Run(fmt.Sprintf("%q", s), func(t *testing.T) {
@@ -124,9 +122,7 @@ func TestAppendUnquotedJSONString_RoundTripsEncodingJSON(t *testing.T) {
 			if err != nil {
 				t.Fatalf("AppendUnquotedJSONString: %v", err)
 			}
-			// encoding/json replaces invalid UTF-8 on the way out, so the
-			// fixed point is what encoding/json ITSELF decodes back, not the
-			// original bytes.
+			// encoding/json replaces invalid UTF-8, so compare with what it decodes back.
 			var want string
 			if err := json.Unmarshal(encoded, &want); err != nil {
 				t.Fatalf("json.Unmarshal: %v", err)
@@ -216,16 +212,7 @@ func TestSecureString_AppendJSONString_UnreadableFailsClosed(t *testing.T) {
 	}
 }
 
-// TestAppendJSONStringFromBytes_GrowsOnceSoNoPlaintextIsAbandoned measures the
-// property that has no behavioural signature: the output bytes are identical
-// whether or not the buffer is grown up front, so every test above passes
-// either way. What differs is how many times append() reallocates — and each
-// reallocation abandons an array holding part of the escaped plaintext that
-// nothing holds a reference to any more, so nothing can wipe it.
-//
-// One allocation is the single deliberate Grow. The input is chosen so every
-// byte escapes to \u00XX, which is maximum growth pressure and therefore the
-// case where an ungrown append reallocates most.
+// TestAppendJSONStringFromBytes_GrowsOnceSoNoPlaintextIsAbandoned: one allocation even when every byte escapes.
 func TestAppendJSONStringFromBytes_GrowsOnceSoNoPlaintextIsAbandoned(t *testing.T) {
 	src := bytes.Repeat([]byte{0x01}, 512)
 	allocs := testing.AllocsPerRun(50, func() {
@@ -238,17 +225,7 @@ func TestAppendJSONStringFromBytes_GrowsOnceSoNoPlaintextIsAbandoned(t *testing.
 	}
 }
 
-// The round-trip test above can never reach this: it feeds the decoder
-// encoding/json's OWN output, and encoding/json escapes invalid UTF-8 to
-// `�` on the way out, so the decoder only ever sees clean ASCII. A
-// payload that did not come from encoding/json — a hand-written body, another
-// language's serializer — can carry raw invalid UTF-8 inside a string literal,
-// and encoding/json accepts it, coercing each bad byte to U+FFFD.
-//
-// A decoder that copied those bytes through verbatim would seal DIFFERENT
-// credential bytes than the encoding/json path sealed before this change,
-// while still parsing successfully. That is a silent protocol divergence, and
-// the acceptance criterion for this work is that parsing is unchanged.
+// Raw invalid UTF-8 inside a literal must decode to U+FFFD, as encoding/json does.
 func TestAppendUnquotedJSONString_CoercesRawInvalidUTF8LikeEncodingJSON(t *testing.T) {
 	for _, in := range []string{
 		"\"a\xffb\"",           // lone invalid byte
@@ -285,10 +262,7 @@ func TestAppendUnquotedJSONString_MatchesEncodingJSONOnRandomRawBytes(t *testing
 	for i := 0; i < 4000; i++ {
 		body := make([]byte, rng.Intn(12))
 		for j := range body {
-			// The full byte range, INCLUDING raw quotes, raw control bytes and
-			// backslashes. Excluding them — as this generator did originally —
-			// meant the only inputs ever produced were ones both decoders
-			// accept, so the parity check above had nothing to bite on.
+			// The full byte range, including raw quotes, control bytes and backslashes.
 			body[j] = byte(rng.Intn(256))
 		}
 		in := append(append([]byte{'"'}, body...), '"')
@@ -296,10 +270,7 @@ func TestAppendUnquotedJSONString_MatchesEncodingJSONOnRandomRawBytes(t *testing
 		stdlibErr := json.Unmarshal(in, &viaStdlib)
 		got, err := AppendUnquotedJSONString(nil, in)
 
-		// Parity in BOTH directions. Skipping the inputs stdlib rejects — which
-		// this test did originally — makes it blind to OVER-acceptance, and
-		// over-acceptance is the worse divergence: it seals credential bytes
-		// from a payload the standard decoder would have refused outright.
+		// Parity in both directions: reject exactly what the standard decoder rejects.
 		if stdlibErr != nil {
 			if err == nil {
 				t.Fatalf("input %q: stdlib rejected it (%v) but this decoder accepted it as % x",
@@ -316,14 +287,7 @@ func TestAppendUnquotedJSONString_MatchesEncodingJSONOnRandomRawBytes(t *testing
 	}
 }
 
-// The decoder must grow its destination ONCE, for the same reason the encoder
-// must: a reallocation partway abandons an array already holding decoded
-// credential bytes, and nothing can reach it to wipe it.
-//
-// This is not hypothetical for the decoder. Decoding usually shrinks, so a
-// capacity of len(src) looks sufficient — but an invalid UTF-8 byte expands to
-// the three bytes of U+FFFD, so the output can exceed the input on exactly the
-// malformed payload the coercion above was added to accept.
+// The decoder grows its destination once, even for invalid UTF-8 that expands.
 func TestAppendUnquotedJSONString_GrowsOnceSoNoPlaintextIsAbandoned(t *testing.T) {
 	in := []byte("\"" + strings.Repeat("\xff", 64) + "\"")
 	allocs := testing.AllocsPerRun(100, func() {

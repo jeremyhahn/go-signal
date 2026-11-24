@@ -15,11 +15,7 @@ type RemoteClient interface {
 	Distinguished(ctx context.Context, req *ktpb.DistinguishedRequest) (*ktpb.DistinguishedResponse, error)
 }
 
-// KeyTransparencyManager fronts the optional remote
-// key-transparency service for signald's REST handlers. When no
-// remote is configured the manager returns stub responses
-// (monolithic deployment); when a remote is wired the REST
-// handlers' inbound calls are proxied through.
+// KeyTransparencyManager proxies REST calls to a remote key-transparency service, or returns stubs when none is configured.
 type KeyTransparencyManager struct {
 	logger *slog.Logger
 	remote RemoteClient
@@ -42,11 +38,7 @@ func (m *KeyTransparencyManager) Search(ctx context.Context, req *SearchRequest)
 	if m.remote == nil {
 		return &SearchResponse{Token: []byte{}}, nil
 	}
-	// The REST layer's token field is opaque pass-through; the proper
-	// JSON→proto mapping (ACI, ACI identity key, consistency
-	// parameters) lands in the proof-generation follow-up. The proto
-	// requires a 16-byte ACI so we send a zero placeholder until the
-	// REST layer carries one.
+	// The REST token is opaque; the proto needs a 16-byte ACI, so send zeros.
 	_ = req
 	pbResp, err := m.remote.Search(ctx, &ktpb.SearchRequest{
 		Aci:            make([]byte, 16),
@@ -83,9 +75,7 @@ func (m *KeyTransparencyManager) GetDistinguishedKey(ctx context.Context) (*Dist
 	return &DistinguishedKeyResponse{Key: extractToken(pbResp.GetTreeHead())}, nil
 }
 
-// extractToken pulls the first signature out of a FullTreeHead. The
-// REST layer treats the token as opaque so the chat-server-facing
-// JSON shape stays stable across the wire-format upgrade.
+// extractToken returns the first signature of a FullTreeHead as the opaque REST token.
 func extractToken(h *ktpb.FullTreeHead) []byte {
 	if h == nil {
 		return []byte{}

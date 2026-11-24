@@ -168,8 +168,7 @@ func TestNewManager_DefaultsAreApplied(t *testing.T) {
 		Store:              store,
 		Blob:               newFakeBlobStore(),
 		ServerSecretParams: params,
-		// Intentionally leave Clock, SVRB, SVRBClient, MaxQuota unset so
-		// the defaulting branches in NewManager run.
+		// Clock, SVRB, SVRBClient and MaxQuota unset, so NewManager's defaults run.
 	})
 	if mgr == nil {
 		t.Fatal("NewManager returned nil")

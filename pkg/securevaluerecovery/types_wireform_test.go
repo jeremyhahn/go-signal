@@ -8,22 +8,13 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
-// svrWireShape is the struct this credential used to be marshalled through,
-// kept HERE rather than in production because it is now an oracle, not an
-// implementation. AppendJSON builds the JSON by hand so the password never
-// becomes a Go string; this is what proves that produces the same bytes.
+// svrWireShape is the reference struct: AppendJSON must produce the same bytes.
 type svrWireShape struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
-// The acceptance criterion for #47: the JSON a client receives must be
-// identical, or this is a protocol change wearing a security fix's clothes.
-//
-// The corpus hits every escaping branch — a password containing a quote, a
-// backslash, an angle bracket or a control byte is exactly where a hand-built
-// encoder and encoding/json would diverge, and exactly the input nobody tries
-// by hand.
+// The JSON must be byte-identical; the corpus hits every escaping branch.
 func TestSVRCredentials_AppendJSON_ByteIdenticalToTheOldStructPath(t *testing.T) {
 	passwords := []string{
 		"hunter2",
@@ -66,8 +57,7 @@ func TestSVRCredentials_AppendJSON_ByteIdenticalToTheOldStructPath(t *testing.T)
 	}
 }
 
-// AppendJSON must APPEND, not overwrite: it writes into a buffer the caller
-// owns and may already have written into.
+// AppendJSON must append to, not overwrite, the caller's buffer.
 func TestSVRCredentials_AppendJSON_AppendsToExistingBuffer(t *testing.T) {
 	c := &SVRCredentials{Username: "u", Password: secrets.MustNewSecureString("pw")}
 	defer c.Destroy()

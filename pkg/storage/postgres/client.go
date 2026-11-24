@@ -116,10 +116,7 @@ func (c *Client) Close() {
 	}
 }
 
-// WithTx runs fn inside a transaction. The transaction is rolled back if fn
-// returns an error and committed otherwise. This is the path domain stores
-// use for the multi-statement operations Java uses TransactWriteItems for
-// (e.g., account create with phone-number constraint, change-number).
+// WithTx runs fn in a transaction, rolling back on error and committing otherwise.
 func (c *Client) WithTx(ctx context.Context, fn func(pgx.Tx) error) error {
 	tx, err := c.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
@@ -132,9 +129,7 @@ func (c *Client) WithTx(ctx context.Context, fn func(pgx.Tx) error) error {
 	return tx.Commit(ctx)
 }
 
-// IsUniqueViolation reports whether err is a Postgres unique-constraint
-// violation (SQLSTATE 23505). Used by domain stores to map ON CONFLICT
-// scenarios to typed already-exists errors.
+// IsUniqueViolation reports whether err is SQLSTATE 23505.
 func IsUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"

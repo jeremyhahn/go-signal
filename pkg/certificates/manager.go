@@ -44,31 +44,16 @@ const secondsPerDay int64 = 86400
 // ed25519PrivKeySize is the canonical byte length of an Ed25519 private key.
 const ed25519PrivKeySize = ed25519.PrivateKeySize
 
-// CertificatesManager generates delivery certificates and group credentials
-// for sealed-sender messaging. It uses an Ed25519 signing key (when
-// configured) to produce delivery certificate signatures, falling back to
-// HMAC-SHA256 for compatibility when no Ed25519 key is set. When
-// authServerSecret is set, group credentials are issued via the zkgroup
-// AuthCredentialWithPni protocol; otherwise HMAC-SHA256 is used.
-// When callingZKParams is set, it also issues CallLinkAuthCredentials
-// alongside group credentials.
+// CertificatesManager issues sealed-sender delivery certificates (Ed25519, else HMAC-SHA256) and group credentials (zkgroup when authServerSecret is set, else HMAC), plus call-link credentials.
 type CertificatesManager struct {
 	// signingKey is the legacy HMAC signing key, used for delivery cert
 	// fallback and HMAC group credentials when zkgroup is not configured.
 	signingKey *secrets.SecureString
 
-	// keyMu guards ed25519Secret and ed25519PubKeyID. Readers hold it for
-	// the whole open-copy-use sequence, so a rotation cannot destroy a
-	// secret an in-flight signature is still reading; SetEd25519SigningKey
-	// and Destroy take it exclusively. Rotation is rare and signing is not,
-	// hence RWMutex rather than a bare Mutex.
+	// keyMu guards ed25519Secret and ed25519PubKeyID; readers hold it across use so rotation cannot destroy a key mid-signature.
 	keyMu sync.RWMutex
 
-	// ed25519Secret holds the Ed25519 private key in the shared
-	// protected-memory abstraction. When non-nil, Ed25519 signing replaces
-	// HMAC-SHA256. The key material is only briefly exposed during signing
-	// and the working copy is destroyed immediately after use.
-	// Guarded by keyMu.
+	// ed25519Secret is the Ed25519 private key in protected memory; when set it replaces HMAC-SHA256. Guarded by keyMu.
 	ed25519Secret *secure.Secret
 
 	// ed25519PubKeyID is an opaque key identifier embedded in delivery
@@ -87,10 +72,7 @@ type CertificatesManager struct {
 	logger *slog.Logger
 }
 
-// NewCertificatesManager creates a new CertificatesManager with the given
-// signing key and logger. The signing key is used for HMAC-SHA256 fallback
-// signing on generated certificates. The manager takes ownership of the
-// SecureString and will destroy it when Destroy is called.
+// NewCertificatesManager returns a manager that owns signingKey (the HMAC fallback key) and destroys it in Destroy.
 func NewCertificatesManager(signingKey *secrets.SecureString, logger *slog.Logger) *CertificatesManager {
 	return &CertificatesManager{
 		signingKey: signingKey,
@@ -135,11 +117,7 @@ func (m *CertificatesManager) SetAuthServerSecret(params *zkgroup.ServerSecretPa
 	m.authServerSecret = params
 }
 
-// SetEd25519SigningKey configures the Ed25519 private key used to sign
-// delivery certificates. The privKey must be exactly ed25519.PrivateKeySize
-// bytes. The pubKeyID is an opaque identifier included in the certificate
-// so clients can select the correct verification key. When set, delivery
-// certificate signing uses Ed25519 instead of HMAC-SHA256.
+// SetEd25519SigningKey sets the delivery-certificate signing key (ed25519.PrivateKeySize bytes) and the key ID carried in certificates.
 func (m *CertificatesManager) SetEd25519SigningKey(privKey ed25519.PrivateKey, pubKeyID uint32) error {
 	if len(privKey) != ed25519PrivKeySize {
 		return &Ed25519KeyError{Cause: &invalidKeyLengthError{
@@ -147,20 +125,12 @@ func (m *CertificatesManager) SetEd25519SigningKey(privKey ed25519.PrivateKey, p
 			Want: ed25519PrivKeySize,
 		}}
 	}
-	// NewSecret copies the bytes into an enclave and zeros the source slice
-	// on return; the sealed material can only be read back through Open.
-	// This method carries no context, so the seal is unbounded, as it was
-	// before NewSecret took one.
+	// NewSecret seals a copy and zeros privKey.
 	sec, err := secure.NewSecret(context.Background(), privKey)
 	if err != nil {
 		return &Ed25519KeyError{Cause: err}
 	}
-	// Seal first, then swap, then wipe the key we replaced: a rotation must
-	// not leave the previous private key resident and unreachable, and a
-	// failed seal above must not have disturbed the key in use.
-	// The swap and the wipe both happen under the write lock: a reader that
-	// already holds the retired secret holds the read lock, so Lock waits it
-	// out and the destroy cannot land mid-signature.
+	// Seal, swap and wipe the old key under the write lock, so a failed seal keeps the current key and no reader loses its key mid-signature.
 	m.keyMu.Lock()
 	previous := m.ed25519Secret
 	m.ed25519Secret = sec
@@ -170,10 +140,7 @@ func (m *CertificatesManager) SetEd25519SigningKey(privKey ed25519.PrivateKey, p
 	return nil
 }
 
-// Ed25519PublicKey returns the Ed25519 public key corresponding to the
-// configured private key, or nil if no Ed25519 key has been configured.
-// The private key is only briefly unlocked to derive the public key and is
-// re-sealed immediately after use.
+// Ed25519PublicKey returns the configured key's public half, or nil.
 func (m *CertificatesManager) Ed25519PublicKey() ed25519.PublicKey {
 	var pub ed25519.PublicKey
 	// Derive the public key from the locked bytes via a temporary copy; the
@@ -197,14 +164,7 @@ func (m *CertificatesManager) Ed25519PublicKey() ed25519.PublicKey {
 // in SetEd25519SigningKey, but the type assertion is not ours to elide.
 var errNotAnEd25519Key = errors.New("certificates: sealed key is not an Ed25519 private key")
 
-// useEd25519Key runs fn with a temporary heap copy of the configured Ed25519
-// private key, or reports that no key is configured. The key lock is held for
-// read across the whole call, so a concurrent SetEd25519SigningKey cannot wipe
-// the secret while fn is using it; the heap copy is zeroed on the way out.
-//
-// The copy exists because crypto/ed25519 registers a weak pointer on the key
-// (required by Go's FIPS140 cache) and so cannot be handed protected memory
-// directly.
+// useEd25519Key runs fn with a zeroed-after-use heap copy of the private key under the read lock; crypto/ed25519 cannot take protected memory.
 func (m *CertificatesManager) useEd25519Key(fn func(priv ed25519.PrivateKey) error) (bool, error) {
 	m.keyMu.RLock()
 	defer m.keyMu.RUnlock()
@@ -237,21 +197,9 @@ func (m *CertificatesManager) hasEd25519Key() bool {
 	return m.ed25519Secret != nil
 }
 
-// GetDeliveryCertificate generates a delivery certificate for the specified
-// sender. The certificate encodes the sender's identity and is signed with the
-// server's signing key. When an Ed25519 key is configured, Ed25519 is used;
-// otherwise the method falls back to HMAC-SHA256. When includeE164 is false,
-// the phone number is omitted from the certificate to support anonymous
-// sealed-sender delivery.
+// GetDeliveryCertificate returns a JSON delivery certificate for sender, without the number when includeE164 is false.
 //
-// Deprecated: this method emits a JSON-encoded envelope with raw Ed25519
-// or HMAC over a JSON payload. That format is NOT byte-wire compatible
-// with Rust libsignal or the Java Signal-Server reference. New code MUST
-// use BuildSignalSenderCertificate (in signal_compat.go) which delegates
-// to go-libsignal/pkg/sealed and produces a protobuf-encoded,
-// XEdDSA-signed Signal SenderCertificate. This method is retained only
-// to keep existing API consumers compiling until they migrate; it will
-// be removed in a future release.
+// Deprecated: not wire compatible with libsignal; use BuildSignalSenderCertificate.
 func (m *CertificatesManager) GetDeliveryCertificate(
 	ctx context.Context,
 	uuid string,
@@ -301,13 +249,7 @@ func (m *CertificatesManager) GetDeliveryCertificate(
 	}, nil
 }
 
-// GetGroupCredentials generates daily group send credentials for the specified
-// account covering the time range from startSeconds to endSeconds (inclusive,
-// Unix timestamps). Each credential is keyed to a specific day and can be
-// redeemed during that day's window.
-//
-// When authServerSecret is configured, credentials are issued using the
-// zkgroup AuthCredentialWithPniZkc protocol; otherwise HMAC-SHA256 is used.
+// GetGroupCredentials issues one group credential per day from startSeconds to endSeconds (Unix, inclusive), via zkgroup when authServerSecret is set.
 func (m *CertificatesManager) GetGroupCredentials(
 	ctx context.Context,
 	uuid string,
@@ -379,15 +321,7 @@ func (m *CertificatesManager) GetGroupCredentials(
 	}, nil
 }
 
-// GetExpiringProfileKeyCredential issues an ExpiringProfileKeyCredential for
-// the given account. The credentialRequest is the fully-constructed
-// ProfileKeyCredentialRequest from the client (obtained via
-// CreateProfileKeyCredentialRequestContext on the client side). The commitment
-// is the stored ProfileKeyCommitment for the requested profile version.
-//
-// When authServerSecret is not configured, a structured stub response is
-// returned with the correct wire shape but no cryptographic proof; callers
-// should check whether zkgroup is active before relying on the credential.
+// GetExpiringProfileKeyCredential issues a credential for the client's request and stored commitment; without authServerSecret it returns a stub with no proof.
 func (m *CertificatesManager) GetExpiringProfileKeyCredential(
 	ctx context.Context,
 	aciUUID string,
@@ -396,8 +330,7 @@ func (m *CertificatesManager) GetExpiringProfileKeyCredential(
 	credentialExpirationTime zkgroup.Timestamp,
 ) (*ExpiringProfileKeyCredentialResponse, error) {
 	if m.authServerSecret == nil {
-		// Return a structured stub when zkgroup is not configured so the REST
-		// handler can still return a well-formed response.
+		// Stub when zkgroup is not configured.
 		m.logger.WarnContext(ctx, "issuing stub profile key credential: authServerSecret not configured",
 			slog.String("aci", aciUUID),
 		)
@@ -444,12 +377,7 @@ func (m *CertificatesManager) GetExpiringProfileKeyCredential(
 	}, nil
 }
 
-// GetExpiringProfileKeyCredentialStub returns a structured stub
-// ExpiringProfileKeyCredentialResponse for the given ACI. This is used
-// when the full zkgroup credential request cannot be deserialized (because
-// the wire format deserializer is not yet implemented in go-libsignal), or
-// when authServerSecret is not configured. The stub has the correct wire
-// shape so that the REST handler can return a well-formed response.
+// GetExpiringProfileKeyCredentialStub returns a well-formed stub response for aci, used when the request cannot be decoded or zkgroup is not configured.
 func (m *CertificatesManager) GetExpiringProfileKeyCredentialStub(
 	ctx context.Context,
 	aciUUID string,
@@ -462,11 +390,7 @@ func (m *CertificatesManager) GetExpiringProfileKeyCredentialStub(
 	return m.stubProfileKeyCredential(aciUUID, credentialExpirationTime)
 }
 
-// signCertificate signs the sender certificate fields. When an Ed25519 private
-// key is configured, the canonical JSON payload is signed with Ed25519
-// (producing a 64-byte signature). Otherwise HMAC-SHA256 is used as a fallback
-// (producing a 32-byte MAC). The Signer field of the certificate is not
-// included in the signed payload to avoid circular dependency.
+// signCertificate signs the certificate's canonical JSON (without Signer) with Ed25519, or HMAC-SHA256 when no key is set.
 func (m *CertificatesManager) signCertificate(cert *SenderCertificate) ([]byte, error) {
 	// Create a signing payload without the signer field to avoid circular
 	// dependency in the signature.
@@ -629,10 +553,7 @@ func (m *CertificatesManager) generateGroupCredential(uuid string, redemptionTim
 	return mac.Sum(nil), nil
 }
 
-// stubProfileKeyCredential returns a structured stub ExpiringProfileKeyCredential
-// response when the full zkgroup server secret is not configured. The stub
-// uses HMAC-SHA256 over the UUID and expiration to produce a deterministic
-// placeholder credential that has the correct wire shape.
+// stubProfileKeyCredential returns a placeholder credential, HMAC-SHA256 over UUID and expiration.
 func (m *CertificatesManager) stubProfileKeyCredential(
 	aciUUID string,
 	credentialExpirationTime zkgroup.Timestamp,

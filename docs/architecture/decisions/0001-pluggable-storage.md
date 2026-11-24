@@ -4,7 +4,6 @@
 > Decision record, corrected to the as-built backends.
 
 - **Status**: accepted
-- **Date**: 2026-04-22
 - **Author**: go-signal team
 
 ## Context

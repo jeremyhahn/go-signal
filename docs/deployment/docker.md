@@ -20,7 +20,7 @@ The image ships no active configuration, secrets or TLS certificates. It bundles
 
 The entrypoint is `signald` with the default command `start --config /etc/signal-server/config.yml`.
 
-First-party Go modules are fetched from the internal Gitea host. Credentials are passed as the optional BuildKit secret `gomodauth`, never as a build arg.
+First-party Go modules are fetched from a private Git host. Credentials are passed as the optional BuildKit secret `gomodauth`, never as a build arg.
 
 ### Development image
 

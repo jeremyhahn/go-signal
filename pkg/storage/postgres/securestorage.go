@@ -13,13 +13,7 @@ import (
 // Compile-time interface satisfaction check.
 var _ securestorage.ManifestStore = (*ManifestStore)(nil)
 
-// ManifestStore is a Postgres-backed implementation of
-// securestorage.ManifestStore. Manifests and items are stored as raw BYTEA
-// (the blobs are end-to-end encrypted; the server never interprets them).
-//
-// PutManifest requires a transaction to safely enforce the monotonic version
-// increment (SELECT FOR UPDATE + conditional INSERT/UPDATE), so the constructor
-// takes *Client rather than the bare Querier interface.
+// ManifestStore implements securestorage.ManifestStore in Postgres with opaque BYTEA blobs; PutManifest needs a transaction, hence *Client.
 type ManifestStore struct {
 	client *Client
 }
@@ -53,10 +47,7 @@ func getManifest(ctx context.Context, q Querier, accountUUID string) (*securesto
 	return &securestorage.StorageManifest{Version: version, Value: value}, nil
 }
 
-// PutManifest stores a new manifest. The incoming version must be strictly
-// greater than the currently stored version. The check and write are executed
-// inside a READ COMMITTED transaction with a SELECT FOR UPDATE on the existing
-// row so concurrent callers serialise correctly.
+// PutManifest stores a manifest whose version exceeds the stored one, checked under SELECT FOR UPDATE.
 func (s *ManifestStore) PutManifest(ctx context.Context, accountUUID string, m *securestorage.StorageManifest) error {
 	if m == nil {
 		return signalerrors.New(signalerrors.ErrInvalidArgument, "postgres ss: nil manifest")

@@ -20,25 +20,8 @@ type fakeRecipient struct {
 	regIDs    []uint16
 }
 
-// buildFakeSSv2Ciphertext crafts a wire-format-valid SealedSender v2 SentMessage
-// (version 0x22, UUID-addressed) that go-libsignal's parser will accept. The
-// crypto bytes are deterministic but not real, so the result decodes structurally
-// but cannot be decrypted — exactly what's needed to exercise the server-side
-// fan-out path in SendMRMBinary without dragging in the full crypto setup.
-//
-// Layout:
-//
-//	[1] version 0x22
-//	[varint] recipient count
-//	for each recipient:
-//	  [16] uuid bytes
-//	  for each device:
-//	    [1] device id
-//	    [2] registration id with has_more bit if more follow
-//	  [32] C_i (encrypted M)
-//	  [16] AT_i (auth tag)
-//	[32] ephemeral public key
-//	[N]  encrypted payload
+// buildFakeSSv2Ciphertext builds a structurally valid, undecryptable SealedSender v2 message:
+// version 0x22 | varint count | per recipient: uuid(16), per device: id(1), registration id(2, has_more bit), C_i(32), AT_i(16) | ephemeral key(32) | payload
 func buildFakeSSv2Ciphertext(t *testing.T, recipients []fakeRecipient, payload []byte) []byte {
 	t.Helper()
 
@@ -111,13 +94,7 @@ func newRecordingCache() *recordingCache {
 	return &recordingCache{fakeCache: newFakeCache()}
 }
 
-// Eval intercepts MRM Lua scripts and emulates them against the fake hash
-// store. The scripts we recognize:
-//   - mrmInsertScript: KEYS[1] is the shared key; ARGV[1] is data; subsequent
-//     ARGV alternate (viewKey, viewBytes). Returns 1 on success, error on
-//     duplicate.
-//   - mrmRemoveScript: KEYS are sharedKeys; ARGV[1] is the recipient view.
-//     Returns the count of fully-deleted keys.
+// Eval emulates mrmInsertScript (KEYS[1], data, then view pairs) and mrmRemoveScript (shared keys, one view) on the fake store.
 func (c *recordingCache) Eval(_ context.Context, script string, keys []string, args ...interface{}) (interface{}, error) {
 	if isInsertScript(script) {
 		if len(keys) != 1 {

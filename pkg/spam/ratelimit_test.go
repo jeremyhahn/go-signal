@@ -338,10 +338,7 @@ func TestRateLimitChecker_ConcurrentWindowBoundary(t *testing.T) {
 	}
 }
 
-// TestRateLimitChecker_IncrementLoserDoesNotLoseCount verifies that when the
-// CAS inside increment() fails (loser path), the goroutine re-reads the new
-// window and still records its increment — i.e., no message is silently
-// dropped due to the TOCTOU fix.
+// TestRateLimitChecker_IncrementLoserDoesNotLoseCount checks a goroutine losing the window CAS still counts its increment.
 func TestRateLimitChecker_IncrementLoserDoesNotLoseCount(t *testing.T) {
 	start := time.Now()
 	var currentNano atomic.Int64

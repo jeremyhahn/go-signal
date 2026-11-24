@@ -38,11 +38,7 @@ func NewAccountsManager(store AccountStore, maxDevices int) *AccountsManager {
 	}
 }
 
-// SetDirectoryEventBus attaches a publish-only event bus to the
-// manager. Every successful Create/Update/Delete pathway publishes
-// to the bus after the underlying store has committed. Passing nil
-// detaches the bus. Safe to call before serving traffic; not safe to
-// call concurrently with mutating operations.
+// SetDirectoryEventBus attaches a bus that receives every committed mutation; nil detaches. Not safe concurrently with mutations.
 func (m *AccountsManager) SetDirectoryEventBus(bus *DirectoryEventBus) {
 	m.bus = bus
 }
@@ -61,11 +57,7 @@ func (m *AccountsManager) publishUpdated(account *Account) {
 	}
 }
 
-// publishDeleted emits a Deleted event when a bus is attached. The
-// snapshot is the account's pre-delete state — required so consumers
-// can resolve UUID → E164 for index removal. Callers that don't have
-// it (e.g. delete-by-UUID with no prior read) pass nil; consumers
-// must then fall back to a full snapshot resync.
+// publishDeleted emits a Deleted event carrying the pre-delete account, or nil, which forces consumers to resync.
 func (m *AccountsManager) publishDeleted(uuid string, snapshot *Account) {
 	if m.bus != nil {
 		m.bus.Publish(DirectoryEventDeleted, uuid, snapshot)
@@ -84,10 +76,7 @@ func (m *AccountsManager) Create(ctx context.Context, account *Account) error {
 	account.CreatedAt = now
 	account.Version = 1
 
-	// Generate a PNI if the caller hasn't supplied one. Callers that
-	// manage PNI themselves (e.g. account-transfer flows) pass an
-	// explicit PNI which we respect — we never overwrite a non-empty
-	// value.
+	// Generate a PNI only when the caller supplied none.
 	if account.PNI == "" {
 		account.PNI = uuid.NewString()
 	}
@@ -107,11 +96,7 @@ func (m *AccountsManager) Create(ctx context.Context, account *Account) error {
 	return nil
 }
 
-// RecreatePreserving re-creates a previously-deleted account exactly as it
-// was, preserving CreatedAt, Version, and the existing hashed device tokens.
-// Unlike Create it does not re-initialise those fields. It is used to roll back
-// a failed re-registration (or other displacement) so the restored account is
-// indistinguishable from the original.
+// RecreatePreserving restores a deleted account exactly, keeping CreatedAt, Version and hashed device tokens; used to roll back a displacement.
 func (m *AccountsManager) RecreatePreserving(ctx context.Context, account *Account) error {
 	if account == nil {
 		return &InvalidArgumentError{Field: "account", Message: "must not be nil"}
@@ -177,10 +162,7 @@ func (m *AccountsManager) Delete(ctx context.Context, uuid string) error {
 	if uuid == "" {
 		return &InvalidArgumentError{Field: "uuid", Message: "must not be empty"}
 	}
-	// Capture the pre-delete state when a bus is attached so the
-	// emitted event carries the E164/PNI consumers need for index
-	// removal. Skip the read when no bus is configured — callers
-	// that don't subscribe don't pay the cost.
+	// Read the pre-delete state only when a bus is attached.
 	var snapshot *Account
 	if m.bus != nil {
 		if acc, err := m.store.Get(ctx, uuid); err == nil {
@@ -418,13 +400,7 @@ func (m *AccountsManager) clearDevicePush(ctx context.Context, uuid string, devi
 	return account, nil
 }
 
-// ChangeNumber updates the phone number for the account identified by the given
-// UUID. If a PNI identity key is provided, it replaces the existing one. The
-// account version is incremented automatically.
-//
-// If the target number is already owned by a different account, that account is
-// deleted first (mirroring the Java Signal-Server behaviour where proving
-// ownership of a number via verification displaces the previous holder).
+// ChangeNumber moves an account to a new number, optionally replacing the PNI identity key; a different account holding the number is displaced.
 func (m *AccountsManager) ChangeNumber(ctx context.Context, accountUUID, newNumber string, pniIdentityKey []byte) (*Account, error) {
 	if accountUUID == "" {
 		return nil, &InvalidArgumentError{Field: "uuid", Message: "must not be empty"}
@@ -438,13 +414,7 @@ func (m *AccountsManager) ChangeNumber(ctx context.Context, accountUUID, newNumb
 		return nil, err
 	}
 
-	// If another account owns the target number, it must be displaced. The
-	// caller has already proved ownership of the number via verification. The
-	// displaced holder shares the target number, so its by-number index entry
-	// is the same key the caller is about to claim — we therefore delete the
-	// displaced account first, then update the caller. If the update fails we
-	// restore the displaced account so a failed number change is not
-	// destructive (best-effort compensation in the absence of a KV transaction).
+	// Delete the displaced holder first, then update; a failed update restores it (best-effort, no KV transaction).
 	var displaced *Account
 	existing, err := m.store.GetByNumber(ctx, newNumber)
 	if err != nil {
@@ -463,10 +433,7 @@ func (m *AccountsManager) ChangeNumber(ctx context.Context, accountUUID, newNumb
 	}
 
 	account.Number = newNumber
-	// The PNI is bound to the phone number: changing the number invalidates
-	// the old Phone Number Identity so that a party who previously knew the
-	// account's PNI can no longer address it under the new number. Rotate it
-	// to a fresh value (the store removes the stale by-PNI index on Update).
+	// The PNI is bound to the number: rotate it on a number change.
 	account.PNI = uuid.NewString()
 	if len(pniIdentityKey) > 0 {
 		account.PhoneNumberIdentityKey = pniIdentityKey
@@ -517,10 +484,7 @@ func (m *AccountsManager) SetPhoneNumberDiscoverability(ctx context.Context, uui
 	return nil
 }
 
-// ListAll streams every account to fn. fn returning an error aborts
-// iteration. Used by background workers (account-expiry sweeps,
-// orphaned-prekey GC, idle-device sweeps) to scan the full account
-// set without leaking the store interface.
+// ListAll streams every account to fn; an error from fn aborts.
 func (m *AccountsManager) ListAll(ctx context.Context, fn func(*Account) error) error {
 	return m.store.ListAll(ctx, fn)
 }
@@ -645,10 +609,7 @@ func validateDevice(d *Device) error {
 	return nil
 }
 
-// hashDeviceAuthToken derives AuthTokenHash from AuthToken using
-// auth.NewSaltedTokenHash. AuthToken is left intact on the struct so that
-// the caller can still access the plaintext value transiently, but only
-// AuthTokenHash is persisted.
+// hashDeviceAuthToken sets AuthTokenHash from AuthToken; only the hash is persisted.
 func hashDeviceAuthToken(d *Device) error {
 	if d.AuthToken == "" {
 		return nil

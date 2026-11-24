@@ -101,13 +101,7 @@ var testPniIdentityKey = []byte("pni-identity-key-32bytes-xxxxxx")
 // testPniIdentityKeyB64 is the base64-encoded PNI identity key.
 var testPniIdentityKeyB64 = base64.StdEncoding.EncodeToString(testPniIdentityKey)
 
-// --------------------------------------------------------------------------
-// Real Signal key material for tests that exercise signature validation.
-//
-// Signal uses Curve25519 keys with XEdDSA signatures. The identity key is a
-// 33-byte serialized Curve25519 public key (DJB type byte 0x05 + 32 bytes).
-// Signed pre-keys carry an XEdDSA signature over the serialized public key.
-// --------------------------------------------------------------------------
+// Real Curve25519 keys with XEdDSA signatures for signature-validation tests.
 
 // signalKeyMaterial holds a complete set of real Curve25519 key pairs and
 // corresponding valid XEdDSA signatures for use in tests.
@@ -345,10 +339,7 @@ func testAccount() *accounts.Account {
 	}
 }
 
-// newTestServer creates a Server instance backed by in-memory stores. The
-// returned server has all managers wired up and is ready for handler testing
-// via httptest. A no-op verification transport is used so no real SMS/SMTP
-// calls are made; use newTestServerWithVerification to access sent codes.
+// newTestServer returns a Server on in-memory stores with a no-op verification transport.
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	s, _ := newTestServerWithVerification(t)
@@ -639,9 +630,7 @@ func (s *memAccountStore) GetByNumber(_ context.Context, number string) (*accoun
 	return &clone, nil
 }
 
-// GetByPNI looks up an account by its PNI namespace UUID. The PNI is stored
-// bare (no "PNI:" prefix); callers at REST boundaries must strip the prefix
-// before invoking this.
+// GetByPNI looks up an account by its bare PNI UUID.
 func (s *memAccountStore) GetByPNI(_ context.Context, pni string) (*accounts.Account, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

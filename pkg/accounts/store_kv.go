@@ -142,12 +142,7 @@ func (s *KVAccountStore) Update(ctx context.Context, account *Account) error {
 		return err
 	}
 
-	// rollback fully reconstructs the pre-update state — the primary record AND
-	// both secondary indexes — from the old account snapshot. It is invoked on
-	// any secondary-index failure so a partial write cannot leave the account
-	// reachable by UUID but mis-indexed by number/PNI (or vice versa). It is
-	// best-effort: rollback errors are ignored since there is nothing further
-	// to do without a transactional KV.
+	// rollback restores the primary record and both indexes from the old snapshot after an index failure (best-effort).
 	rollback := func() {
 		_ = s.kv.Put(ctx, key, oldData)
 		if old.Number != "" {
@@ -165,9 +160,7 @@ func (s *KVAccountStore) Update(ctx context.Context, account *Account) error {
 		}
 	}
 
-	// Update the number index if it changed. Write the new entry BEFORE
-	// deleting the old one so a mid-sequence failure never leaves the number
-	// with no index at all.
+	// Write the new number index before deleting the old one.
 	if old.Number != account.Number {
 		if account.Number != "" {
 			if err := s.kv.Put(ctx, kvByNumberPrefix+account.Number, []byte(account.UUID)); err != nil {
@@ -251,10 +244,7 @@ func (s *KVAccountStore) Delete(ctx context.Context, uuid string) error {
 	return nil
 }
 
-// ListAll iterates every primary account record under the KV's
-// kvAccountPrefix, decoding the JSON payload and yielding to fn. The
-// secondary-index entries under kvByNumberPrefix / kvByPNIPrefix are
-// nested inside the same root prefix so we filter them out here.
+// ListAll yields every primary account record under kvAccountPrefix, skipping the nested index entries.
 func (s *KVAccountStore) ListAll(ctx context.Context, fn func(*Account) error) error {
 	return s.kv.Scan(ctx, kvAccountPrefix, func(key string, value []byte) error {
 		// Skip secondary-index entries — those live under nested

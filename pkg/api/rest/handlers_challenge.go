@@ -9,9 +9,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/captcha"
 )
 
-// handleChallengeResponse processes PUT /v1/challenge and verifies a
-// challenge response submitted by an authenticated client. Supports both
-// CAPTCHA and push-based rate limit challenges.
+// handleChallengeResponse handles PUT /v1/challenge for captcha and push rate-limit challenges.
 func (s *Server) handleChallengeResponse(w http.ResponseWriter, r *http.Request) {
 	acct := accountFromContext(r.Context())
 	if acct == nil {

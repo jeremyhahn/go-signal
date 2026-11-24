@@ -305,10 +305,7 @@ func TestDeliveryLoopDetector_ConcurrentDifferentPairs_NoInterference(t *testing
 		if err := d.Check(ctx, p[0], p[1], "guid-shared"); err != nil {
 			t.Errorf("pair %v same direction should not be a loop, got: %v", p, err)
 		}
-		// Reverse direction with the shared GUID — could detect a loop since
-		// all pairs recorded the same GUID, but each pair is bucketed
-		// independently so only within-pair entries count.
-		// This test just ensures there is no panic or data corruption.
+		// Pairs are bucketed independently; this checks for no panic or corruption.
 		_ = d.Check(ctx, p[1], p[0], "guid-shared")
 	}
 }
@@ -333,9 +330,7 @@ func TestDeliveryLoopDetector_MaxChainLengthFloor(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
-// DeliveryLoopDetector – GUID cap (CONC-4)
-// --------------------------------------------------------------------------
+// DeliveryLoopDetector GUID cap.
 
 // TestRecord_GUIDCapPreventsUnboundedGrowth verifies that once maxGUIDsPerEntry
 // is reached for a given direction the guids map stops growing.
@@ -383,9 +378,7 @@ func TestRecord_GUIDCapPreventsUnboundedGrowth(t *testing.T) {
 	}
 }
 
-// TestRecord_GUIDCapDoesNotPreventLoopDetection verifies that a loop is still
-// detectable after the cap has been reached — because the offending GUID was
-// recorded before the cap was hit.
+// TestRecord_GUIDCapDoesNotPreventLoopDetection checks a GUID recorded before the cap still triggers detection.
 func TestRecord_GUIDCapDoesNotPreventLoopDetection(t *testing.T) {
 	ctx := context.Background()
 	window := time.Hour

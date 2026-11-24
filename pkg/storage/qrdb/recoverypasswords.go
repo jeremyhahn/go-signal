@@ -13,9 +13,7 @@ import (
 // Compile-time interface satisfaction check.
 var _ recoverypassword.Store = (*RecoveryPasswordStore)(nil)
 
-// recoveryPasswordKeyPrefix prefixes every stored entry. The full key is
-// `signal:rrp:<pni>` (PNI as canonical UUID string), matching the stable
-// "domain:resource:identifier" pattern used by the other qrdb stores.
+// recoveryPasswordKeyPrefix prefixes entries as signal:rrp:<pni>.
 // #nosec G101 -- key prefix, not a credential.
 const recoveryPasswordKeyPrefix = "signal:rrp:"
 

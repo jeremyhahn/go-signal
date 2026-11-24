@@ -280,7 +280,7 @@ func TestConfirmHash_ReplacesOldConfirmedHash(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Old hash should no longer resolve.
+	// The old hash does not resolve.
 	_, err = store.LookupByHash(ctx, []byte("old-hash"))
 	if err == nil {
 		t.Fatal("expected old hash to be removed")
@@ -354,7 +354,7 @@ func TestDeleteHash_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Hash should no longer resolve.
+	// The hash does not resolve.
 	_, err = store.LookupByHash(ctx, []byte("del-hash"))
 	if err == nil {
 		t.Fatal("expected hash to be deleted")

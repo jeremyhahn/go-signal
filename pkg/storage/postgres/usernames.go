@@ -19,11 +19,7 @@ var _ usernames.UsernameStore = (*UsernameStore)(nil)
 
 const reservationTTL = 5 * time.Minute
 
-// UsernameStore is a Postgres-backed implementation of usernames.UsernameStore.
-//
-// Single-statement methods use the pool via q directly. ReserveHash,
-// ConfirmHash, DeleteHash, and SetLink each need atomicity across multiple
-// statements and use c.WithTx.
+// UsernameStore implements usernames.UsernameStore in Postgres; multi-statement methods use c.WithTx.
 type UsernameStore struct {
 	q Querier
 	c *Client
@@ -34,10 +30,7 @@ func NewUsernameStore(c *Client) *UsernameStore {
 	return &UsernameStore{q: c.Pool(), c: c}
 }
 
-// ReserveHash selects the first candidate hash that is neither confirmed by
-// another account nor actively reserved by another account, reserves it for
-// uuid, and returns the chosen hash and a random token. The same account
-// calling again replaces its prior reservation via ON CONFLICT DO UPDATE.
+// ReserveHash reserves the first candidate hash no other account holds and returns it with a random token; re-reserving replaces the account's prior reservation.
 func (s *UsernameStore) ReserveHash(ctx context.Context, uuid string, hashes [][]byte) ([]byte, string, error) {
 	if uuid == "" {
 		return nil, "", &usernames.InvalidArgumentError{Field: "uuid", Message: "empty UUID"}
@@ -50,12 +43,7 @@ func (s *UsernameStore) ReserveHash(ctx context.Context, uuid string, hashes [][
 	var token string
 
 	err := s.c.WithTx(ctx, func(tx pgx.Tx) error {
-		// Drop expired reservations up-front. The UNIQUE constraint on
-		// username_hash in usernames_reserved is unconditional — a partial
-		// index keyed on `expires_at > NOW()` is not expressible because
-		// NOW() is STABLE, not IMMUTABLE. So an expired-but-not-yet-swept
-		// row would block another account from re-reserving the same hash
-		// even though the reservation has logically lapsed.
+		// Drop expired reservations first: the username_hash UNIQUE constraint cannot exclude them.
 		if _, err := tx.Exec(ctx,
 			`DELETE FROM usernames_reserved WHERE expires_at < NOW()`); err != nil {
 			return signalerrors.Wrap(signalerrors.ErrInternal, "postgres usernames: sweep expired", err)
@@ -92,8 +80,7 @@ func (s *UsernameStore) ReserveHash(ctx context.Context, uuid string, hashes [][
 		token = tok
 
 		expiresAt := time.Now().Add(reservationTTL)
-		// ON CONFLICT (account_uuid) replaces the prior reservation for this
-		// account, handling same-account re-reserve atomically.
+		// ON CONFLICT (account_uuid) replaces this account's prior reservation.
 		_, err = tx.Exec(ctx, `
 			INSERT INTO usernames_reserved (account_uuid, username_hash, token, expires_at)
 			VALUES ($1, $2, $3, $4)
@@ -104,9 +91,7 @@ func (s *UsernameStore) ReserveHash(ctx context.Context, uuid string, hashes [][
 			uuid, chosen, token, expiresAt,
 		)
 		if err != nil {
-			// The UNIQUE constraint on username_hash fires when another
-			// concurrent transaction just reserved the same hash between our
-			// SELECT and this INSERT. Surface as a conflict.
+			// A concurrent reservation of the same hash is a conflict.
 			if IsUniqueViolation(err) {
 				return &usernames.UsernameHashConflictError{Hash: chosen}
 			}
@@ -152,8 +137,7 @@ func fetchBlockedReserved(ctx context.Context, q Querier, uuid string, hashes []
 	return scanHexSet(rows)
 }
 
-// scanHexSet reads a single-column BYTEA result set into a set keyed by
-// hex-encoded hash.
+// scanHexSet reads a BYTEA column into a set keyed by hex.
 func scanHexSet(rows pgx.Rows) (map[string]bool, error) {
 	blocked := make(map[string]bool)
 	for rows.Next() {
@@ -166,9 +150,7 @@ func scanHexSet(rows pgx.Rows) (map[string]bool, error) {
 	return blocked, rows.Err()
 }
 
-// hashSlice converts [][]byte to [][]byte for pgx ANY($1) binding. pgx
-// encodes [][]byte as a Postgres BYTEA[] which ANY can match against BYTEA
-// columns, so no additional conversion is required.
+// hashSlice returns hashes for an ANY($1) BYTEA[] binding.
 func hashSlice(hashes [][]byte) [][]byte { return hashes }
 
 // ConfirmHash promotes a reservation to a confirmed username hash. The token
@@ -201,8 +183,7 @@ func (s *UsernameStore) ConfirmHash(ctx context.Context, uuid string, hash []byt
 			return signalerrors.Wrap(signalerrors.ErrInternal, "postgres usernames: delete reservation", err)
 		}
 
-		// UPSERT on account_uuid handles the case where this account previously
-		// confirmed a different hash; the old row is replaced in place.
+		// Upsert on account_uuid replaces a previously confirmed hash.
 		_, err = tx.Exec(ctx, `
 			INSERT INTO usernames_confirmed (username_hash, account_uuid, confirmed_at)
 			VALUES ($1, $2, NOW())
@@ -287,9 +268,7 @@ func (s *UsernameStore) LinkForUUID(ctx context.Context, uuid string) (*username
 	return &link, nil
 }
 
-// SetLink stores or replaces the username link for link.UUID. Any prior link
-// for the same account UUID is removed first so the UNIQUE constraint on
-// account_uuid is never violated by a stale row with a different handle.
+// SetLink stores the username link for link.UUID, removing the account's other link first.
 func (s *UsernameStore) SetLink(ctx context.Context, link *usernames.UsernameLink) error {
 	if link == nil {
 		return &usernames.InvalidArgumentError{Field: "link", Message: "nil link"}
@@ -299,10 +278,7 @@ func (s *UsernameStore) SetLink(ctx context.Context, link *usernames.UsernameLin
 	}
 
 	return s.c.WithTx(ctx, func(tx pgx.Tx) error {
-		// Remove any previous link row for this account that differs from the
-		// new handle. Without this delete the ON CONFLICT DO UPDATE on (handle)
-		// would leave the old row orphaned and the UNIQUE(account_uuid)
-		// constraint would block insertion of a new handle for the same account.
+		// Remove the account's link with a different handle so UNIQUE(account_uuid) holds.
 		if _, err := tx.Exec(ctx, `
 			DELETE FROM username_links
 			WHERE account_uuid = $1 AND handle != $2`,

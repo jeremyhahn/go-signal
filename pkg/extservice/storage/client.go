@@ -1,15 +1,4 @@
-// Package storage is the chat-server-side admin client for
-// cmd/storage-service.
-//
-// Java reference: SecureStorageClient.java — one operation
-// (DELETE /v1/storage) called when an account is deleted so the
-// user's encrypted manifest + items are purged from storage-service's
-// store.
-//
-// Authentication uses the same HMAC-derived Basic credentials the
-// mobile client receives from /v1/storage/auth. signald presents
-// username = accountUUID, password = HMAC-SHA256(sharedSecret,
-// accountUUID) hex-encoded.
+// Package storage is signald's admin client for cmd/storage-service: DELETE /v1/storage on account deletion with HMAC Basic credentials.
 package storage
 
 import (
@@ -63,12 +52,7 @@ type HTTPClient struct {
 	http    *http.Client
 }
 
-// NewHTTP constructs an HTTPClient.
-//
-// The shared secret is cloned first and the clone is what gets validated —
-// checking cfg.SharedSecret and cloning it afterwards leaves a window in which
-// the caller destroys its own copy between the two, and the constructor
-// reports success holding a secret that can never sign a request.
+// NewHTTP returns an HTTPClient; the shared secret is cloned before it is validated.
 func NewHTTP(cfg HTTPConfig) (*HTTPClient, error) {
 	if cfg.BaseURL == "" {
 		return nil, signalerrors.New(signalerrors.ErrInvalidArgument, "storage: BaseURL is required")

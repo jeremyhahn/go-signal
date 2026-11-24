@@ -9,8 +9,7 @@ type UsernameStore interface {
 	// token that must be presented during confirmation.
 	ReserveHash(ctx context.Context, uuid string, hashes [][]byte) ([]byte, string, error)
 
-	// ConfirmHash confirms a previously reserved username hash. The provided
-	// token must match the reservation token returned by ReserveHash.
+	// ConfirmHash confirms a reserved hash; token must match ReserveHash's.
 	ConfirmHash(ctx context.Context, uuid string, hash []byte, token string) error
 
 	// LookupByHash looks up the account UUID associated with a confirmed
@@ -21,11 +20,7 @@ type UsernameStore interface {
 	// UUID.
 	DeleteHash(ctx context.Context, uuid string) error
 
-	// HashForUUID returns the confirmed username hash currently associated
-	// with the given account UUID, or [*UsernameNotFoundError] if the account
-	// has no confirmed hash. Used by [Manager.SetLink] to enforce Java's
-	// invariant that an account must have a confirmed username before it
-	// can publish a link.
+	// HashForUUID returns the account's confirmed hash, or [*UsernameNotFoundError].
 	HashForUUID(ctx context.Context, uuid string) ([]byte, error)
 
 	// SetLink stores or replaces the username link for the given account.
@@ -34,10 +29,7 @@ type UsernameStore interface {
 	// GetLink retrieves a username link by its handle UUID.
 	GetLink(ctx context.Context, handle string) (*UsernameLink, error)
 
-	// LinkForUUID returns the currently published link for the given account
-	// UUID, or [*UsernameNotFoundError] if none is stored. Used to support
-	// Java's "keep link handle" rotation semantic — the caller can re-use
-	// the same handle when only the encrypted blob changes.
+	// LinkForUUID returns the account's link, or [*UsernameNotFoundError].
 	LinkForUUID(ctx context.Context, uuid string) (*UsernameLink, error)
 
 	// DeleteLink removes the username link for the given account UUID.

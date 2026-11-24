@@ -1,24 +1,4 @@
-// Package health implements the /healthz + /readyz probe endpoints
-// every Phase 4 binary exposes. Kubernetes liveness/readiness probes
-// hit these paths; the binary that mounts them returns 200 when the
-// process is healthy, 503 with a JSON diagnostic when a registered
-// checker fails.
-//
-// The model:
-//
-//   - LIVENESS: a single boolean "the process is alive". A failed
-//     liveness probe restarts the pod. Default-true once Mount is
-//     called; binaries that need a stricter check can call
-//     SetUnhealthy.
-//
-//   - READINESS: a set of named Checks, each "ready or not, plus a
-//     diagnostic". The probe iterates them; any check returning a
-//     non-nil error flips the probe to 503. Use this for backend
-//     dependencies (database, redis, downstream gRPC).
-//
-// The endpoint mounts onto an existing *http.ServeMux so binaries can
-// share their probe listener with the main service port or run it on
-// a dedicated metrics/admin port.
+// Package health implements /healthz (liveness, default healthy, SetUnhealthy to fail) and /readyz (named checks; any error gives 503 with a JSON diagnostic) on a given mux.
 package health
 
 import (

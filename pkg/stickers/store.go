@@ -2,17 +2,9 @@ package stickers
 
 import "context"
 
-// PackStore persists sticker-pack metadata so the server can audit
-// uploader → pack relationships later. Implementations are pluggable
-// across the supported storage backends (memory / qrdb / postgres).
-//
-// The pack contents themselves live on the CDN; this store only holds the
-// pack ID + uploader UUID + timestamp.
+// PackStore records pack ID, uploader UUID and time; the pack contents live on the CDN.
 type PackStore interface {
-	// Put records that accountUUID issued an upload form for packID. Safe
-	// to call multiple times for the same packID; the implementation may
-	// overwrite or no-op as long as the (packID, accountUUID) mapping is
-	// observable via Get.
+	// Put records that accountUUID issued a form for packID; repeated calls are allowed.
 	Put(ctx context.Context, meta *PackMetadata) error
 
 	// Get returns the metadata for packID or a typed not-found error

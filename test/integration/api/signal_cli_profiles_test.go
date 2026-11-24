@@ -67,10 +67,7 @@ func TestSignalCLI_GetUserStatus_RegisteredUser(t *testing.T) {
 	signalCLIRegisterAndVerify(t, numberA)
 	signalCLIRegisterAndVerify(t, numberB)
 
-	// getUserStatus uses the CDSI (Contact Discovery Service Interface) Noise
-	// protocol with SGX enclave attestation. This protocol is not implemented
-	// in the Go server. signal-cli exits with code 3 and reports
-	// "Unable to check if users are registered: NetworkProtocolException".
+	// getUserStatus needs CDSI, which this server does not serve; signal-cli exits 3.
 	result := signalCLIExecAccount(t, numberA, "getUserStatus", numberB)
 	assert.Equal(t, 3, result.ExitCode, "getUserStatus should fail with CDSI not implemented: %s", result.Stderr)
 	assert.Contains(t, result.Stderr, "Unable to check if users are registered",
@@ -123,8 +120,7 @@ func TestSignalCLI_GetUserStatus_MultipleNumbers(t *testing.T) {
 
 	unregistered := "+15558880000"
 
-	// Query status for both a registered and an unregistered number.
-	// CDSI is not implemented; signal-cli exits with code 3.
+	// Registered and unregistered numbers; CDSI is not served, so signal-cli exits 3.
 	result := signalCLIExecAccount(t, numberA, "getUserStatus", numberB, unregistered)
 	assert.Equal(t, 3, result.ExitCode,
 		"getUserStatus with multiple numbers should fail with CDSI not implemented: %s", result.Stderr)

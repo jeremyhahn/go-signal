@@ -31,9 +31,7 @@ func (s *Server) handleGetDirectoryAuth(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, creds)
 }
 
-// handleDirectoryLookup handles PUT /v1/directory/lookup and returns UUIDs
-// for registered phone numbers. This is a simplified alternative to CDSI that
-// signal-cli can use for contact discovery in test/development environments.
+// handleDirectoryLookup handles PUT /v1/directory/lookup, a simple contact discovery for test and development clients.
 func (s *Server) handleDirectoryLookup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Numbers []string `json:"numbers"`

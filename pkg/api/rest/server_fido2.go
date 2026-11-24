@@ -9,8 +9,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/fido2"
 )
 
-// FIDO2Config holds the FIDO2/WebAuthn configuration exposed through the REST
-// capabilities endpoint.
+// FIDO2Config holds the FIDO2/WebAuthn settings exposed by the capabilities endpoint.
 type FIDO2Config struct {
 	Enabled          bool
 	RPID             string
@@ -55,19 +54,12 @@ func removeFIDO2State(s *Server) {
 	fido2StatesMu.Unlock()
 }
 
-// RegisterFIDO2 adds FIDO2 WebAuthn routes to the server's internal mux. It
-// must be called after NewServer and before Listen. This is the preferred
-// integration path: it registers routes on the same mux that is already
-// wrapped by the server's middleware chain, so all FIDO2 routes benefit from
-// the existing JSON, logging, and security-headers middleware.
+// RegisterFIDO2 adds the FIDO2 routes to the server's middleware-wrapped mux; call after NewServer and before Listen.
 func (s *Server) RegisterFIDO2(manager *fido2.FIDO2AccountsManager, cfg *FIDO2Config) {
 	RegisterFIDO2Routes(s, s.mux, manager, cfg)
 }
 
-// RegisterFIDO2Routes adds FIDO2 WebAuthn routes to the given mux. The mux
-// must be the same ServeMux used by the server. This function is intended to
-// be called from the server's route registration code when the fido2 build
-// tag is active.
+// RegisterFIDO2Routes adds the FIDO2 routes to the server's mux under the fido2 build tag.
 func RegisterFIDO2Routes(s *Server, mux *http.ServeMux, manager *fido2.FIDO2AccountsManager, cfg *FIDO2Config) {
 	setFIDO2State(s, &fido2State{manager: manager, config: cfg})
 

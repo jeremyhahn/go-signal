@@ -11,29 +11,10 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/cache"
 )
 
-// CacheQueue is the Redis-shaped staging buffer that sits between Insert
-// and the persistent store. The flow mirrors Java Signal-Server:
-//
-//  1. Insert places an envelope into the per-device sorted set
-//     `q:{aci-or-pni}:{device}` with score = ServerTimestamp. The
-//     sorted set yields strict per-device delivery order without
-//     coordination across instances.
-//  2. A side hash `qm:{uuid}:{device}` maps server GUID → JSON
-//     envelope so Delete-by-GUID does not need to scan the queue.
-//  3. The MessagePersister worker (pkg/workers) drains the queue into
-//     a persistent MessageStore, removing entries from the cache as
-//     they're persisted.
-//  4. GetMessagesForDevice returns the union of cache-resident and
-//     persisted envelopes; the consumer doesn't need to know which
-//     half a given message came from.
-//
-// Key conventions match docs/storage/redis-keys.md.
+// CacheQueue stages envelopes between Insert and the store: sorted set `q:{aci-or-pni}:{device}` by server timestamp, hash `qm:{uuid}:{device}` by GUID; MessagePersister drains it (keys in docs/storage/redis-keys.md).
 type CacheQueue struct {
 	cache cache.Client
-	// ttl bounds how long an envelope can sit in the cache before the
-	// persister is expected to have moved it. Short TTLs limit memory
-	// usage at the cost of more aggressive eviction; the Java default
-	// of 24h is a sensible starting point.
+	// ttl bounds how long an envelope stays cached before the persister moves it.
 	ttl time.Duration
 }
 
@@ -67,9 +48,7 @@ func (q *CacheQueue) Enqueue(ctx context.Context, uuid string, device uint64, en
 		return &QueueError{Op: "marshal", Cause: err}
 	}
 
-	// The sorted-set member is the GUID; the side hash holds the
-	// envelope JSON. Storing the envelope only once keeps the data
-	// model compact even at scale.
+	// The sorted-set member is the GUID; the side hash holds the envelope JSON once.
 	score := float64(env.ServerTimestamp)
 	if score == 0 {
 		// Defensive fallback so out-of-order inserts still get a
@@ -95,10 +74,7 @@ func (q *CacheQueue) Enqueue(ctx context.Context, uuid string, device uint64, en
 	return nil
 }
 
-// Drain returns up to max envelopes currently waiting in the queue,
-// in score order (oldest first). Drain does not remove anything; the
-// caller is expected to invoke Remove on each envelope after it has
-// been durably persisted.
+// Drain returns up to max queued envelopes, oldest first, without removing them; call Remove after each is persisted.
 func (q *CacheQueue) Drain(ctx context.Context, uuid string, device uint64, max int64) ([]*Envelope, error) {
 	if max <= 0 {
 		max = 100
@@ -116,9 +92,7 @@ func (q *CacheQueue) Drain(ctx context.Context, uuid string, device uint64, max 
 		guid := string(raw)
 		data, err := q.cache.HGet(ctx, queueGUIDHashKey(uuid, device), guid)
 		if errors.Is(err, cache.ErrKeyNotFound) {
-			// Hash entry was removed but the zset member lingered (or
-			// vice versa). Drop the orphan from the zset so it doesn't
-			// keep coming back.
+			// Drop a sorted-set member whose hash entry is gone.
 			_ = q.cache.ZRem(ctx, queueKey(uuid, device), []byte(guid))
 			continue
 		}
@@ -134,8 +108,7 @@ func (q *CacheQueue) Drain(ctx context.Context, uuid string, device uint64, max 
 	return out, nil
 }
 
-// Remove deletes a single envelope from the queue, identified by its
-// ServerGUID. It is idempotent — removing a missing GUID returns nil.
+// Remove deletes the envelope with the given ServerGUID; idempotent.
 func (q *CacheQueue) Remove(ctx context.Context, uuid string, device uint64, serverGUID string) error {
 	if err := q.cache.ZRem(ctx, queueKey(uuid, device), []byte(serverGUID)); err != nil {
 		return &QueueError{Op: "zrem", Cause: err}
@@ -166,9 +139,5 @@ func (q *CacheQueue) HasMessages(ctx context.Context, uuid string, device uint64
 	return n > 0, nil
 }
 
-// rangeScoreScore is used by IsOlderThan to format an inclusive
-// upper bound for ZRange. We don't currently use it but it's parked
-// here so future score-based queries (purge older than X) can pick
-// it up. strconv import would otherwise be unused — guard against it
-// being optimised away.
+// rangeScoreScore formats an inclusive ZRange upper bound; currently unused.
 var _ = strconv.Itoa

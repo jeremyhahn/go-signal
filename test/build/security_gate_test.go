@@ -8,17 +8,7 @@ import (
 	"testing"
 )
 
-// The security gate is here for the same reason the coverage gate is: it once
-// passed while measuring less than it claimed. `make lint` and `make gosec`
-// ran without build tags, so eight packages — every pkg/desktop/... package and
-// the whole of pkg/fido2, the WebAuthn implementation — were analysed by
-// neither, and both commands exited 0. A successful invocation says nothing
-// about WHICH packages were analysed, which is exactly how the defect survived.
-//
-// These tests capture the argument vector each tool actually receives and then
-// resolve it back to a package list, so a change to BUILD_TAGS, to the
-// comma conversion, or to either tool's flag spelling fails here instead of
-// silently re-opening the hole.
+// These tests capture the arguments golangci-lint and gosec receive from the Makefile and resolve them to packages, so a tag or flag change that drops packages from analysis fails.
 
 // runBoundary separates one invocation's arguments from the next in the shim's
 // log. It cannot be "--": golangci-lint's own flags are --timeout and
@@ -26,10 +16,7 @@ import (
 // then report the pieces as extra invocations. Measured — it did.
 const runBoundary = "===end-of-invocation==="
 
-// shimTool writes a fake tool onto PATH-independent disk that records the
-// arguments it was called with and exits 0. Passing it through the Makefile's
-// own GOLINT/GOSEC variables means the recipe under test is the real one — only
-// the binary at the end of it is replaced.
+// shimTool writes a fake tool that records its arguments and exits 0, passed through the Makefile's GOLINT/GOSEC variables.
 func shimTool(t *testing.T) (bin, argsFile string) {
 	t.Helper()
 
@@ -48,8 +35,7 @@ func shimTool(t *testing.T) (bin, argsFile string) {
 	return bin, argsFile
 }
 
-// runTarget runs a Make target with the given overrides and returns the
-// arguments of EVERY invocation the shimmed tool received, in order.
+// runTarget runs a Make target and returns the arguments of every shimmed-tool invocation, in order.
 func runTarget(t *testing.T, target, toolVar string, extra ...string) [][]string {
 	t.Helper()
 
@@ -110,15 +96,13 @@ func packagesUnderTags(t *testing.T, tags string) string {
 // half. The assertion is not that a flag is present but that the flag's value
 // selects the packages that were being skipped.
 func TestLintTarget_AnalysesTheTaggedPackages(t *testing.T) {
-	// ACTIONLINT=true stands in for the workflow linter the target ends with: this
-	// test is about the golangci-lint passes, and the Lint job runs the real one.
+	// ACTIONLINT=true skips the workflow linter; this test covers the golangci-lint passes.
 	runs := runTarget(t, "lint", "GOLINT", "ACTIONLINT=true")
 	if len(runs) != 2 {
 		t.Fatalf("lint made %d invocations, want 2 (repo tags, then integration): %v", len(runs), runs)
 	}
 
-	// EVERY pass has to carry tags. Checking only the last would let the first
-	// silently go back to analysing nothing.
+	// Every pass must carry the tags.
 	sawIntegration := false
 	for i, argv := range runs {
 		tags := flagValue(argv, "--build-tags")
@@ -144,11 +128,7 @@ func TestLintTarget_AnalysesTheTaggedPackages(t *testing.T) {
 	}
 }
 
-// TestGosecTarget_AnalysesTheTaggedPackages is the same for gosec, plus the
-// separator. gosec wants COMMAS where the go tool wants spaces and does not
-// reject the space form — it reads it as one undeclared tag and matches
-// nothing, which looks identical to a clean run. Measured: the space form
-// scanned the same 414 files as an untagged run, the comma form 445.
+// TestGosecTarget_AnalysesTheTaggedPackages: gosec needs comma-separated tags; the space form silently matches nothing.
 func TestGosecTarget_AnalysesTheTaggedPackages(t *testing.T) {
 	runs := runTarget(t, "gosec", "GOSEC")
 	if len(runs) != 2 {
@@ -161,9 +141,7 @@ func TestGosecTarget_AnalysesTheTaggedPackages(t *testing.T) {
 		if tags == "" {
 			t.Fatalf("gosec pass %d ran without -tags: %v", i+1, argv)
 		}
-		// gosec wants COMMAS where the go tool wants spaces, and it does not
-		// reject the space form — it reads it as one undeclared tag and matches
-		// nothing, which looks identical to a clean run.
+		// gosec needs commas; the space form is one undeclared tag that matches nothing.
 		if strings.Contains(tags, " ") {
 			t.Fatalf("gosec pass %d tag list %q is space-separated; gosec accepts it and matches nothing", i+1, tags)
 		}
@@ -209,10 +187,7 @@ func TestGosecTarget_KeepsItsExclusionsAndSarifOptions(t *testing.T) {
 		}
 	}
 
-	// The SARIF form is what CI runs. -stdout and -verbose=text ride along with
-	// it deliberately: the SARIF upload only happens on github.com, so without
-	// them a Gitea failure exits 1 with its findings buried in a file nobody
-	// reads.
+	// CI runs the SARIF form; -stdout and -verbose=text keep findings visible where SARIF is not uploaded.
 	sarif := runTarget(t, "gosec", "GOSEC", "GOSEC_FMT=sarif", "GOSEC_OUT=gosec.sarif")
 	joined := strings.Join(sarif[0], " ")
 	for _, want := range []string{"-fmt=sarif", "-out=gosec.sarif", "-stdout", "-verbose=text"} {
@@ -221,9 +196,7 @@ func TestGosecTarget_KeepsItsExclusionsAndSarifOptions(t *testing.T) {
 		}
 	}
 
-	// And ONLY the first pass writes it. gosec truncates its output file, so a
-	// second pass writing the same path would overwrite the first pass's
-	// findings — the upload would carry half the scan and still report success.
+	// Only the first pass writes the output file, since gosec truncates it.
 	for i, argv := range sarif[1:] {
 		if strings.Contains(strings.Join(argv, " "), "-out=") {
 			t.Errorf("gosec pass %d also writes the report; it would overwrite the first pass's findings: %v", i+2, argv)

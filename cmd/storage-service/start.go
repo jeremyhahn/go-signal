@@ -38,11 +38,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Wipe every protected configuration secret on the way out, registered
-	// before the first validation can return so an aborted startup leaves
-	// nothing resident. Matters most when the command is driven in-process
-	// rather than followed immediately by process exit. Destroy is
-	// idempotent and nil-safe.
+	// Wipe every protected configuration secret on the way out, including an aborted startup; Destroy is idempotent and nil-safe.
 	defer cfg.Destroy()
 
 	if cfg.StorageService.SharedSecret.IsDestroyed() {
@@ -88,11 +84,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	}
 }
 
-// buildManifestStore selects the securestorage.ManifestStore implementation
-// based on cfg.Backend. "qrdb" wires a QrdbSecureStorageStore behind an
-// in-process FakeKVStore (production-equivalent domain store, placeholder
-// transport — same pattern signald uses). "postgres" opens a Postgres
-// pool and runs migrations. Any other value defaults to MemoryManifestStore.
+// buildManifestStore selects the ManifestStore for cfg.Backend: qrdb, postgres, or memory by default.
 func buildManifestStore(ctx context.Context, cfg config.StorageConfig, logger *slog.Logger) (securestorage.ManifestStore, error) {
 	switch cfg.Backend {
 	case "qrdb":
@@ -124,9 +116,7 @@ func buildManifestStore(ctx context.Context, cfg config.StorageConfig, logger *s
 	}
 }
 
-// NewMux returns the http.Handler exposing the full storage-service
-// REST surface. Factored out of runStart so e2e tests can mount it
-// onto httptest.NewServer.
+// NewMux returns the http.Handler exposing the storage-service REST surface.
 func NewMux(store securestorage.ManifestStore, hmacSecret *secrets.SecureString, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /v1/storage/manifest", basicAuth(hmacSecret, getManifest(store)))
@@ -164,11 +154,7 @@ func identityFromContext(ctx context.Context) string {
 	return ""
 }
 
-// validateBasicAuth parses an HTTP Basic header and confirms the password is
-// an HMAC-SHA256(secret, username) digest, returning the username on success.
-//
-// The secret is revealed from protected memory only for the length of the
-// digest comparison; an unset or wiped secret authenticates nothing.
+// validateBasicAuth checks an HTTP Basic password is HMAC-SHA256(secret, username) and returns the username.
 func validateBasicAuth(r *http.Request, secret *secrets.SecureString) (string, bool) {
 	var (
 		identity string
@@ -179,15 +165,7 @@ func validateBasicAuth(r *http.Request, secret *secrets.SecureString) (string, b
 }
 
 func validateBasicAuthKey(r *http.Request, secret []byte) (string, bool) {
-	// Delegated rather than repeated. This was a byte-identical third copy of
-	// common.ValidateBasicAuth, and that package exists precisely to stop this
-	// code diverging across services — its own doc says a divergence "would
-	// silently break the HMAC contract".
-	//
-	// Repeating it also meant repeating its defect: the decoded
-	// `username:password` buffer was left resident, and both the presented and
-	// the expected credential were copied into Go strings that cannot be wiped
-	// (#47). Fixing that three times would have been three chances to miss one.
+	// Delegates to common.ValidateBasicAuth, which wipes the decoded credentials.
 	return common.ValidateBasicAuth(r.Header.Get("Authorization"), secret)
 }
 

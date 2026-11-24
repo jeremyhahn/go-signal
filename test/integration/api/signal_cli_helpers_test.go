@@ -32,9 +32,7 @@ func init() {
 // signalCLIPhoneCounter generates unique phone numbers for signal-cli tests.
 var signalCLIPhoneCounter int64
 
-// signalCLIUniqueNumber generates a unique phone number for signal-cli tests.
-// The format is +1555RRRRNNN where RRRR is a random 4-digit per-run prefix
-// and NNN is a sequential counter, ensuring uniqueness across runs.
+// signalCLIUniqueNumber returns +1555RRRRNNN: a random per-run prefix and a counter.
 func signalCLIUniqueNumber() string {
 	n := atomic.AddInt64(&signalCLIPhoneCounter, 1)
 	return fmt.Sprintf("+1555%04d%03d", signalCLIPhoneRunBase, n)
@@ -52,12 +50,7 @@ func signalCLIBin(t *testing.T) string {
 	return bin
 }
 
-// signalCLITestDirs caches one temp directory per test. The key is t.Name()
-// and the value is an absolute path created by t.TempDir(). Using a sync.Map
-// ensures that all signal-cli invocations within a single test share the same
-// data directory even when helper functions are called from different
-// goroutines, while completely isolating concurrent tests from each other and
-// eliminating the SQLite lock contention caused by the shared global volume.
+// signalCLITestDirs maps t.Name() to the test's own signal-cli data directory, so tests never share a SQLite database.
 var signalCLITestDirs sync.Map // map[string]string
 
 // signalCLITestDataDir returns a per-test isolated data directory for
@@ -219,22 +212,7 @@ func parseJSONArray(t *testing.T, result signalCLIResult) []any {
 	return data
 }
 
-// signalCLIRegisterAndVerify registers a phone number using signal-cli and
-// verifies it against the integration test server. Each invocation uses the
-// test-scoped isolated data directory so that concurrent tests never share a
-// SQLite database.
-//
-// The function is tolerant of several benign conditions:
-//   - "Account is already registered": stale local state from a prior Docker
-//     volume; the account is already usable.
-//   - "verify is not necessary" / "Reregistered existing account": signal-cli
-//     detected that the number was previously registered locally.
-//   - "Invalid verification method": the server returned a transport or
-//     session state that signal-cli considers unsupported; treated as a
-//     non-fatal warning so that the remaining test can proceed if the account
-//     was actually created.
-//
-// Returns the phone number that was registered.
+// signalCLIRegisterAndVerify registers and verifies a number with signal-cli in the test's data directory and returns it; already-registered and unsupported-method outcomes are warnings.
 func signalCLIRegisterAndVerify(t *testing.T, number string) string {
 	t.Helper()
 

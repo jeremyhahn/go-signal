@@ -35,27 +35,17 @@ type CaptchaManagerConfig struct {
 	// is configured. Required when Checker is nil; ignored otherwise.
 	Verifier CaptchaVerifier
 
-	// Checker is the token-format-aware multi-provider dispatcher
-	// (Phase 3.3). When non-nil, handleCaptchaChallenge parses the
-	// captcha solution as `provider.sitekey.action.token`, enforces the
-	// per-action site-key allowlist, and delegates to the resolved
-	// provider. Leave nil to retain the legacy single-verifier flow.
+	// Checker parses `provider.sitekey.action.token`, enforces the per-action site-key allowlist and dispatches; nil uses the single Verifier.
 	Checker *Checker
 
-	// ScoreThreshold is the minimum VerifyResult.Score required to accept a
-	// token. Scores are only emitted by reCAPTCHA v3; for other providers the
-	// returned score is 0 and the threshold check is skipped. A zero value
-	// uses DefaultScoreThreshold.
+	// ScoreThreshold is the minimum reCAPTCHA v3 score; zero uses DefaultScoreThreshold, and scoreless providers skip it.
 	ScoreThreshold float64
 
 	// Logger is used for debug and error output. Required.
 	Logger *slog.Logger
 }
 
-// NewCaptchaManager creates a new CaptchaManager with the given logger.
-// The manager uses a TestVerifier that accepts any token carrying the
-// TestTokenPrefix. Use NewCaptchaManagerWithConfig to supply a production
-// CAPTCHA backend.
+// NewCaptchaManager returns a manager with the TestVerifier; use NewCaptchaManagerWithConfig for a real backend.
 func NewCaptchaManager(logger *slog.Logger) *CaptchaManager {
 	return NewCaptchaManagerWithConfig(CaptchaManagerConfig{
 		Verifier:       NewTestVerifier(TestVerifierConfig{}),
@@ -105,12 +95,7 @@ func (m *CaptchaManager) SendPushChallenge(ctx context.Context, accountUUID stri
 	return token, nil
 }
 
-// handleCaptchaChallenge verifies a CAPTCHA challenge response by delegating
-// to the configured CaptchaVerifier. Both the challenge token (the push-round-
-// trip token) and the captcha solution (the CAPTCHA widget response) must be
-// present. The captcha solution is forwarded to the verifier; if the upstream
-// service rejects it, or if the score falls below the threshold, the challenge
-// fails.
+// handleCaptchaChallenge requires the challenge token and captcha solution and verifies the solution with the configured backend.
 func (m *CaptchaManager) handleCaptchaChallenge(ctx context.Context, accountUUID string, resp *ChallengeResponse) error {
 	if resp.Token == "" {
 		return &ChallengeFailedError{Message: "missing token"}
@@ -119,10 +104,7 @@ func (m *CaptchaManager) handleCaptchaChallenge(ctx context.Context, accountUUID
 		return &ChallengeFailedError{Message: "missing captcha solution"}
 	}
 
-	// Neither backend configured: refuse rather than dereference a nil
-	// verifier. buildCaptchaChecker legitimately yields no Checker when the
-	// deployment names no provider, and a manager built from that config has
-	// no Verifier either.
+	// No backend configured: refuse.
 	if m.checker == nil && m.verifier == nil {
 		m.logger.ErrorContext(ctx, "captcha submission with no provider configured",
 			slog.String("uuid", accountUUID),
@@ -180,9 +162,7 @@ func (m *CaptchaManager) handleCaptchaChallenge(ctx context.Context, accountUUID
 	return nil
 }
 
-// handlePushChallenge verifies a push-based rate limit challenge response.
-// In production this validates the token against a previously issued challenge;
-// the current implementation validates that the required fields are present.
+// handlePushChallenge checks that the push challenge fields are present.
 func (m *CaptchaManager) handlePushChallenge(ctx context.Context, accountUUID string, resp *ChallengeResponse) error {
 	if resp.Token == "" {
 		return &ChallengeFailedError{Message: "missing token"}

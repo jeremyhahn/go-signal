@@ -220,7 +220,7 @@ func TestKVAccountStore_Update_NumberChange(t *testing.T) {
 	acct.Number = "+15559999999"
 	require.NoError(t, s.Update(ctx, acct))
 
-	// Old number should no longer resolve.
+	// The old number does not resolve.
 	_, err := s.GetByNumber(ctx, "+15551234567")
 	require.Error(t, err)
 
@@ -421,13 +421,7 @@ func TestKVAccountStore_Update_NumberChangeNewIndexPutError(t *testing.T) {
 	// Old number index (must exist so Delete during number-change succeeds).
 	require.NoError(t, fkv.Delegate.Put(ctx, "signal/accounts/by-number/+15551111111", []byte("uuid-1")))
 
-	// After the account is written (Put for the account itself succeeds),
-	// the old index Delete succeeds, but the new index Put must fail.
-	// We cannot selectively fail via FailingKVClient, so we inject PutErr here
-	// and verify propagation when the new index Put is attempted.
-	//
-	// The account Put will fail first with PutErr, which is acceptable for this
-	// test — we just confirm any Put error is surfaced correctly.
+	// Any Put error, including the account Put, is surfaced.
 	fkv.PutErr = errors.New("put failure")
 	err := s.Update(ctx, testAccount("uuid-1", "+15559999999"))
 	require.Error(t, err)
@@ -512,22 +506,7 @@ func TestKVAccountStore_Delete_NumberIndexNonKNFDeleteError(t *testing.T) {
 	sel := &selectiveKV{KVClient: kv, failAfter: 1, injectErr: errors.New("index delete failure")}
 	sel.KVClient = kv
 
-	// Override Delete with a closure via a thin adapter — since we cannot embed
-	// and override a method on the spot in Go, we use the FailingKVClient and
-	// seed the delegate directly.
-	//
-	// Alternative: use the real store and verify Delete removes the number-index
-	// by seeding the delegate of FailingKVClient, then switching DeleteErr only
-	// after we know the account key has been removed. Because FailingKVClient
-	// applies DeleteErr uniformly, the only way to reach the number-index
-	// delete path is to have the first Delete succeed. We achieve this by
-	// testing the path indirectly: if account has no number (empty string), the
-	// number-index branch is skipped entirely and Delete succeeds. This confirms
-	// the `if account.Number != ""` guard works correctly.
-	//
-	// The non-KNF number-index delete error path is structurally equivalent to
-	// the account-key delete error path already tested above; both call
-	// `return err` on a non-KNF error from `s.kv.Delete`.
+	// An account with no number skips the number-index delete, so Delete succeeds.
 	_ = sel
 
 	// Verify: account with no number never reaches the number-index delete path.

@@ -60,10 +60,7 @@ func contextWithDevice(ctx context.Context, deviceID uint64) context.Context {
 	return context.WithValue(ctx, deviceContextKey, deviceID)
 }
 
-// deviceIDFromContext returns the authenticated device ID for the request. It
-// returns accounts.PrimaryDeviceID when no device principal is present (for
-// example on sealed-sender or unauthenticated paths) so that callers always
-// observe a valid device ID.
+// deviceIDFromContext returns the authenticated device ID, or accounts.PrimaryDeviceID when there is none.
 func deviceIDFromContext(ctx context.Context) uint64 {
 	if id, ok := ctx.Value(deviceContextKey).(uint64); ok {
 		return id
@@ -133,10 +130,7 @@ func loggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 		recorder := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(recorder, r)
 
-		// Redact credentials from the logged path — both the query string
-		// and the path segments. Query-only redaction was the original and
-		// left the larger hole: the credentials this API carries are mostly
-		// PATH segments.
+		// Redact credentials from both the query string and the path segments.
 		logPath := redactPathSegments(r.URL.Path)
 		if r.URL.RawQuery != "" {
 			logPath += "?" + redactQueryParams(r.URL.RawQuery)
@@ -151,29 +145,7 @@ func loggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
 	})
 }
 
-// credentialPathPrefixes lists route prefixes whose NEXT path segment is a
-// credential or a resolvable handle rather than an ordinary identifier.
-//
-//   - /v1/verification/session/{id} — the id is what POST /v1/registration
-//     accepts as proof of verification (enforceVerifiedSession). Anyone who
-//     can read it can register that phone number until the session expires,
-//     so logging it turns log access into account takeover.
-//   - /v1/accounts/username_link/{handle} — resolving the handle returns the
-//     account's encrypted username blob.
-//   - /v1/fido2/session/{id} and /v1/fido2/enroll/{id}/complete — the id is
-//     the handle to an in-flight WebAuthn ceremony, and completing that
-//     ceremony is what binds a new authenticator to the account. These routes
-//     only exist under the fido2 build tag; a prefix that matches nothing
-//     costs nothing, and keeping one policy for the whole access log is
-//     safer than a policy that changes shape with the build.
-//
-// Account UUIDs (/v1/profile/{identifier}, /v2/keys/{identifier}/…) and FIDO2
-// credential ids (/v1/fido2/credentials/{id}) are deliberately NOT redacted:
-// they are the keys an operator correlates by, they are not bearer
-// credentials — a WebAuthn credential id is a public handle the server itself
-// hands out in allowCredentials — and blanking them would leave the access log
-// unable to answer "what happened to this account". That is a judgement worth
-// revisiting deliberately, not by reflex.
+// credentialPathPrefixes are routes whose next segment is a credential or handle: verification session ids, username link handles, FIDO2 ceremony ids. Account UUIDs and FIDO2 credential ids are not redacted.
 var credentialPathPrefixes = []string{
 	"/v1/verification/session/",
 	"/v1/accounts/username_link/",
@@ -184,13 +156,7 @@ var credentialPathPrefixes = []string{
 // redactedSegment replaces a credential-bearing path segment in log output.
 const redactedSegment = "[REDACTED]"
 
-// redactPathSegments replaces the segment following a credential-bearing
-// route prefix, preserving the rest of the path so the route is still
-// identifiable:
-//
-//	/v1/verification/session/<id>/code -> /v1/verification/session/[REDACTED]/code
-//
-// The result is for log output only.
+// redactPathSegments replaces the segment after a credential prefix with [REDACTED]; for log output only.
 func redactPathSegments(path string) string {
 	for _, prefix := range credentialPathPrefixes {
 		if !strings.HasPrefix(path, prefix) {
@@ -209,11 +175,7 @@ func redactPathSegments(path string) string {
 	return path
 }
 
-// redactQueryParams replaces the values of sensitive query parameters
-// (login, password) with [REDACTED] to prevent credential exposure in logs.
-// The resulting string is suitable for use in log output only — it is not
-// a valid URL-encoded query string because the redaction marker contains
-// unencoded bracket characters.
+// redactQueryParams replaces login and password values with [REDACTED]; for log output only, not a valid query string.
 func redactQueryParams(rawQuery string) string {
 	params, err := url.ParseQuery(rawQuery)
 	if err != nil {
@@ -240,17 +202,7 @@ func redactQueryParams(rawQuery string) string {
 	return buf.String()
 }
 
-// authMiddleware extracts Basic Auth credentials from the request, validates
-// them against the accounts manager, and stores the authenticated account in
-// the request context. The expected credential format after base64 decoding is
-// "uuid.deviceId:password" or "uuid:password".
-//
-// Security properties:
-//   - Auth token comparison uses HKDF-SHA256 via auth.SaltedTokenHash.Verify to
-//     prevent timing attacks that could leak valid tokens.
-//   - When the UUID is not found a pre-computed dummy SaltedTokenHash.Verify
-//     call is performed so that the response time is indistinguishable from a
-//     real verification, preventing UUID existence oracle attacks via timing.
+// authMiddleware validates Basic credentials ("uuid.deviceId:password" or "uuid:password") and stores the account; unknown UUIDs verify a dummy hash to equalise timing.
 func authMiddleware(am service.AccountService, next http.HandlerFunc) http.HandlerFunc {
 	// Pre-compute a dummy hash at middleware initialisation. On account-not-found
 	// paths we call dummyHash.Verify to perform the same HKDF derivation as a
@@ -297,11 +249,7 @@ func authMiddleware(am service.AccountService, next http.HandlerFunc) http.Handl
 			return
 		}
 
-		// Verify the password against the *authenticated device's* stored
-		// token hash — not the primary device's — so that linked devices
-		// authenticate as themselves and device-scoped authorization is
-		// enforceable downstream. The constant-time comparison is
-		// encapsulated inside AuthTokenHash.Verify (crypto/subtle).
+		// Verify against the authenticated device's token hash, in constant time.
 		device := acct.GetDevice(deviceID)
 		if device == nil || device.AuthTokenHash == nil {
 			// Equalise timing for a missing/credential-less device.
@@ -322,35 +270,8 @@ func authMiddleware(am service.AccountService, next http.HandlerFunc) http.Handl
 	}
 }
 
-// optionalAuthMiddleware allows a request to proceed via one of two
-// authentication mechanisms:
-//
-//  1. HTTP Basic auth (existing flow) — behaves identically to authMiddleware.
-//  2. Unidentified-Access-Key header — the header value is base64-decoded and
-//     compared constant-time against the DESTINATION account's stored
-//     UnidentifiedAccessKey. On success the request context is marked with
-//     contextWithUnidentifiedSender so that downstream handlers can set the
-//     correct EnvelopeTypeUnidentifiedSender envelope type.
-//
-// The destination UUID must be supplied by the caller via the destUUID
-// parameter (typically extracted from the URL path before the middleware
-// wraps the handler).
-//
-// The destination account is located via resolveDest, which must understand
-// the same identifier shapes the handler does (ACI:<uuid>, PNI:<uuid>, bare
-// UUID, or E.164) so that sealed-sender lookups succeed for every identifier
-// form, not just a bare ACI UUID.
-//
-// Security properties:
-//   - UAK comparison always uses crypto/subtle.ConstantTimeCompare to prevent
-//     timing oracle attacks.
-//   - When the destination does not exist a constant-time dummy comparison is
-//     still performed so that account existence cannot be inferred from
-//     response timing.
-//   - Accounts with a nil or zero-length UnidentifiedAccessKey reject UAK
-//     authentication unconditionally; the account must opt in by having a
-//     non-empty key. A caller cannot authenticate by supplying an all-zero
-//     key against a UAK-less account.
+// optionalAuthMiddleware accepts Basic auth or an Unidentified-Access-Key compared in constant time against the destination's key, marking the request as sealed sender.
+// resolveDest must accept every identifier shape; an account without a key never accepts UAK, and a missing account still runs a dummy comparison.
 func optionalAuthMiddleware(am service.AccountService, resolveDest func(*http.Request) (*accounts.Account, error), next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Fast path: Basic auth present — delegate entirely to the existing
@@ -380,12 +301,7 @@ func optionalAuthMiddleware(am service.AccountService, resolveDest func(*http.Re
 
 		destAcct, lookupErr := resolveDest(r)
 
-		// hasUAK is true only when the destination account exists AND has a
-		// non-empty UnidentifiedAccessKey. A constant-time comparison is always
-		// performed (against a fixed 16-byte zero buffer when there is no real
-		// key) so the accept/reject branch — and thus account/key existence —
-		// is not revealed by control flow; the request is accepted only when a
-		// real key was present and matched.
+		// Always compare in constant time (against zeros when there is no key); accept only a real, matching key.
 		hasUAK := lookupErr == nil && destAcct != nil && len(destAcct.UnidentifiedAccessKey) > 0
 		storedKey := make([]byte, 16)
 		if hasUAK {
@@ -397,10 +313,7 @@ func optionalAuthMiddleware(am service.AccountService, resolveDest func(*http.Re
 			return
 		}
 
-		// UAK matched and account exists: mark as unidentified sender. We do
-		// NOT place the destination account into the context as the "sender"
-		// account — the sender is anonymous by design. Downstream handlers
-		// check isUnidentifiedSender to select the correct envelope type.
+		// The sender stays anonymous: mark the request, never store the destination as the sender.
 		ctx := contextWithUnidentifiedSender(r.Context())
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}
@@ -409,12 +322,7 @@ func optionalAuthMiddleware(am service.AccountService, resolveDest func(*http.Re
 // writeJSON marshals v as JSON and writes it to the response with the given
 // status code. If marshaling fails, a 500 Internal Server Error is written.
 func writeJSON(w http.ResponseWriter, status int, v any) {
-	// Encode through secrets.JSONAppender when the payload offers it, so the
-	// plaintext lands in a buffer THIS function owns. json.Marshal on a
-	// credential cannot achieve that: the type's MarshalJSON must return a
-	// fresh buffer, encoding/json copies it and drops the original, and the
-	// abandoned copy holds the password with no owner left to wipe it. The
-	// appender hands the destination in, so there is exactly one buffer.
+	// Encode through secrets.JSONAppender when offered, so the plaintext lands only in a buffer this function owns.
 	var (
 		data []byte
 		err  error
@@ -424,40 +332,17 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	} else {
 		data, err = json.Marshal(v)
 	}
-	// Wipe before the error check, not after it: a failed AppendJSON can have
-	// written a partial body, and on the credential types the username and the
-	// opening of the password literal are already in the buffer by the time
-	// anything can fail.
+	// Wipe before the error check: a failed append can leave a partial secret.
 	defer secure.Wipe(data)
 	if err != nil {
 		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
 		return
 	}
-	// The wipe above is UNCONDITIONAL, and deliberately so: writeJSON cannot
-	// know which payloads carry secrets. Only the ENCODE is conditional. A
-	// conditional wipe would need every credential type to opt in through a
-	// marker and would fail open for the next type that forgot — the same
-	// shape as a suppression whose stated reason nothing enforces. A type that
-	// forgets to implement JSONAppender still gets its buffer wiped; it just
-	// leaves encoding/json's abandoned copy behind, which is strictly the
-	// situation before this change rather than a regression.
-	//
-	// The cost is one memclr per response on a buffer nothing reads again.
+	// The wipe is unconditional because writeJSON cannot know which payloads carry secrets.
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	// #nosec G705 -- the response body is HTML-escaped JSON served as
-	// application/json, so it cannot be sniffed into an executing context.
-	//
-	// This taint finding appeared only when the encode above gained the
-	// JSONAppender branch: gosec treats the interface method's return as
-	// untrusted, where json.Marshal was a known-safe source. The escaping is
-	// not merely asserted here, it is ENFORCED by test: every production
-	// appender is pinned byte-identical to encoding/json's own output over a
-	// corpus that includes `<`, `>` and `&` (the *_wireform_test.go files for
-	// all four credential types), and encoding/json escapes those by default.
-	// An appender that stopped escaping would fail those tests before it could
-	// reach this Write.
+	// #nosec G705 -- HTML-escaped JSON served as application/json; the wireform tests pin every appender to encoding/json's escaping.
 	if _, err := w.Write(data); err != nil {
 		slog.Default().Error("failed to write JSON response", slog.String("error", err.Error()))
 	}
@@ -499,10 +384,7 @@ func (lb *limitedBody) Close() error {
 	return lb.rc.Close()
 }
 
-// limitWriter is a ResponseWriter coupled to a limitedBody. Before writing
-// headers it checks whether the body reader encountered a MaxBytesError, in
-// which case it forces a 413 response regardless of what the inner handler
-// intended to write.
+// limitWriter forces a 413 when the body reader hit a MaxBytesError.
 type limitWriter struct {
 	http.ResponseWriter
 	body        *limitedBody
@@ -540,11 +422,7 @@ func (lw *limitWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return nil, nil, &HijackError{}
 }
 
-// bodyLimitMiddleware wraps each request body with http.MaxBytesReader to
-// enforce a maximum body size. If the body exceeds the configured limit,
-// a 413 Request Entity Too Large response is returned regardless of what the
-// inner handler writes. Upload and CDN paths receive UploadBodyLimit; all
-// other paths receive DefaultBodyLimit.
+// bodyLimitMiddleware caps request bodies (UploadBodyLimit on upload and CDN paths, DefaultBodyLimit elsewhere) and answers 413 past the cap.
 func bodyLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		limit := DefaultBodyLimit
@@ -601,11 +479,7 @@ func securityHeadersMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// rateLimitMiddleware applies rate limiting using the provided RateLimiter. The
-// key used for limiting is determined by keyFn, which receives the request and
-// the account stored in the context (nil for unauthenticated requests). When
-// the limiter returns a *signalerrors.RateLimitedError, the middleware writes a
-// 429 response with a Retry-After header and halts the chain.
+// rateLimitMiddleware limits by keyFn(request, account); a RateLimitedError becomes 429 with Retry-After.
 func rateLimitMiddleware(rl limits.RateLimiter, keyFn func(r *http.Request, acct *accounts.Account) string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		acct := accountFromContext(r.Context())
@@ -624,13 +498,7 @@ func rateLimitMiddleware(rl limits.RateLimiter, keyFn func(r *http.Request, acct
 	})
 }
 
-// ipKey is a keyFn for rateLimitMiddleware that extracts the remote IP
-// address from the request. When trustedProxies is non-empty, the
-// X-Forwarded-For header is only trusted if the immediate RemoteAddr falls
-// within one of the trusted CIDR ranges; when trusted, the rightmost
-// untrusted hop is extracted instead of the leftmost (which is trivially
-// spoofable). When trustedProxies is empty, XFF is ignored entirely and
-// RemoteAddr is used to prevent header spoofing.
+// ipKey returns the client IP: X-Forwarded-For (rightmost untrusted hop) only from trusted proxies, else RemoteAddr.
 func ipKey(r *http.Request, _ *accounts.Account) string {
 	return ipKeyWithProxies(r, nil)
 }
@@ -742,12 +610,7 @@ func isValidE164(number string) bool {
 	return true
 }
 
-// requireNotAuthenticated rejects requests that include valid Basic Auth
-// credentials. This prevents authenticated users from using endpoints
-// intended for anonymous access, matching the Java Signal-Server pattern.
-// It returns true when the request carries no Basic Auth credentials and the
-// handler should continue; false when Basic Auth was detected and a 400
-// response has already been written.
+// requireNotAuthenticated writes 400 and returns false when Basic credentials are present.
 func requireNotAuthenticated(w http.ResponseWriter, r *http.Request) bool {
 	if _, _, ok := r.BasicAuth(); ok {
 		writeError(w, http.StatusBadRequest, "authentication not permitted on this endpoint")

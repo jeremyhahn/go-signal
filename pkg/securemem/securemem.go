@@ -1,14 +1,4 @@
-// Package securemem owns the process lifecycle of go-qrdb's protected memory
-// for every go-signal binary.
-//
-// go-qrdb's secure SDK leaves three steps to the binary that owns the
-// process: harden it against inspection (secure.HardenProcess) before any
-// protected memory exists, install the process-wide locked-memory budget
-// (secure.SetAllocator) before the first protected allocation, and wipe every
-// live protected allocation on an orderly shutdown (secure.WipeAll). A
-// Lifecycle does all three, on the command paths that hold secrets only.
-// go-qrdb's cmd/qrdbd start command is the reference wiring this package
-// follows.
+// Package securemem hardens the process, installs the locked-memory budget and wipes protected memory on shutdown for every go-signal binary.
 package securemem
 
 import (
@@ -23,20 +13,10 @@ import (
 )
 
 const (
-	// defaultBudgetBytes is the budget installed when the host's
-	// RLIMIT_MEMLOCK leaves room for it, and the ceiling of a budget derived
-	// from a smaller limit. It matches go-qrdb's DefaultSecureMemoryBudgetMiB
-	// (64 MiB): ample for KB-scale keys, credentials and PINs with headroom
-	// for concurrent traffic, while still bounding what callers can drive the
-	// process to mlock.
+	// defaultBudgetBytes is the locked-memory budget (64 MiB), and the ceiling of one derived from a smaller limit.
 	defaultBudgetBytes int64 = 64 << 20
 
-	// headroomBytes is the part of a bounded RLIMIT_MEMLOCK a derived budget
-	// leaves for locked memory the process allocator does not account for —
-	// sealing a secure.Secret and the Sealer's own key material lock pages
-	// against the same per-process ceiling, outside the budget. All of it is
-	// page-scale, so 2 MiB is generous while still leaving the budget three
-	// quarters of a stock 8 MiB container limit.
+	// headroomBytes is the part of RLIMIT_MEMLOCK left for locked memory outside the budget.
 	headroomBytes int64 = 2 << 20
 
 	// minBudgetBytes is the smallest budget a derivation may settle on. Below
@@ -50,11 +30,7 @@ const (
 // variable only so tests can bound a wipe without waiting for it.
 var wipeTimeout = 30 * time.Second
 
-// The SDK's process-lifecycle calls are irreversible for the calling
-// process — hardening cannot be undone, the allocator installs once, and the
-// wipe destroys the Sealer's keys — and the host calls read the real
-// RLIMIT_MEMLOCK, so they are reached through these seams, which tests
-// replace.
+// Seams for the irreversible process calls and the RLIMIT_MEMLOCK read; tests replace them.
 var (
 	hardenProcess             = secure.HardenProcess
 	discoverLockedMemoryLimit = secure.DiscoverLockedMemoryLimit
@@ -95,14 +71,7 @@ var hardeningLogLevel = map[secure.ProcessHardening]slog.Level{
 	secure.ProcessHardeningUnavailable: slog.LevelWarn,
 }
 
-// Lifecycle is one process's secure-memory lifecycle.
-//
-// main builds it from the binary's configured logger and runs the command
-// inside Run. Every command path that loads configuration or constructs
-// secrets calls Start before either: configuration loading seals secrets, so
-// nothing on such a path may come earlier. Commands that do neither, such as
-// version and help, never call Start, so they run on any host memlock limit
-// and the process exits unhardened, unbudgeted and holding nothing to wipe.
+// Lifecycle is one process's secure-memory lifecycle; call Start before loading config or creating secrets.
 type Lifecycle struct {
 	logger  *slog.Logger
 	started atomic.Bool
@@ -114,12 +83,7 @@ func New(logger *slog.Logger) *Lifecycle {
 	return &Lifecycle{logger: logger}
 }
 
-// Start hardens the process and installs the locked-memory budget. Once it
-// has succeeded, later calls return nil without repeating either step.
-//
-// A hardening or budget failure is returned before the caller loads
-// anything, and the command must fail with it — the process holds no secrets
-// yet and must not acquire any unhardened or unbudgeted.
+// Start hardens the process and installs the budget once; on failure the command must fail before loading anything.
 func (l *Lifecycle) Start() error {
 	if l.started.Load() {
 		return nil
@@ -134,11 +98,7 @@ func (l *Lifecycle) Start() error {
 	return nil
 }
 
-// Run runs fn and, when Start has succeeded by the time fn returns or
-// panics, wipes every live protected allocation. A process that never
-// started holds no protected memory, so it skips the wipe. An incomplete
-// shutdown wipe is reported as a *WipeError unless fn already failed; fn's
-// error is the one the caller acts on.
+// Run runs fn and wipes protected memory if Start succeeded; a failed wipe is a *WipeError unless fn failed.
 func (l *Lifecycle) Run(fn func() error) (err error) {
 	defer l.wipe(&err)
 	return fn()
@@ -163,13 +123,7 @@ func (l *Lifecycle) harden() error {
 	return nil
 }
 
-// installBudget resolves the locked-memory budget and installs it as the
-// process allocator.
-//
-// secure.ErrAllocatorInstalled is not fatal by itself: a budget installed
-// earlier in the process is benign when its limit equals the resolved one.
-// Any other limit is a *BudgetMismatchError, since every protected
-// allocation would otherwise run against a figure nobody chose.
+// installBudget installs the resolved budget; an existing allocator with a different limit is *BudgetMismatchError.
 func (l *Lifecycle) installBudget() error {
 	resolved, err := resolveBudget()
 	if err != nil {
@@ -203,13 +157,7 @@ func (l *Lifecycle) installBudget() error {
 	return nil
 }
 
-// resolveBudget derives the budget from the host: min(defaultBudgetBytes,
-// RLIMIT_MEMLOCK minus headroomBytes), rounded down to whole pages. A
-// ceiling that is unlimited, or not enforced because the process holds
-// CAP_IPC_LOCK, binds nothing, so the full default applies. A ceiling too
-// small to leave minBudgetBytes fails closed with *LimitTooSmallError, and a
-// ceiling that cannot be read fails closed with the discovery error: in
-// neither case is there a budget the process could honestly claim to enforce.
+// resolveBudget is min(defaultBudgetBytes, RLIMIT_MEMLOCK - headroomBytes) in whole pages; unlimited gets the default, too small or unreadable fails closed.
 func resolveBudget() (budget, error) {
 	limit, err := discoverLockedMemoryLimit()
 	if err != nil {

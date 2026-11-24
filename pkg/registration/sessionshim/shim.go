@@ -11,10 +11,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/verification"
 )
 
-// DefaultCaptchaEscalationAfter is the CodeRequests threshold at which
-// the shim flips a session into captcha-required state. Mirrors the
-// Java reference where the second SendCode within a session must clear
-// a captcha first.
+// DefaultCaptchaEscalationAfter is the code-request count after which a session requires a captcha.
 const DefaultCaptchaEscalationAfter = 1
 
 // Config configures a Shim.
@@ -28,11 +25,7 @@ type Config struct {
 	// CaptchaChecker validates user-submitted captcha solutions. When
 	// nil, SubmitCaptcha returns *verification.CaptchaCheckUnavailableError.
 	CaptchaChecker *captcha.Checker
-	// CaptchaEscalationAfter controls when SendCode flips the session
-	// into captcha-required mode based on the CodeRequests counter the
-	// registration-service returns. Zero uses
-	// DefaultCaptchaEscalationAfter. A negative value disables
-	// escalation entirely.
+	// CaptchaEscalationAfter sets the escalation threshold; zero uses the default, negative disables it.
 	CaptchaEscalationAfter int
 	// CaptchaScoreThreshold is the minimum upstream captcha score
 	// required to accept a submission. Zero uses
@@ -40,10 +33,7 @@ type Config struct {
 	CaptchaScoreThreshold float64
 }
 
-// Shim is the chat-server-side wrapper around a registration.Client
-// that adds captcha-required tracking. The REST handler holds a *Shim
-// and is unaware of whether the underlying client is in-process or
-// gRPC-backed.
+// Shim wraps a registration.Client with captcha-required tracking.
 type Shim struct {
 	client                 registration.Client
 	captchaStore           CaptchaStore
@@ -51,13 +41,7 @@ type Shim struct {
 	captchaEscalationAfter int
 	captchaScoreThreshold  float64
 
-	// sendCounts tracks per-session SendCode count chat-server-side.
-	// The registration-service proto does not expose CodeRequests, so
-	// the shim maintains its own counter to drive captcha escalation
-	// decisions. This is intentionally in-memory: a signald restart
-	// resets the counter, but the captcha-required flag itself
-	// persists in CaptchaStore (which production deployments back
-	// with Redis or similar).
+	// sendCounts counts SendCode per session in memory; the captcha flag itself persists in CaptchaStore.
 	sendCounts sync.Map // map[string]int
 }
 
@@ -119,10 +103,7 @@ func (s *Shim) GetSession(ctx context.Context, sessionID string) (*verification.
 	return session, nil
 }
 
-// SendCode blocks if the session is locally flagged as
-// captcha-required, otherwise forwards through to the registration
-// service. On a successful send, the shim escalates the session into
-// captcha-required mode once CodeRequests crosses the threshold.
+// SendCode refuses a captcha-required session, else forwards, flagging the session once the threshold is crossed.
 func (s *Shim) SendCode(ctx context.Context, sessionID string) (*verification.VerificationSession, error) {
 	required, err := s.captchaStore.Required(ctx, sessionID)
 	if err != nil {
@@ -139,8 +120,7 @@ func (s *Shim) SendCode(ctx context.Context, sessionID string) (*verification.Ve
 	// surface CodeRequests, so the shim owns this tally.
 	count := s.bumpSendCount(sessionID)
 	session.CodeRequests = count
-	// Escalation: after the configured number of code requests, mark
-	// the session as captcha-required so the NEXT SendCode is gated.
+	// Past the threshold, gate the next SendCode on a captcha.
 	if s.captchaChecker != nil && s.captchaEscalationAfter > 0 &&
 		count >= s.captchaEscalationAfter {
 		_ = s.captchaStore.SetRequired(ctx, sessionID, session.ExpiresAt)
@@ -165,10 +145,7 @@ func (s *Shim) SubmitCode(ctx context.Context, sessionID, code string) (*verific
 	return s.client.SubmitCode(ctx, sessionID, code)
 }
 
-// SubmitCaptcha verifies the captcha solution locally and, on success,
-// clears the captcha-required flag for the session. The session blob
-// returned reflects the cleared state so callers can render it
-// directly without an extra GetSession round-trip.
+// SubmitCaptcha verifies the solution and clears the session's captcha flag, returning the updated session.
 func (s *Shim) SubmitCaptcha(ctx context.Context, sessionID, token, remoteIP string) (*verification.VerificationSession, error) {
 	if s.captchaChecker == nil {
 		return nil, &verification.CaptchaCheckUnavailableError{}
@@ -182,10 +159,7 @@ func (s *Shim) SubmitCaptcha(ctx context.Context, sessionID, token, remoteIP str
 	}
 	assess, err := s.captchaChecker.Verify(ctx, captcha.ActionChallenge, token, remoteIP)
 	if err != nil {
-		// Token-format / provider-lookup / site-key-allowlist errors
-		// come back as captcha.* error types; collapse them into a
-		// unified *verification.CaptchaRejectedError so the REST
-		// handler can map cleanly to 422.
+		// Collapse captcha errors into *verification.CaptchaRejectedError (422).
 		var (
 			parseErr   *captcha.InvalidTokenFormatError
 			actionErr  *captcha.InvalidActionError

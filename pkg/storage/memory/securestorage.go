@@ -83,8 +83,7 @@ func (s *MemoryManifestStore) GetItem(_ context.Context, accountUUID string, key
 	return cloneStorageItem(item), nil
 }
 
-// PutItem stores an item under the given key for the given account UUID,
-// replacing any previously stored value.
+// PutItem stores or replaces an item for the account.
 func (s *MemoryManifestStore) PutItem(_ context.Context, accountUUID string, item *securestorage.StorageItem) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -140,10 +139,7 @@ func cloneStorageItem(item *securestorage.StorageItem) *securestorage.StorageIte
 	return &clone
 }
 
-// hexKey converts a byte-slice key to a hex string for use as a map key.
-// Using encoding/hex here would be correct but pulls in an import; instead
-// we use a compact inline conversion to keep the hot path allocation-free for
-// short keys.
+// hexKey hex-encodes a key for use as a map key.
 func hexKey(b []byte) string {
 	const hexDigits = "0123456789abcdef"
 	if len(b) == 0 {

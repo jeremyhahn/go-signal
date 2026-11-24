@@ -36,8 +36,7 @@ func TestCertificateRotationWorker_NilCertsMgrIsNoOp(t *testing.T) {
 func TestCertificateRotationWorker_InstallsFreshKey(t *testing.T) {
 	mgr := newTestCertsMgr(t)
 	w := NewCertificateRotationWorker(nil, mgr)
-	// Pin the wall clock so we can assert keyId deterministically.
-	// 2027-01-01 — after certKeyIDEpoch so the keyId computation is valid.
+	// Pin the clock after certKeyIDEpoch so keyId is deterministic.
 	w.nowFn = func() time.Time { return time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC) }
 
 	if err := w.Run(context.Background()); err != nil {
@@ -112,7 +111,7 @@ func TestCertificateRotationWorker_DeterministicWithFixedRandomness(t *testing.T
 	w := NewCertificateRotationWorker(nil, mgr)
 	// Ed25519 GenerateKey reads 32 bytes of seed material.
 	w.randSource = &recordingReader{data: bytes.Repeat([]byte{0x42}, 32)}
-	// 2027-01-01 — after certKeyIDEpoch so the keyId computation is valid.
+	// A time after certKeyIDEpoch.
 	w.nowFn = func() time.Time { return time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC) }
 
 	if err := w.Run(context.Background()); err != nil {

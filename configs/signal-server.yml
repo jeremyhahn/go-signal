@@ -47,15 +47,7 @@ push:
   fcm:
     credentials: ""
 
-# Avatar/attachment CDN. All four fields must be non-empty for the server to
-# sign a profile-avatar upload form; with any of them blank, PUT /v1/profile
-# with an avatar fails closed with 503 rather than issuing a form signed with
-# nothing.
-#
-# These are development placeholders, not credentials — the dev stack serves
-# /cdn from signald itself, so nothing authenticates against S3. Production
-# mode refuses to boot with them: validateProduction rejects both an empty
-# CDN config and these specific placeholder values.
+# CDN fields for avatar upload forms: all four must be set; these development placeholders are refused in production mode.
 cdn:
   bucket: "signal-dev-cdn"
   region: "us-east-1"
@@ -63,10 +55,7 @@ cdn:
   secretKey: "dev-secret-key"
 
 limits:
-  # Integration-test-friendly limits: all buckets are large enough to
-  # accommodate 200+ rapid-fire requests without returning 429. In production,
-  # reduce these values to match the Signal-Server defaults documented in
-  # pkg/limits/config.go.
+  # Test-sized limits; production uses the defaults in pkg/limits/config.go.
   registration:
     bucketSize: 10000
     leakRatePerMin: 6000
@@ -175,16 +164,7 @@ captcha:
   # below this value are rejected. Defaults to 0.5 when zero.
   scoreThreshold: 0.5
 
-# Dynamic feature flags served by GET /v2/config. signald upserts these on
-# every boot, so a flag added here appears in the live catalog without an
-# admin write.
-#
-# percentage: 100 puts every account in the bucket, so all of them resolve to
-# `value` rather than `defaultValue` — buckets are 0–99 and the manager
-# enrolls an account when its bucket is strictly below the percentage.
-#
-# These are the development defaults. A production deployment sets its own
-# rollout percentages; nothing here is a statement about what Signal ships.
+# Feature flags served by GET /v2/config, upserted on boot; percentage 100 enrolls every account. Development defaults.
 remoteConfig:
   defaults:
     - name: "global.calling"

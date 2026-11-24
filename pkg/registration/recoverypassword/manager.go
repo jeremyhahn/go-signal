@@ -7,18 +7,10 @@ import (
 	"time"
 )
 
-// DefaultExpiration is the lifetime applied to a stored recovery password
-// before Manager.Verify rejects it as expired. Java Signal-Server configures
-// this via its DynamoDB table TTL; we apply it explicitly on each Put so the
-// memory and qrdb backends behave identically without relying on a
-// background sweeper.
+// DefaultExpiration is a stored recovery password's lifetime, applied on each Put.
 const DefaultExpiration = 30 * 24 * time.Hour // 30 days
 
-// Manager implements the recovery-password operations exposed by Java
-// Signal-Server's RegistrationRecoveryPasswordsManager: Verify, Store, Remove.
-//
-// It is safe for concurrent use; concurrency-sensitive state lives in the
-// Store implementation.
+// Manager verifies, stores and removes recovery passwords; safe for concurrent use.
 type Manager struct {
 	store      Store
 	expiration time.Duration
@@ -53,10 +45,7 @@ func (m *Manager) SetClock(now func() time.Time) {
 	}
 }
 
-// Verify returns true if password matches the recovery password currently
-// associated with pni. Returns false (with a nil error) if no entry exists,
-// the entry has expired, or the password does not verify; non-nil errors are
-// reserved for unexpected store failures.
+// Verify reports whether password matches pni's unexpired recovery password; errors are store failures only.
 func (m *Manager) Verify(ctx context.Context, pni string, password []byte) (bool, error) {
 	if pni == "" {
 		return false, &InvalidArgumentError{Field: "pni", Message: "must not be empty"}

@@ -71,10 +71,7 @@ func (s *Session) Format() FrameFormat {
 	return s.format
 }
 
-// SetFormat forces the frame format for this session. This must be called
-// before sending or receiving any messages, and takes effect only once.
-// Use this when the protocol requires a specific format (e.g. provisioning
-// always uses protobuf).
+// SetFormat fixes the frame format before any traffic; only the first call takes effect.
 func (s *Session) SetFormat(f FrameFormat) {
 	s.setFormat(f)
 }
@@ -135,11 +132,7 @@ func (s *Session) Done() <-chan struct{} {
 	return s.done
 }
 
-// ReadPump reads messages from the WebSocket connection in a loop and
-// dispatches each parsed frame to the provided handler. It detects the frame
-// format (binary = protobuf, text = JSON) from the first message and uses that
-// format for the session lifetime. It blocks until the connection is closed or
-// an error occurs, at which point it calls Close.
+// ReadPump dispatches each frame to handler, fixing the format from the first message (binary protobuf, text JSON), and closes the session on exit.
 func (s *Session) ReadPump(handler func(*WebSocketMessage)) {
 	defer s.Close()
 

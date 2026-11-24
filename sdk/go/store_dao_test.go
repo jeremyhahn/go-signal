@@ -15,13 +15,7 @@ import (
 	"github.com/jeremyhahn/go-qrdb/pkg/kvstore"
 )
 
-// TestDAOStore_CloseReleasesTheStoreItOpened is the sdk half of the #55 fix.
-//
-// Close used to return nil without doing anything, so the PebbleDB behind
-// NewDefaultDAOStore was never released: its exclusive directory lock outlived
-// every caller that shut down correctly. Reopening the same directory is the
-// observable proof — it fails with "lock held by current process" if Close goes
-// back to doing nothing.
+// TestDAOStore_CloseReleasesTheStoreItOpened checks Close releases Pebble's lock by reopening the directory.
 func TestDAOStore_CloseReleasesTheStoreItOpened(t *testing.T) {
 	dir := t.TempDir()
 
@@ -34,10 +28,7 @@ func TestDAOStore_CloseReleasesTheStoreItOpened(t *testing.T) {
 	require.NoError(t, err, "the store was not released")
 }
 
-// The other half of the ownership contract: a DAOStore built from a factory the
-// caller supplied did not open that store and must not close it. Closing it
-// here would pull the database out from under a caller who is still using it —
-// a worse failure than the leak, because it happens while they are working.
+// A DAOStore must not close a store from a caller-supplied factory.
 func TestDAOStore_CloseLeavesACallerSuppliedStoreOpen(t *testing.T) {
 	dir := t.TempDir()
 
@@ -99,8 +90,7 @@ func TestNewDefaultDAOStore_CreatesStore(t *testing.T) {
 
 func TestNewDefaultDAOStore_InvalidPath(t *testing.T) {
 	parent := t.TempDir()
-	// Create a FILE at the target directory path so the embedded KV store cannot
-	// initialise — PebbleDB requires a directory, not a file.
+	// A file at the data path stops PebbleDB from initialising.
 	conflictFile := parent + "/conflict"
 	require.NoError(t, os.WriteFile(conflictFile, []byte("x"), 0644))
 

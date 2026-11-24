@@ -98,8 +98,7 @@ func TestMessages_ReportSpam(t *testing.T) {
 	uuid1, _ := registerTestAccount(t, env, uniquePhoneNumber(), "pass1")
 	uuid2, _ := registerTestAccount(t, env, uniquePhoneNumber(), "pass2")
 
-	// Report spam from uuid2 for a specific message GUID. Both the source and
-	// messageGuid path parameters must be valid UUIDs per the handler's parseUUID check.
+	// Both path parameters must be valid UUIDs.
 	messageGUID := "11111111-1111-1111-1111-111111111111"
 	resp := env.doAuthRequest(t, "POST", "/v1/messages/report/"+uuid2+"/"+messageGUID, nil, uuid1, "pass1")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)

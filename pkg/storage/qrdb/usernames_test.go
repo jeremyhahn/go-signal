@@ -153,7 +153,7 @@ func TestUsernameStore_SetLink_ReplacesOld(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Old handle should no longer resolve.
+	// The old handle does not resolve.
 	if _, err := s.GetLink(ctx, "old"); err == nil {
 		t.Fatal("old handle should be gone after SetLink replacement")
 	}

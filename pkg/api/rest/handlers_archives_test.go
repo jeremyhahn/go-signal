@@ -184,9 +184,7 @@ func TestHandleRefreshBackup_Unauthenticated(t *testing.T) {
 // Extended archive handler tests — backup-service-enabled server
 // =============================================================================
 
-// archiveTestFixture wires a real backups.Service backed by in-memory stores
-// into the REST test server so the ZK-authenticated and account-authenticated
-// endpoints get past the "backup service not configured" 501 guard.
+// archiveTestFixture wires an in-memory backups.Service into the REST test server.
 type archiveTestFixture struct {
 	server       *Server
 	serverSecret *zkgroup.GenericServerSecretParams
@@ -914,9 +912,7 @@ func TestHandleGetCDNReadAuth_UnsupportedCDN(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// handleGetSVRBAuth — ZK auth + SVRB disabled surface
-// =============================================================================
+// handleGetSVRBAuth with SVRB disabled.
 
 func TestHandleGetSVRBAuth_Unauthenticated(t *testing.T) {
 	f := newTestServerWithBackups(t)
@@ -1491,13 +1487,10 @@ func TestHandleCopyMediaBatch_InvalidJSONBody(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// handleGetSVRBAuth — happy path test (SVRB disabled → 5xx)
-// =============================================================================
+// handleGetSVRBAuth: SVRB disabled returns 5xx.
 
 func TestHandleGetSVRBAuth_HappyPathDisabledSVRB(t *testing.T) {
-	// SVRB is disabled in the default manager — verify the handler
-	// returns a non-200 status and does NOT panic.
+	// SVRB is disabled by default: the handler returns non-200 and does not panic.
 	f := newTestServerWithBackups(t)
 	req := httptest.NewRequest(http.MethodGet, "/v1/archives/auth/svrb", nil)
 	f.setZKHeaders(t, req, backups.BackupLevelFree, backups.CredentialTypeMessages)
@@ -1785,10 +1778,7 @@ func TestHandleCopyMediaBatch_EmptyItems(t *testing.T) {
 // handleGetBackupAuth — happy path with committed credentials
 // =============================================================================
 
-// =============================================================================
-// errInjectRestBackupService: error-injecting BackupService for coverage of
-// unreachable service-error branches in REST handlers.
-// =============================================================================
+// errInjectRestBackupService injects BackupService errors into the REST handlers.
 
 // errInjectRestBackupService wraps a real BackupService and lets tests
 // override the return value of specific methods.
@@ -2300,13 +2290,7 @@ func TestHandleSetBackupId_SuccessPath(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// handleRedeemReceipt — success path (line 192)
-// The real RedeemReceipt requires a valid zkgroup receipt presentation which
-// needs a full ceremony.  Use the injector with redeemReceiptErr=nil (default)
-// and a non-empty body that passes the base64-decode step so the service call
-// is reached and the injector allows it to succeed via the nil bypass.
-// =============================================================================
+// handleRedeemReceipt success path, via the injector with redeemReceiptErr nil.
 
 func TestHandleRedeemReceipt_SuccessPath(t *testing.T) {
 	f, inj := newErrInjectRestServer(t)
@@ -2530,10 +2514,7 @@ func TestHandleGetSVRBAuth_SuccessPath(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Errorf("expected 200, got %d: %s", rr.Code, rr.Body.String())
 	}
-	// The oracle: the shape the handler used to marshal from a response struct
-	// with plain-string fields. Declared here, in the test, precisely because
-	// production no longer has such a struct — the wire form is now asserted
-	// against it rather than produced by it.
+	// The expected wire shape, as a plain-string struct.
 	var resp struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
@@ -2544,11 +2525,7 @@ func TestHandleGetSVRBAuth_SuccessPath(t *testing.T) {
 	if resp.Username != "svrb-user" {
 		t.Errorf("expected username svrb-user, got %q", resp.Username)
 	}
-	// Assert the PASSWORD reaches the client, not just the username. The
-	// client is the credential's intended bearer, so a response that dropped
-	// or redacted it would be a broken protocol — and byte-scoping the
-	// serialization is exactly the kind of change that could do so silently.
-	// The previous version of this test never looked at this field.
+	// The password reaches the client, not only the username.
 	if resp.Password != "svrb-pass" {
 		t.Errorf("expected password svrb-pass, got %q", resp.Password)
 	}
@@ -2681,9 +2658,7 @@ func TestHandleGetBackupAuth_HappyPath(t *testing.T) {
 	}
 }
 
-// A credential whose protected password is already gone must not be
-// serialized as an empty password with a 200 — the client would take it for a
-// usable SVRB credential.
+// A credential whose password is gone is not served as an empty password with 200.
 func TestHandleGetSVRBAuth_UnavailablePasswordFailsClosed(t *testing.T) {
 	f, inj := newErrInjectRestServer(t)
 	unavailable := &backups.ExternalServiceCredentials{

@@ -268,7 +268,7 @@ func TestHandleDeleteAccount_DeleteTwice(t *testing.T) {
 		t.Fatalf("first delete: expected 204, got %d", rr1.Code)
 	}
 
-	// Second delete - the account no longer exists, so auth will fail.
+	// Second delete: the account is gone, so auth fails.
 	req2 := httptest.NewRequest(http.MethodDelete, "/v1/accounts/me", nil)
 	req2.SetBasicAuth(testAccountUUID, testAuthToken)
 	rr2 := httptest.NewRecorder()
@@ -546,8 +546,7 @@ func TestHandleGetMessages_EmptyInbox(t *testing.T) {
 func TestHandleDeleteMessage_NonExistentGuid(t *testing.T) {
 	s, _ := newTestServerWithAccount(t)
 
-	// Delete a GUID that doesn't exist - in-memory store returns nil for this,
-	// so it should succeed (204). Use a valid UUID format for the path parameter.
+	// Deleting an unknown GUID succeeds with 204.
 	req := httptest.NewRequest(http.MethodDelete, "/v1/messages/uuid/99999999-9999-9999-9999-999999999999", nil)
 	req.SetBasicAuth(testAccountUUID, testAuthToken)
 	rr := httptest.NewRecorder()

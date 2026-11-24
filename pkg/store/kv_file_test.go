@@ -339,10 +339,7 @@ func TestFileKV_Scan_NoMatches(t *testing.T) {
 	assert.False(t, called)
 }
 
-// TestFileKV_Scan_KeyDeletedBetweenListAndGet exercises the TOCTOU path in
-// Scan where a key disappears after List but before Get. The implementation
-// continues past a KeyNotFoundError, so the scan should succeed with the
-// remaining keys.
+// TestFileKV_Scan_KeyDeletedBetweenListAndGet: Scan skips a key deleted between List and Get.
 func TestFileKV_Scan_KeyDeletedBetweenListAndGet(t *testing.T) {
 	kv := newTestFileKV(t)
 	ctx := context.Background()
@@ -471,11 +468,7 @@ func TestFileKV_keyPath_FlatKey(t *testing.T) {
 
 // --- Error paths that require filesystem manipulation ---
 
-// blockPath plants a regular file at rootDir/name and returns a key beneath it.
-// Using that key makes the filesystem answer ENOTDIR for every syscall that has
-// to walk through it — a fault that holds for every uid, unlike the permission
-// bits these tests used to rely on, which root bypasses
-// (testing-guidelines.md §Fault Injection).
+// blockPath plants a regular file at rootDir/name and returns a key beneath it, so every syscall through it fails with ENOTDIR, even as root.
 func blockPath(t *testing.T, rootDir, name string) string {
 	t.Helper()
 	require.NoError(t, os.WriteFile(filepath.Join(rootDir, name), []byte("regular file"), 0600))
@@ -506,11 +499,7 @@ func TestFileKV_Put_MkdirFails(t *testing.T) {
 	require.Contains(t, err.Error(), "kv_file: mkdir")
 }
 
-// TestFileKV_Put_WriteFileFails exercises the write-temp error branch in Put.
-// The fault must spare the MkdirAll that runs first, so it targets the temp
-// file alone: Put appends ".tmp.<16 hex>" to the key path, which pushes a
-// final component near NAME_MAX past the 255-byte limit and fails the write
-// with ENAMETOOLONG for every uid.
+// TestFileKV_Put_WriteFileFails: a key near NAME_MAX makes the temp name too long, failing only the temp write with ENAMETOOLONG.
 func TestFileKV_Put_WriteFileFails(t *testing.T) {
 	kv := newTestFileKV(t)
 
@@ -520,8 +509,7 @@ func TestFileKV_Put_WriteFileFails(t *testing.T) {
 	require.Contains(t, err.Error(), "kv_file: write temp")
 }
 
-// TestFileKV_Exists_StatError exercises the non-IsNotExist error branch in
-// Exists: stat through a regular file returns ENOTDIR, not ENOENT.
+// TestFileKV_Exists_StatError: stat through a regular file returns ENOTDIR, not ENOENT.
 func TestFileKV_Exists_StatError(t *testing.T) {
 	kv := newTestFileKV(t)
 	key := blockPath(t, kv.rootDir, "notadir")
@@ -531,9 +519,7 @@ func TestFileKV_Exists_StatError(t *testing.T) {
 	require.ErrorIs(t, err, syscall.ENOTDIR)
 }
 
-// TestFileKV_Get_ReadError exercises the non-IsNotExist error branch in Get:
-// reading through a regular file returns ENOTDIR, so Get must report a real
-// error rather than "key not found".
+// TestFileKV_Get_ReadError: ENOTDIR must be a real error, not key not found.
 func TestFileKV_Get_ReadError(t *testing.T) {
 	kv := newTestFileKV(t)
 	key := blockPath(t, kv.rootDir, "notadir")
@@ -546,9 +532,7 @@ func TestFileKV_Get_ReadError(t *testing.T) {
 	require.False(t, errors.As(err, &knf), "ENOTDIR must not be reported as key-not-found")
 }
 
-// TestFileKV_Delete_RemoveError exercises the non-IsNotExist error branch in
-// Delete: removing through a regular file returns ENOTDIR, which Delete must
-// propagate instead of treating the key as already absent.
+// TestFileKV_Delete_RemoveError: Delete must propagate ENOTDIR.
 func TestFileKV_Delete_RemoveError(t *testing.T) {
 	kv := newTestFileKV(t)
 	key := blockPath(t, kv.rootDir, "notadir")
@@ -630,12 +614,7 @@ func TestFileKV_DeleteIfPresent_SecondCallReturnsFalse(t *testing.T) {
 	assert.False(t, deleted2)
 }
 
-// TestFileKV_Scan_GetReadError exercises the non-KeyNotFoundError branch in
-// Scan.Get. The entry has to survive List and then fail Get, so ENOTDIR is no
-// use here — List would never enumerate it. A self-referential symlink does
-// both: filepath.Walk lstats it and sees a non-directory, so it is listed,
-// while Get's os.ReadFile follows it and fails with ELOOP. Neither step
-// depends on the uid, so this runs as root in CI.
+// TestFileKV_Scan_GetReadError: a self-referential symlink is listed but fails Get with ELOOP, for any uid.
 func TestFileKV_Scan_GetReadError(t *testing.T) {
 	kv := newTestFileKV(t)
 	ctx := context.Background()

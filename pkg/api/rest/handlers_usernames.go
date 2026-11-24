@@ -78,8 +78,7 @@ func (s *Server) handleReserveUsernameHash(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// handleConfirmUsernameHash processes PUT /v1/accounts/username_hash/confirm
-// and confirms a previously reserved username hash.
+// handleConfirmUsernameHash handles PUT /v1/accounts/username_hash/confirm.
 func (s *Server) handleConfirmUsernameHash(w http.ResponseWriter, r *http.Request) {
 	acct := accountFromContext(r.Context())
 	if acct == nil {
@@ -165,10 +164,7 @@ func (s *Server) handleDeleteUsernameHash(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleLookupUsernameHash processes GET /v1/accounts/username_hash/{usernameHash}
-// and returns the UUID associated with the given username hash. Both
-// authenticated and unauthenticated requests are accepted; rate limiting by
-// IP provides enumeration protection.
+// handleLookupUsernameHash handles GET /v1/accounts/username_hash/{usernameHash}; open to anyone, rate-limited by IP.
 func (s *Server) handleLookupUsernameHash(w http.ResponseWriter, r *http.Request) {
 	hashStr := r.PathValue("usernameHash")
 	if hashStr == "" {
@@ -233,12 +229,7 @@ func (s *Server) handleSetUsernameLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Decide the handle. Java AccountController#updateUsernameLink reuses the
-	// existing handle when the client sets keepLinkHandle=true and the
-	// account already has one; otherwise a fresh UUID is minted. The link
-	// is only valid for accounts with a confirmed username hash — the
-	// manager checks that and returns *UsernameNotFoundError on miss, which
-	// we translate to 409 Conflict.
+	// Reuse the handle when keepLinkHandle is set and one exists, else mint a UUID; no confirmed username hash is 409.
 	handle := ""
 	if req.KeepLinkHandle {
 		if existing, err := s.usernames.ExistingLinkHandle(r.Context(), acct.UUID); err == nil {
@@ -298,10 +289,7 @@ func (s *Server) handleDeleteUsernameLink(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleLookupUsernameLink processes GET /v1/accounts/username_link/{uuid}
-// and returns the encrypted username for the given link handle. Both
-// authenticated and unauthenticated requests are accepted; rate limiting by
-// IP provides enumeration protection.
+// handleLookupUsernameLink handles GET /v1/accounts/username_link/{uuid}; open to anyone, rate-limited by IP.
 func (s *Server) handleLookupUsernameLink(w http.ResponseWriter, r *http.Request) {
 	handle := r.PathValue("uuid")
 	if handle == "" {

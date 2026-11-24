@@ -15,11 +15,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/verification"
 )
 
-// registrationLockTimeRemaining is the duration in milliseconds reported to
-// the client when a re-registration attempt is blocked by an active
-// registration lock. The Java Signal-Server's RegistrationLockFailure reports
-// timeRemaining in milliseconds (Duration.toMillis()); reporting seconds here
-// caused clients to render a lock countdown ~1000x too short.
+// registrationLockTimeRemaining is reported in milliseconds, as clients expect.
 const registrationLockTimeRemaining int64 = 7 * 24 * 60 * 60 * 1000
 
 // handleRegistration processes POST /v1/registration requests. It creates a
@@ -61,13 +57,7 @@ func (s *Server) handleRegistration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Optional captcha verification. When a captcha solution is supplied
-	// AND the deployment configured a RegistrationCaptchaManager, the
-	// solution must verify before account state is mutated. A missing
-	// captcha is allowed at this layer — escalation policy lives in the
-	// verification session (CaptchaRequired) and fraud checker. Mirrors
-	// Java RegistrationCaptchaManager.assessCaptcha + RegistrationController
-	// short-circuit.
+	// A supplied captcha must verify before any state changes when a RegistrationCaptchaManager is configured; a missing captcha is allowed here.
 	if req.Captcha != "" {
 		if s.regCaptcha == nil {
 			writeError(w, http.StatusServiceUnavailable, "captcha verification not available")
@@ -183,11 +173,7 @@ func (s *Server) handleRegistration(w http.ResponseWriter, r *http.Request) {
 		UnidentifiedAccessKey:  uak,
 	}
 
-	// Signal supports re-registration: if an account with the same number
-	// already exists, enforce the registration lock before replacing it. The
-	// displaced account is snapshotted so it can be restored if the new
-	// account (or its key material) fails to persist — a failed re-registration
-	// must not destroy the prior account.
+	// Re-registration enforces the registration lock and snapshots the displaced account so a failed write restores it.
 	var displaced *accounts.Account
 	if existing, err := s.accounts.GetByNumber(r.Context(), number); err == nil {
 		if existing.RegistrationLockHash != nil {
@@ -262,10 +248,7 @@ func (s *Server) handleRegistration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Persist any recovery password supplied via account attributes so
-	// future re-registrations can skip the verification flow. Failures here
-	// are logged but do not abort the registration: the account already
-	// exists, and the client can re-attempt the password upload.
+	// Store a recovery password from the account attributes; failures are logged, not fatal.
 	s.storeAttrRecoveryPassword(r, pniUUID, req.AccountAttributes.RecoveryPassword)
 
 	resp := AccountCreationResponse{
@@ -276,10 +259,7 @@ func (s *Server) handleRegistration(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// enforceRecoveryPassword verifies a base64-encoded registration recovery
-// password against the manager's stored hash for the number's PNI. On any
-// failure it writes the HTTP response and returns a non-nil sentinel error;
-// callers must return immediately.
+// enforceRecoveryPassword verifies a base64 recovery password against the stored hash; on failure it writes the response and returns a sentinel error.
 func (s *Server) enforceRecoveryPassword(r *http.Request, w http.ResponseWriter, number, encoded string) error {
 	if s.recoveryPasswords == nil {
 		writeError(w, http.StatusBadRequest, "recoveryPassword not supported by this server")
@@ -316,10 +296,7 @@ func (s *Server) enforceRecoveryPassword(r *http.Request, w http.ResponseWriter,
 	return nil
 }
 
-// storeAttrRecoveryPassword stores a recovery password attached to an account
-// attributes payload. Empty input is a no-op; non-empty input is decoded and
-// passed to the manager. All failures are logged at warn level; the caller
-// flow continues regardless because the account record already exists.
+// storeAttrRecoveryPassword stores a non-empty recovery password from account attributes, logging failures.
 func (s *Server) storeAttrRecoveryPassword(r *http.Request, pni, encoded string) {
 	if encoded == "" || s.recoveryPasswords == nil {
 		return
@@ -349,11 +326,7 @@ type recoveryPasswordSentinelError struct{ Reason string }
 
 func (e *recoveryPasswordSentinelError) Error() string { return "recovery password " + e.Reason }
 
-// storeRegistrationPreKeys persists the signed and PQ last-resort pre-keys
-// submitted during registration for BOTH the ACI and PNI identity namespaces.
-// The PNI keys are validated alongside the ACI keys in validateRegistrationKeys
-// but must also be persisted here, otherwise PNI pre-key lookups fail
-// immediately after a successful registration.
+// storeRegistrationPreKeys stores the signed and PQ last-resort pre-keys for both ACI and PNI.
 func (s *Server) storeRegistrationPreKeys(r *http.Request, acct *accounts.Account, req RegistrationRequest) error {
 	ctx := r.Context()
 	deviceID := uint64(accounts.PrimaryDeviceID)
@@ -430,16 +403,7 @@ func (s *Server) storeRegistrationPreKeys(r *http.Request, acct *accounts.Accoun
 	return nil
 }
 
-// validateRegistrationKeys verifies all signed pre-key signatures submitted
-// during registration. It checks:
-//   - aciSignedPreKey against aciIdentityKey
-//   - pniSignedPreKey against pniIdentityKey
-//   - aciPqLastResortPreKey against aciIdentityKey
-//   - pniPqLastResortPreKey against pniIdentityKey
-//
-// On the first validation failure it writes HTTP 422 and returns a non-nil
-// sentinel error. The caller must return immediately without writing further
-// responses.
+// validateRegistrationKeys verifies the ACI and PNI signed and PQ last-resort pre-key signatures; on failure it writes 422 and returns a sentinel error.
 func (s *Server) validateRegistrationKeys(
 	w http.ResponseWriter,
 	aciIdentityKey, pniIdentityKey []byte,
@@ -552,12 +516,7 @@ func capabilityValue(caps map[string]bool, key string) bool {
 	return caps[key]
 }
 
-// enforceVerifiedSession checks that sessionID refers to a verification session
-// that is not expired, belongs to number, and has Verified == true.
-//
-// On any failure it writes the appropriate HTTP error response and returns a
-// non-nil sentinel error; the caller must return immediately without writing
-// further responses.
+// enforceVerifiedSession requires an unexpired, verified session for number; on failure it writes the response and returns a sentinel error.
 func (s *Server) enforceVerifiedSession(r *http.Request, w http.ResponseWriter, sessionID, number string) error {
 	session, err := s.verification.GetSession(r.Context(), sessionID)
 	if err != nil {

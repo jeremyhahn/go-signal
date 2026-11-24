@@ -322,12 +322,7 @@ func TestProfiles_Set_EmptyUUID_Rejected(t *testing.T) {
 	}
 }
 
-// TestProfiles_Set_NonPoolQuerier_CancelledCtx_DemoteError exercises the
-// demote-UPDATE error branch inside runInTx (profiles.go:67-69). When the
-// Querier is a noTxQuerier (no BeginTx), Set falls through to the direct path
-// (line 109) and calls runInTx(s.q). The UPDATE statement receives an
-// already-cancelled context and fails immediately, hitting the demote error
-// return at line 67-69.
+// TestProfiles_Set_NonPoolQuerier_CancelledCtx_DemoteError covers the demote UPDATE error in runInTx.
 func TestProfiles_Set_NonPoolQuerier_CancelledCtx_DemoteError(t *testing.T) {
 	c := newTestClient(t)
 	ctx := context.Background()
@@ -349,12 +344,7 @@ func TestProfiles_Set_NonPoolQuerier_CancelledCtx_DemoteError(t *testing.T) {
 	}
 }
 
-// TestProfiles_Set_FKViolation_ReturnsError exercises the runInTx error path
-// (profiles.go:82-84 and 100-102) where the upsert INSERT fails because the
-// referenced account UUID does not exist. The demote UPDATE is a no-op (no
-// rows yet for this account) and succeeds; the INSERT then fails with a
-// foreign-key violation, causing runInTx to return an error which the pool
-// path propagates at line 101.
+// TestProfiles_Set_FKViolation_ReturnsError covers an upsert INSERT failing on a missing account.
 func TestProfiles_Set_FKViolation_ReturnsError(t *testing.T) {
 	c := newTestClient(t)
 	s := NewProfileStore(c.Pool())
@@ -372,12 +362,7 @@ func TestProfiles_Set_FKViolation_ReturnsError(t *testing.T) {
 	}
 }
 
-// TestProfiles_Set_NonPoolQuerier_FallsBackToDirectPath exercises the final
-// fallback branch in Set (profiles.go line 109) reached when the Querier is
-// neither a pgx.Tx nor a pool (txQuerier). noTxQuerier (defined in
-// testhelpers_test.go) wraps the pool via the Querier interface so BeginTx is
-// not promoted; Set therefore runs the two statements directly against the
-// Querier without a transaction wrapper.
+// TestProfiles_Set_NonPoolQuerier_FallsBackToDirectPath covers Set without a transaction.
 func TestProfiles_Set_NonPoolQuerier_FallsBackToDirectPath(t *testing.T) {
 	c := newTestClient(t)
 	ctx := context.Background()

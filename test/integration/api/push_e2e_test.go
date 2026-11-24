@@ -15,22 +15,7 @@ import (
 	"github.com/jeremyhahn/go-signal/test/integration/mocks"
 )
 
-// TestPushE2E_FCM_WakesOfflineDevice exercises the full Phase 3 path:
-//
-//  1. Mount a fake FCM server.
-//  2. Wire a push.PushManager whose FCM provider points at the mock.
-//  3. Use PushManager.Send directly — equivalent to the offline-delivery
-//     callback path in signald's start.go (`schedulePush`), which
-//     selects the FCM provider for devices whose GcmRegistrationID is
-//     set and whose FetchesMessages flag is false.
-//  4. Assert the mock received exactly one POST with the right device
-//     token, OAuth2 Bearer header, and HIGH priority for an urgent
-//     notification.
-//
-// This is the in-process equivalent of the Java reference flow:
-// "account registered → receives push notification when offline →
-// opens WebSocket → drains queue". The WebSocket-drain half is covered
-// by TestWebSocket_* in this package; this test asserts the push half.
+// TestPushE2E_FCM_WakesOfflineDevice: PushManager.Send to an FCM device reaches a mock FCM once with the token, Bearer header and HIGH priority.
 func TestPushE2E_FCM_WakesOfflineDevice(t *testing.T) {
 	fcmSrv := mocks.NewFCMMock()
 	t.Cleanup(fcmSrv.Close)
@@ -85,10 +70,7 @@ func TestPushE2E_FCM_WakesOfflineDevice(t *testing.T) {
 	}
 }
 
-// TestPushE2E_FCM_UnregisteredTokenSurfaces drives the unregistered-token
-// path: the mock returns 404 + UNREGISTERED detail; the manager must
-// surface Accepted=false and Unregistered=true so the production
-// caller (cmd/signald/start.go schedulePush) can clear the stale token.
+// TestPushE2E_FCM_UnregisteredTokenSurfaces: a 404 UNREGISTERED gives Accepted=false and Unregistered=true.
 func TestPushE2E_FCM_UnregisteredTokenSurfaces(t *testing.T) {
 	fcmSrv := mocks.NewFCMMock()
 	t.Cleanup(fcmSrv.Close)
@@ -132,15 +114,7 @@ func TestPushE2E_FCM_UnregisteredTokenSurfaces(t *testing.T) {
 	}
 }
 
-// TestTwilioE2E_MockVerifyFlow exercises register-via-Twilio against the
-// MockTwilio server. Mirrors the Phase 3.2 production flow:
-//
-//	twilio.SendCode → Twilio mints a code → server pre-shares with mock
-//	twilio.Verify(submitted) → mock reports approved
-//
-// The real Twilio Verify owns code generation; the server never sees
-// the code. Our mock issues a deterministic "123456" and the test
-// pre-Approves that pairing.
+// TestTwilioE2E_MockVerifyFlow: SendCode then Verify against MockTwilio, which approves the code "123456".
 func TestTwilioE2E_MockVerifyFlow(t *testing.T) {
 	twSrv := mocks.NewTwilioMock()
 	t.Cleanup(twSrv.Close)

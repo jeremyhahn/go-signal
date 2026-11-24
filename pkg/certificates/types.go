@@ -2,10 +2,7 @@
 // generation for sealed-sender messaging in the Signal protocol.
 package certificates
 
-// DeliveryCertificate represents a sender certificate for sealed-sender
-// messaging. The Certificate field contains the serialized certificate bytes
-// and CertificateExpiry is the Unix millisecond timestamp at which the
-// certificate expires.
+// DeliveryCertificate is a sealed-sender certificate and its expiry in Unix milliseconds.
 type DeliveryCertificate struct {
 	Certificate       []byte `json:"certificate"`
 	CertificateExpiry int64  `json:"certificateExpiry"`
@@ -44,10 +41,7 @@ type GroupCredential struct {
 	RedemptionTime int64  `json:"redemptionTime"`
 }
 
-// ExpiringProfileKeyCredentialResponse is the server's response for a profile
-// key credential request. The Credential field contains the serialized
-// ExpiringProfileKeyCredentialResponse from the zkgroup library, and
-// CredentialExpirationTime is the Unix timestamp at which the credential expires.
+// ExpiringProfileKeyCredentialResponse holds the serialized zkgroup response and its Unix expiry.
 type ExpiringProfileKeyCredentialResponse struct {
 	Credential               []byte `json:"credential"`
 	CredentialExpirationTime int64  `json:"credentialExpirationTime"`

@@ -30,10 +30,7 @@ type cryptoState struct {
 	senderKeyStore    groupstore.SenderKey
 }
 
-// initCrypto initializes the Signal Protocol crypto state for the client.
-// When CryptoStores is set in the config, the provided stores are used
-// directly (e.g., DAO-backed stores for the desktop client). Otherwise,
-// file-based stores are created in DataDir.
+// initCrypto uses CryptoStores when set, else file stores in DataDir.
 func (c *Client) initCrypto() error {
 	if c.crypto != nil {
 		return nil
@@ -222,10 +219,7 @@ func (c *Client) ensureSession(ctx context.Context, recipientUUID string, device
 	return nil
 }
 
-// localAddress returns the SignalAddress identifying *this* client, derived
-// from the persisted credentials. session.NewCipher needs both the local and
-// the remote address since libsignal v4 — the local address is used to
-// stamp identity-key material into the session record.
+// localAddress returns this client's SignalAddress, which session.NewCipher needs.
 func (c *Client) localAddress() (*protocol.SignalAddress, error) {
 	creds, err := c.store.GetCredentials()
 	if err != nil {

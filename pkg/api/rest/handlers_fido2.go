@@ -62,8 +62,7 @@ func (s *Server) handleFIDO2Capabilities(w http.ResponseWriter, _ *http.Request)
 	})
 }
 
-// handleFIDO2BeginRegistration starts a new FIDO2 registration ceremony for
-// a previously unauthenticated user.
+// handleFIDO2BeginRegistration starts a FIDO2 registration ceremony.
 func (s *Server) handleFIDO2BeginRegistration(w http.ResponseWriter, r *http.Request) {
 	state := getFIDO2State(s)
 	if state == nil {

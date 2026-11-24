@@ -71,8 +71,7 @@ func TestSetSharedSecret_UnsetSecretWipesTheSecretItReplaces(t *testing.T) {
 	}
 }
 
-// TestSetSharedSecret_ClonesTheCallersSecret covers the ownership contract:
-// signald passes cfg.CDSI.SharedSecret, which cfg.Destroy wipes separately.
+// TestSetSharedSecret_ClonesTheCallersSecret checks the manager keeps its own copy of the caller's secret.
 func TestSetSharedSecret_ClonesTheCallersSecret(t *testing.T) {
 	src := secrets.MustNewSecureString("cdsi-shared-secret")
 	defer src.Destroy()

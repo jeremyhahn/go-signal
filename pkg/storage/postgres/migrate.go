@@ -17,10 +17,7 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-// migrationLockKey is a constant 64-bit value used with pg_advisory_lock to
-// serialize concurrent migrators. Any constant works; this one was generated
-// once and is part of the on-disk contract for go-signal's schema. Do not
-// change it.
+// migrationLockKey is the pg_advisory_lock key serializing migrators; part of the schema contract, never change it.
 const migrationLockKey int64 = 0x607551147A1A1B1C
 
 // migration is a parsed pair of up/down SQL files for a single version.
@@ -31,11 +28,7 @@ type migration struct {
 	down    string
 }
 
-// Migrate brings the connected database to the latest schema version. It is
-// safe to call concurrently from multiple processes — a Postgres advisory
-// lock serializes execution. A schema_migrations bookkeeping table records
-// applied versions; only versions strictly greater than the recorded
-// maximum are applied.
+// Migrate applies the versions above schema_migrations' maximum, serialized by an advisory lock.
 func (c *Client) Migrate(ctx context.Context) error {
 	migrations, err := loadMigrations()
 	if err != nil {

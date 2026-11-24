@@ -28,10 +28,7 @@ func NewProvisioningStore(kv KVStore) *ProvisioningStore {
 
 func provisioningKey(code string) string { return provisioningKeyPrefix + code }
 
-// StoreSession persists a provisioning session, overwriting any prior session
-// stored under the same code. This matches the memory-backed store's
-// semantics; callers that require create-only behavior should check existence
-// first.
+// StoreSession stores a provisioning session, replacing any under the same code.
 func (s *ProvisioningStore) StoreSession(ctx context.Context, session *devices.ProvisioningSession) error {
 	if session == nil {
 		return signalerrors.New(signalerrors.ErrInvalidArgument, "qrdb provisioning: nil session")

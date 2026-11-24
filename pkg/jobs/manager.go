@@ -11,13 +11,7 @@ import (
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
-// Handler executes the payload of a scheduled job. Returning a
-// non-nil error triggers the Store's MarkFailed retry/dead-letter
-// machinery. nil returns trigger MarkDone.
-//
-// Handlers must be safe to re-run because the at-least-once delivery
-// model means a crash between handler return and Store mutation
-// re-delivers the job on the next tick.
+// Handler runs a job's payload; an error triggers the Store's retry and dead-letter handling. Delivery is at least once, so handlers must be idempotent.
 type Handler func(ctx context.Context, job *Job) error
 
 // DefaultStaleClaimTimeout is the threshold past which a Running
@@ -25,12 +19,7 @@ type Handler func(ctx context.Context, job *Job) error
 // comfortably longer than any legitimate handler runtime.
 const DefaultStaleClaimTimeout = 5 * time.Minute
 
-// Manager dispatches scheduled jobs by Type to registered handlers.
-// Typical lifecycle:
-//
-//	mgr := jobs.NewManager(store, slog.Default())
-//	mgr.Register("send-wakeup-push", sendWakeupHandler)
-//	mgr.RunOnce(ctx, time.Now(), 100) // worker calls this on a cron
+// Manager dispatches due jobs by Type to registered handlers, e.g. mgr.Register("send-wakeup-push", h); mgr.RunOnce(ctx, time.Now(), 100).
 type Manager struct {
 	store        Store
 	logger       *slog.Logger
@@ -69,10 +58,7 @@ func (m *Manager) SetBackoff(d time.Duration) { m.backoff = d }
 // SetBatchSize overrides the per-tick claim limit. Default is 100.
 func (m *Manager) SetBatchSize(n int) { m.maxBatch = n }
 
-// SetStaleClaimTimeout overrides the threshold used by RunOnce's
-// recovery sweep. Default is DefaultStaleClaimTimeout (5 minutes).
-// Operators with handlers that legitimately exceed 5m must raise
-// this so live work isn't double-dispatched.
+// SetStaleClaimTimeout sets how long a Running job may run before RunOnce requeues it (default DefaultStaleClaimTimeout).
 func (m *Manager) SetStaleClaimTimeout(d time.Duration) {
 	if d > 0 {
 		m.staleTimeout = d
@@ -87,10 +73,7 @@ func (m *Manager) Register(jobType string, fn Handler) {
 	m.mu.Unlock()
 }
 
-// registeredTypes returns the snapshot of registered job types, in
-// undefined order. Returns nil when no handlers have been registered
-// so the Store ClaimDue contract degrades to "every type" — useful
-// for tests that want a Manager to drain every row.
+// registeredTypes returns the registered job types, or nil (meaning every type) when none are registered.
 func (m *Manager) registeredTypes() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -110,15 +93,7 @@ func (m *Manager) Enqueue(ctx context.Context, job *Job) error {
 	return m.store.Enqueue(ctx, job)
 }
 
-// RunOnce sweeps stale Running rows back to Pending, claims up to
-// BatchSize due jobs, and dispatches each. The scheduled-jobs
-// worker calls this on every continuous tick. Returns (processed,
-// error). processed counts both successful and failed dispatches.
-//
-// The recovery sweep at the head of each tick is what makes
-// at-least-once delivery survive process crashes: any row stranded
-// in Running because its worker died (or was SIGKILLed) gets
-// re-queued for the next claim.
+// RunOnce requeues stale Running jobs, then claims and dispatches up to BatchSize due jobs; it returns the number dispatched.
 func (m *Manager) RunOnce(ctx context.Context, now time.Time) (int, error) {
 	if recovered, err := m.store.RecoverStale(ctx, now.Add(-m.staleTimeout)); err != nil {
 		m.logger.WarnContext(ctx, "scheduled jobs: stale recovery failed",
@@ -128,9 +103,7 @@ func (m *Manager) RunOnce(ctx context.Context, now time.Time) (int, error) {
 			slog.Int("recovered", recovered))
 	}
 
-	// Pass the registered types so a Store shared between Managers
-	// hands each Manager only its own lanes. An unregistered job
-	// type stays Pending until a Manager that knows it claims it.
+	// Claim only registered types, so a Store shared between Managers hands each only its own jobs.
 	jobs, err := m.store.ClaimDue(ctx, now, m.maxBatch, m.registeredTypes()...)
 	if err != nil {
 		return 0, signalerrors.Wrap(signalerrors.ErrInternal, "jobs: claim due", err)
@@ -141,13 +114,7 @@ func (m *Manager) RunOnce(ctx context.Context, now time.Time) (int, error) {
 	processed := 0
 	for i, job := range jobs {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			// Release every job claimed but not yet
-			// dispatched. The RecoverStale path at the head
-			// of the next tick would catch them after the
-			// stale timeout, but ResetToPending is
-			// immediate — minimises retry latency. Errors
-			// here are best-effort; RecoverStale is the
-			// authoritative safety net.
+			// Release every claimed but undispatched job now; RecoverStale catches any this misses.
 			m.releaseClaimedTail(jobs[i:])
 			return processed, ctxErr
 		}
@@ -157,12 +124,7 @@ func (m *Manager) RunOnce(ctx context.Context, now time.Time) (int, error) {
 	return processed, nil
 }
 
-// releaseClaimedTail flips every still-Running job in the supplied
-// slice back to Pending. Each ResetToPending call gets its OWN
-// 5-second budget — using a shared budget would let a degraded
-// store strand every job past the first few. Failures fall through
-// to RecoverStale on the next tick, which is the authoritative
-// safety net.
+// releaseClaimedTail returns still-Running jobs to Pending, each with its own 5-second budget.
 func (m *Manager) releaseClaimedTail(remaining []*Job) {
 	for _, job := range remaining {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -201,11 +163,7 @@ func (m *Manager) dispatch(ctx context.Context, job *Job, now time.Time) {
 		return
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		// Don't bump attempts when the context shut down — the job
-		// did not get a fair chance to run. Flip it back to
-		// Pending immediately so the next tick re-delivers it.
-		// Use a fresh background context: the one that fired
-		// would reject the ResetToPending call.
+		// A cancelled context does not count as an attempt: requeue with a fresh context.
 		bg, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if resetErr := m.store.ResetToPending(bg, job.ID, time.Now().UTC()); resetErr != nil {

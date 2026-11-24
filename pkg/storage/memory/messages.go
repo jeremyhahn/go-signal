@@ -151,10 +151,7 @@ func (s *MemoryMessageStore) DeleteForDevice(_ context.Context, destinationUUID 
 	return nil
 }
 
-// RemoveExpired is a no-op for the memory backend: envelopes carry no
-// expires_at field today, so there is nothing to sweep. The method exists to
-// satisfy [messages.MessageStore] and lets the sweep worker run uniformly
-// against every backend.
+// RemoveExpired is a no-op: memory envelopes carry no expiry.
 func (s *MemoryMessageStore) RemoveExpired(_ context.Context, _ time.Time) (int64, error) {
 	return 0, nil
 }

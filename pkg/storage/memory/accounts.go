@@ -108,11 +108,7 @@ func (s *MemoryAccountStore) GetByPNI(_ context.Context, pni string) (*accounts.
 	return cloneAccount(acct), nil
 }
 
-// Update persists changes to an existing account.
-//
-// Optimistic locking: the incoming account.Version must be exactly one greater
-// than the version currently stored. If not, a *accounts.VersionConflictError
-// is returned so callers can retry their read-modify-write cycle.
+// Update stores account if its Version is exactly one above the stored one, else *accounts.VersionConflictError.
 func (s *MemoryAccountStore) Update(_ context.Context, account *accounts.Account) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

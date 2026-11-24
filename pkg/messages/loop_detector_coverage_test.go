@@ -246,8 +246,7 @@ func TestRecord_ExtendsExpiryOnReRecord(t *testing.T) {
 	// First record at t=0; expiry = 10s.
 	d.Record(ctx, "A", "B", guid)
 
-	// Advance to t=8s and re-record the same direction with a new GUID to
-	// trigger the merge+extension path; expiry should now be 18s.
+	// At t=8s, re-record with a new GUID to extend expiry to 18s.
 	clock.Store(int64(8 * time.Second))
 	d.Record(ctx, "A", "B", "extend-guid-2")
 

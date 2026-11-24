@@ -364,11 +364,7 @@ func TestFileStore_WriteJSON_MkdirAllError(t *testing.T) {
 }
 
 func TestFileStore_SaveCredentials_WriteJSONFails(t *testing.T) {
-	// Covers the "return err" branch after writeJSON fails in SaveCredentials.
-	// A directory occupying the exact path credentials.json would take makes
-	// the write fail with EISDIR — the same idiom as the .auth_token test
-	// below, and unlike the read-only parent this used to rely on it holds as
-	// root, which is how CI runs (testing-guidelines.md §Fault Injection).
+	// A directory at credentials.json's path makes writeJSON fail with EISDIR, even as root.
 	store, err := NewFileStore(t.TempDir())
 	require.NoError(t, err)
 

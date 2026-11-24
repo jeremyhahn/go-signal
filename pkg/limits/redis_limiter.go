@@ -11,19 +11,7 @@ import (
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
-// RedisTokenBucketLimiter is a token-bucket limiter whose state lives
-// in Redis (or any pkg/cache.Client backend). Unlike
-// TokenBucketLimiter — which holds buckets in a process-local sync.Map
-// — this implementation shares the bucket across every signald
-// replica so a request bouncing across instances still consumes from
-// the same allowance. Java's reference rate-limiter uses the same
-// Lua-script atomic-decrement pattern.
-//
-// The Lua script is the only place the state machine runs: it reads
-// the (tokens, lastRefill) tuple, advances tokens by elapsed-time *
-// refill-rate (clamped to BucketSize), decrements by n, and writes
-// back. The entire sequence is atomic on the Redis side; concurrent
-// callers from different replicas can't race.
+// RedisTokenBucketLimiter keeps token buckets in a cache.Client shared by all replicas, updated atomically by a Lua script.
 type RedisTokenBucketLimiter struct {
 	cfg    BucketConfig
 	cache  cache.Client
@@ -67,19 +55,7 @@ func NewRedisTokenBucketLimiter(cfg RedisLimiterConfig) (*RedisTokenBucketLimite
 	}, nil
 }
 
-// luaTokenBucket runs one atomic update against a bucket key.
-//
-// KEYS[1] = "ratelimit:<key>"
-// ARGV[1] = capacity (max tokens, integer)
-// ARGV[2] = refill rate (tokens per second, float)
-// ARGV[3] = nowMillis (int64 wall clock)
-// ARGV[4] = requested tokens (integer)
-//
-// Returns: { allowed (0|1), tokens_remaining (int), retry_after_ms (int) }
-//
-// The bucket persists as a Redis hash with fields {tokens, lastRefill}.
-// First-touch buckets start full. Per Redis Lua atomicity, no other
-// caller can race the read/refill/decrement/write sequence.
+// luaTokenBucket atomically refills and takes from KEYS[1]; ARGV: capacity, refill per second, nowMillis, requested. Returns {allowed, tokens_remaining, retry_after_ms}; new buckets start full.
 const luaTokenBucket = `
 local key      = KEYS[1]
 local capacity = tonumber(ARGV[1])
@@ -162,10 +138,7 @@ func (l *RedisTokenBucketLimiter) AllowN(ctx context.Context, key string, n int)
 	}
 }
 
-// parseLuaResult decodes the {allowed, tokens, retryAfterMs} triple
-// the Lua script returns. Different Redis client libraries (go-redis,
-// miniredis, etc.) hand back slightly different concrete types so we
-// accept the common shapes.
+// parseLuaResult decodes {allowed, tokens, retryAfterMs}, accepting each client library's types.
 func parseLuaResult(res interface{}) (allowed, tokens, retryMs int64, err error) {
 	arr, ok := res.([]interface{})
 	if !ok {

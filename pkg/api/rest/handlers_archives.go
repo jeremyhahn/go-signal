@@ -649,16 +649,7 @@ func (s *Server) handleGetSVRBAuth(w http.ResponseWriter, r *http.Request) {
 		writeBackupError(w, err)
 		return
 	}
-	// The credential is written straight from protected memory into the
-	// response buffer: ExternalServiceCredentials implements
-	// secrets.JSONAppender, so writeJSON builds and wipes the only buffer the
-	// plaintext ever occupies. Revealing it into a response struct — what this
-	// handler did before — left the password in a Go string that cannot be
-	// wiped and that the runtime is free to copy.
-	//
-	// An unavailable credential still fails the response rather than emitting
-	// an empty password the client would treat as usable: AppendJSONString
-	// errors, and writeJSON turns that into a 500.
+	// Write the credential from protected memory straight into the response buffer; an unavailable credential is a 500, never an empty password.
 	defer creds.Destroy()
 	writeJSON(w, http.StatusOK, *creds)
 }

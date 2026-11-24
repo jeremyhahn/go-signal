@@ -20,12 +20,7 @@ import (
 // Signal-Server's KeysController maximum.
 const maxOneTimePreKeysPerUpload = 100
 
-// handleGetPreKeyCount processes GET /v2/keys and returns the count of
-// remaining one-time pre-keys for the authenticated user's primary device.
-//
-// The ?identity= query parameter selects which identity namespace (ACI or
-// PNI) to report counts for. It defaults to "aci" for backwards
-// compatibility, matching Java KeysController#getStatus.
+// handleGetPreKeyCount handles GET /v2/keys; ?identity= selects aci (default) or pni.
 func (s *Server) handleGetPreKeyCount(w http.ResponseWriter, r *http.Request) {
 	acct := accountFromContext(r.Context())
 	if acct == nil {
@@ -61,13 +56,7 @@ func (s *Server) handleGetPreKeyCount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// handleUploadKeys processes PUT /v2/keys and stores uploaded pre-keys for the
-// authenticated user's primary device.
-//
-// The ?identity= query parameter selects which identity namespace the keys
-// are uploaded into; signatures are verified against the matching identity
-// key (Account.IdentityKey for ACI, Account.PhoneNumberIdentityKey for PNI).
-// This mirrors Java KeysController#setKeys.
+// handleUploadKeys handles PUT /v2/keys; ?identity= selects the namespace and the identity key signatures are verified against.
 func (s *Server) handleUploadKeys(w http.ResponseWriter, r *http.Request) {
 	acct := accountFromContext(r.Context())
 	if acct == nil {
@@ -181,14 +170,7 @@ func (e *identityQueryParamError) Error() string {
 	return "identity must be aci or pni"
 }
 
-// handleGetPreKeys processes GET /v2/keys/{identifier}/{device_id} and returns
-// the pre-key bundle for the target account and device. The special device_id
-// "*" returns bundles for all devices.
-//
-// The identifier accepts three shapes, matching Java ServiceIdentifier parsing:
-//   - "ACI:<uuid>" — bundle from the ACI namespace, using Account.IdentityKey.
-//   - "PNI:<uuid>" — bundle from the PNI namespace, using Account.PhoneNumberIdentityKey.
-//   - bare "<uuid>" or "<E.164>" — legacy ACI default for backwards compatibility.
+// handleGetPreKeys handles GET /v2/keys/{identifier}/{device_id} ("*" for all devices); identifier is ACI:<uuid>, PNI:<uuid>, or a bare UUID or E.164 (ACI).
 func (s *Server) handleGetPreKeys(w http.ResponseWriter, r *http.Request) {
 	identifier := r.PathValue("identifier")
 	deviceIDStr := r.PathValue("device_id")
@@ -268,14 +250,7 @@ func (s *Server) handleGetPreKeys(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// parseServiceIdentifier interprets the {identifier} path parameter, returning
-// the identity namespace and the bare lookup value. It accepts:
-//
-//   - "ACI:<uuid>" → (IdentityTypeACI, "<uuid>")
-//   - "PNI:<uuid>" → (IdentityTypePNI, "<uuid>")
-//   - bare UUID or E.164 → (IdentityTypeACI, "<value>") for legacy clients
-//
-// Any other shape is rejected so the handler can return 400 cleanly.
+// parseServiceIdentifier returns the namespace and lookup value for ACI:<uuid>, PNI:<uuid>, or a bare UUID or E.164 (ACI); anything else is an error.
 func parseServiceIdentifier(s string) (accounts.IdentityType, string, error) {
 	switch {
 	case strings.HasPrefix(s, "ACI:"):
@@ -358,11 +333,7 @@ func (s *Server) getPreKeyResponseItem(r *http.Request, target *accounts.Account
 	return entity, nil
 }
 
-// deviceRegistrationIDForIdentity returns the appropriate registration ID
-// for the device in the requested namespace. Java's Device exposes
-// getRegistrationId(IdentityType) which returns the PNI-specific value when
-// identity == PNI; we mirror that so the bundle's registrationId matches the
-// identity the client is establishing a session against.
+// deviceRegistrationIDForIdentity returns the device's registration ID for the requested namespace.
 func deviceRegistrationIDForIdentity(dev *accounts.Device, identity accounts.IdentityType) uint32 {
 	if dev == nil {
 		return 0
@@ -373,11 +344,7 @@ func deviceRegistrationIDForIdentity(dev *accounts.Device, identity accounts.Ide
 	return dev.RegistrationID
 }
 
-// resolveAccountByServiceIdentifier parses a raw service identifier
-// (ACI:<uuid>, PNI:<uuid>, bare UUID, or E.164) and resolves the matching
-// account, routing PNI identifiers through the by-PNI index. It is used by the
-// optional-auth (sealed-sender) middleware so that UAK lookups succeed for
-// every identifier shape rather than only a bare ACI UUID.
+// resolveAccountByServiceIdentifier resolves any service identifier shape to an account, PNI through the by-PNI index.
 func (s *Server) resolveAccountByServiceIdentifier(r *http.Request, raw string) (*accounts.Account, error) {
 	identity, bare, err := parseServiceIdentifier(raw)
 	if err != nil {

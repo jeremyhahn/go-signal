@@ -6,10 +6,7 @@ syntax = "proto3";
 package org.signal.directory;
 option go_package = "github.com/jeremyhahn/go-signal/pkg/api/grpc/genproto/directory;directorypb";
 
-// DirectoryService is the internal gRPC surface signald exposes for
-// cdsi (and any future directory-consuming binary). cdsi calls
-// ListEntries at startup to populate its lookup index and watches
-// future revisions via Subscribe for incremental sync.
+// DirectoryService is signald's internal surface for cdsi: ListEntries at startup, Subscribe for incremental sync.
 service DirectoryService {
   // ListEntries server-streams the current directory snapshot. The
   // stream completes when every entry has been delivered. cdsi calls
@@ -35,10 +32,7 @@ message SubscribeRequest {
   bytes resume_token = 1;
 }
 
-// DirectoryEntry is one row of the directory: the E.164 number plus
-// its ACI / PNI / access_key bytes. ACI / access_key are absent for
-// accounts that have not opted in to contact discovery (the bytes
-// will be all-zero).
+// DirectoryEntry is an E.164 number with its ACI, PNI and access key; ACI and access key are zero when not discoverable.
 message DirectoryEntry {
   // e164 is the canonical phone number as a uint64 (no + prefix).
   uint64 e164 = 1;

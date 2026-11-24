@@ -1,22 +1,6 @@
 package rest
 
-// Regression tests for HIGH-3: auth timing oracle fix.
-//
-// The authMiddleware pre-computes a dummyHash at initialisation and calls
-// dummyHash.Verify(password) on every account-not-found path. This prevents
-// a timing oracle that would let an attacker enumerate valid account UUIDs by
-// measuring whether the response is returned immediately (no hash work) or
-// after bcrypt/HKDF work.
-//
-// What we can observe in unit tests:
-//   - Both "invalid UUID" and "valid UUID + wrong password" paths return 401.
-//   - Both paths take non-trivial time (> 0 µs), proving real hash work is done
-//     and not short-circuited.
-//   - A valid UUID + correct password still returns 200 (regression: the
-//     timing fix must not break the success path).
-//
-// All tests hit GET /v1/accounts/whoami, which is wrapped with auth() in
-// server.go and therefore requires valid Basic Auth credentials.
+// Auth timing: unknown UUIDs and wrong passwords both return 401 after real hash work; valid credentials still return 200 (GET /v1/accounts/whoami).
 
 import (
 	"net/http"
@@ -37,8 +21,7 @@ const authProtectedEndpoint = "/v1/accounts/whoami"
 func TestAuthMiddleware_AccountNotFound_PerformsDummyVerification(t *testing.T) {
 	s, _ := newTestServerWithAccount(t)
 
-	// Use a well-formed UUID that is not registered — triggers the dummy
-	// hash verification path added by the HIGH-3 security fix.
+	// A well-formed unregistered UUID takes the dummy-hash path.
 	unknownUUID := "00000000-0000-0000-0000-000000000000"
 
 	req := httptest.NewRequest(http.MethodGet, authProtectedEndpoint, nil)
@@ -57,17 +40,7 @@ func TestAuthMiddleware_AccountNotFound_PerformsDummyVerification(t *testing.T) 
 	}
 }
 
-// TestAuthMiddleware_TimingEqualization verifies that account-not-found and
-// account-found-wrong-password paths both take measurably non-zero time.
-// The pre-computed dummyHash.Verify call on the not-found path ensures that
-// both code paths perform an equivalent HKDF-SHA256 derivation, preventing
-// an attacker from distinguishing "UUID does not exist" from "UUID exists but
-// password is wrong" through response latency.
-//
-// The test does not assert that the two durations are within a tight bound —
-// that would be fragile under load — but it does assert that the not-found
-// path takes > 1 µs, proving real work was done rather than an immediate
-// short-circuit return.
+// TestAuthMiddleware_TimingEqualization asserts the not-found path does real hash work (> 1 µs).
 func TestAuthMiddleware_TimingEqualization(t *testing.T) {
 	s, _ := newTestServerWithAccount(t)
 
@@ -107,9 +80,7 @@ func TestAuthMiddleware_TimingEqualization(t *testing.T) {
 	}
 }
 
-// TestAuthMiddleware_ValidCredentials_NotBrokenByTimingFix verifies that the
-// dummy-hash path added by the HIGH-3 fix did not inadvertently break the
-// success path — authenticated requests must still reach the handler.
+// TestAuthMiddleware_ValidCredentials_NotBrokenByTimingFix checks authenticated requests reach the handler.
 func TestAuthMiddleware_ValidCredentials_NotBrokenByTimingFix(t *testing.T) {
 	s, _ := newTestServerWithAccount(t)
 

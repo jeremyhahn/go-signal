@@ -5,13 +5,7 @@ import (
 	"time"
 )
 
-// Service is the BackupService implementation, bundling [Manager] (ZK-side
-// archive operations) and [AuthManager] (account-side credential issuance)
-// behind a single seam that satisfies service.BackupService. Construct via
-// [NewService]; pass to service.NewBackupService at startup.
-//
-// Mirrors the split Java keeps between BackupManager and BackupAuthManager
-// while presenting protocol handlers with a single interface.
+// Service implements service.BackupService over [Manager] (archive operations) and [AuthManager] (credential issuance); build it with [NewService].
 type Service struct {
 	manager *Manager
 	auth    *AuthManager

@@ -15,14 +15,7 @@ import (
 // Signal-Server's 30-day RemoveExpiredBackupsCommand default.
 const DefaultBackupExpiryGrace = 30 * 24 * time.Hour
 
-// RemoveExpiredBackupsWorker periodically scans the backup store for
-// rows whose last_refresh / last_media_refresh has elapsed beyond
-// ExpiryGrace, removes their CDN content via [service.BackupService.ExpireBackup],
-// and clears the metadata. Also purges garbage-collection rows left over
-// from prior incomplete deletions.
-//
-// Mirrors Java's RemoveExpiredBackupsCommand. DryRun=true logs intended
-// deletions without applying them — useful for first-rollout validation.
+// RemoveExpiredBackupsWorker expires backups past ExpiryGrace via [service.BackupService.ExpireBackup] and purges leftover deletions; DryRun only logs.
 type RemoveExpiredBackupsWorker struct {
 	svc         *service.SignalService
 	log         *slog.Logger
@@ -100,12 +93,7 @@ func (w *RemoveExpiredBackupsWorker) Run(ctx context.Context) error {
 	return nil
 }
 
-// BackupUsageRecalculationWorker re-derives the per-backup media usage
-// counts by re-listing the CDN media prefix and writing the result back
-// to the store. This corrects quota drift from in-flight failed copies
-// and is intended to run infrequently (Java default: weekly).
-//
-// Mirrors Java's BackupUsageRecalculationCommand.
+// BackupUsageRecalculationWorker recounts each backup's media usage from the CDN to correct quota drift.
 type BackupUsageRecalculationWorker struct {
 	svc      *service.SignalService
 	log      *slog.Logger
@@ -130,10 +118,7 @@ func (*BackupUsageRecalculationWorker) Name() string { return "backup-usage-reca
 // Schedule runs weekly at 05:00 UTC Sunday.
 func (*BackupUsageRecalculationWorker) Schedule() Schedule { return "0 5 * * 0" }
 
-// Run walks every backup row, re-computes its usage against the CDN, and
-// reports drift. Errors per-row are logged and accumulated; the worker
-// still completes the scan to maximize the number of rows refreshed in
-// each invocation.
+// Run recomputes every backup's usage, logging per-row errors and finishing the scan.
 func (w *BackupUsageRecalculationWorker) Run(ctx context.Context) error {
 	if w.svc == nil || w.svc.Backups == nil {
 		w.log.InfoContext(ctx, "backup-usage-recalculation: backup service not configured, skipping")

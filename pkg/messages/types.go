@@ -31,18 +31,7 @@ const (
 	EnvelopeTypePlaintextContent EnvelopeType = 8
 )
 
-// Envelope represents an encrypted message envelope stored on the server
-// pending delivery to a destination device.
-//
-// DestinationIdentityType selects the namespace under which
-// DestinationUUID should be interpreted: ACI or PNI. Messages sent to
-// an ACI and messages sent to a PNI are routed through the same
-// storage layer but live under distinct keys so devices reading under
-// one identity never see messages addressed to the other.
-//
-// For backwards compatibility the zero value
-// (accounts.IdentityTypeACI) is treated as "ACI" — existing senders
-// that don't know about PNI continue to work unchanged.
+// Envelope is an encrypted message awaiting delivery; DestinationIdentityType (zero is ACI) selects whether DestinationUUID is an ACI or PNI, stored under separate keys.
 type Envelope struct {
 	ID                      uint64                `json:"id"`
 	Type                    EnvelopeType          `json:"type"`
@@ -59,27 +48,14 @@ type Envelope struct {
 	Story                   bool                  `json:"story"`
 	ReportSpamToken         []byte                `json:"reportSpamToken,omitempty"`
 
-	// SharedMrmKey, when non-nil, identifies a row in the MRM cache holding
-	// the shared multi-recipient payload for this envelope. Content is empty
-	// in this case; the reader-side join in MessagesManager.GetMessagesForDevice
-	// fetches the joined `data` + recipient view from the cache and inlines
-	// them into Content before delivery. Mirrors Java Signal-Server's
-	// `Envelope.shared_mrm_key` field.
+	// SharedMrmKey names the MRM cache row holding this envelope's shared payload; Content is empty and filled in at read time.
 	SharedMrmKey []byte `json:"sharedMrmKey,omitempty"`
 
-	// SharedMrmRecipientView, when non-nil, is the 18-byte cache-field name
-	// (see SharedMRMViewKey) selecting this recipient's view from the shared
-	// MRM hash referenced by SharedMrmKey. Set together with SharedMrmKey
-	// during multi-recipient sends.
+	// SharedMrmRecipientView is the 18-byte field (see SharedMRMViewKey) selecting this recipient's view in the SharedMrmKey hash.
 	SharedMrmRecipientView []byte `json:"sharedMrmRecipientView,omitempty"`
 }
 
-// IncomingMessage represents a single message submitted by a sending client
-// destined for a specific device.
-//
-// DestinationIdentityType disambiguates whether DestinationUUID is an
-// ACI or a PNI. The zero value (accounts.IdentityTypeACI) is the
-// default so clients that pre-date PNI support continue to work.
+// IncomingMessage is one client-submitted message for a device; DestinationIdentityType (zero is ACI) says whether DestinationUUID is an ACI or PNI.
 type IncomingMessage struct {
 	Type                    EnvelopeType          `json:"type"`
 	DestinationUUID         string                `json:"destinationUuid"`

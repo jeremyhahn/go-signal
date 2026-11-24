@@ -13,16 +13,7 @@ import (
 // Compile-time interface satisfaction check.
 var _ keys.PreKeyStore = (*PreKeyStore)(nil)
 
-// PreKeyStore is a Postgres-backed implementation of keys.PreKeyStore.
-//
-// TakeEC and TakeKEM use DELETE...RETURNING with a sub-select on MIN(key_id)
-// to atomically consume the lowest-keyID one-time key in a single round-trip,
-// eliminating the list-then-delete race present in KV backends. Concurrent
-// Takes for the same device serialize naturally at the row lock level.
-//
-// StoreECPreKeys and StoreKEMPreKeys clear existing keys for the device before
-// inserting to match the qrdb contract: the stored set reflects exactly the
-// caller's intent, not a union with whatever was previously there.
+// PreKeyStore implements keys.PreKeyStore in Postgres: takes are one DELETE...RETURNING of the lowest key_id, stores replace the device's keys.
 type PreKeyStore struct {
 	q Querier
 }
@@ -148,9 +139,7 @@ func (s *PreKeyStore) StoreSignedPreKey(ctx context.Context, uuid string, device
 	return nil
 }
 
-// TakeEC atomically deletes and returns the one-time EC pre-key with the
-// lowest key_id for the device. DELETE...RETURNING with a correlated
-// MIN(key_id) sub-select is a single statement — no separate read, no race.
+// TakeEC atomically deletes and returns the device's lowest one-time EC pre-key.
 func (s *PreKeyStore) TakeEC(ctx context.Context, uuid string, deviceID uint64) (*keys.PreKey, error) {
 	var pk keys.PreKey
 	err := s.q.QueryRow(ctx,
@@ -321,10 +310,7 @@ func (s *PreKeyStore) ListAccountUUIDs(ctx context.Context) ([]string, error) {
 	return out, rows.Err()
 }
 
-// withTxQuerier begins a transaction on the underlying pool when q is a
-// *pgxpool.Pool, or borrows the existing transaction when q is already a
-// pgx.Tx. This lets PreKeyStore methods compose correctly whether they are
-// called inside or outside a caller-managed transaction.
+// withTxQuerier begins a transaction on a pool or reuses a caller's pgx.Tx.
 func withTxQuerier(ctx context.Context, q Querier, fn func(pgx.Tx) error) error {
 	if tx, ok := q.(pgx.Tx); ok {
 		return fn(tx)

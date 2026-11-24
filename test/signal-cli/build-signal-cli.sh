@@ -117,14 +117,7 @@ ${CA_PEM_JAVA};
 }
 JAVAEOF
 
-# Patch the OkHttp client factory in signal-service-java to trust all certs.
-# Find and patch the class that creates the OkHttpClient with custom SSL.
-# In libsignal-service-java, this is typically in PushServiceSocket or a utility.
-# We patch it by adding a startup hook that overrides SSL defaults.
-#
-# Instead of patching the compiled JAR, we add a Java agent-style initializer
-# via signal-cli's main class. The signal-cli entry point is:
-# org.asamk.signal.Main
+# Trust all certificates through an initializer in signal-cli's org.asamk.signal.Main.
 MAIN_CLASS="src/main/java/org/asamk/signal/Main.java"
 
 # Add trust-all SSL initialization at the very beginning of main()
@@ -186,23 +179,14 @@ sed -i 's/new IasTrustStore()/new TestTrustStore()/g' "${STAGING_CONFIG}"
 echo "Trust store references in LiveConfig:"
 grep -n "TrustStore" "${LIVE_CONFIG}" || true
 
-# ===========================================================================
-# Patch CDSI contact discovery to use REST API
-# ===========================================================================
-# Since we don't implement the full CDSI Noise+SGX WebSocket protocol,
-# we patch signal-cli's RecipientHelper to resolve unknown numbers via
-# a REST API call to /v1/directory/lookup instead of CDSI.
+# Patch RecipientHelper to look up unknown numbers via /v1/directory/lookup instead of CDSI.
 echo "Patching contact discovery to use REST API..."
 
 RECIPIENT_HELPER=$(find lib -name "RecipientHelper.java" -path "*/helper/*" | head -1)
 if [ -n "${RECIPIENT_HELPER}" ]; then
     echo "Found RecipientHelper: ${RECIPIENT_HELPER}"
 
-    # Use Python to safely replace the getRegisteredUserByNumber method body.
-    # This avoids fragile sed multi-line editing. The Python script:
-    # 1. Finds the method by signature
-    # 2. Counts braces to find the method boundary
-    # 3. Inserts REST lookup code before the CDSI call
+    # Python finds getRegisteredUserByNumber by brace counting and inserts the REST lookup before the CDSI call.
     python3 - "${RECIPIENT_HELPER}" "${SERVER_URL}" << 'PYEOF'
 import sys, re
 
@@ -321,12 +305,7 @@ else
     find lib -path "*/helper/*.java" | head -20
 fi
 
-# ===========================================================================
-# Patch SVR2 to be a no-op for setPin/removePin
-# ===========================================================================
-# Since we don't implement the SVR2 Noise protocol, we patch signal-cli to
-# skip the SVR2 backup/restore operations. We replace the entire method
-# bodies that call SVR2, keeping only the registration lock operations.
+# Patch setPin/removePin to skip SVR2, keeping the registration lock operations.
 echo "Patching SVR2 PIN helper to skip SVR2 backup..."
 
 PIN_HELPER=$(find lib -name "PinHelper.java" -path "*/helper/*" | head -1)

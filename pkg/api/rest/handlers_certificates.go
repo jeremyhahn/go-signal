@@ -9,10 +9,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/certificates"
 )
 
-// handleGetDeliveryCertificate processes GET /v1/certificate/delivery and
-// returns a signed delivery certificate for sealed-sender messaging. The
-// optional includeE164 query parameter controls whether the sender's phone
-// number is embedded in the certificate.
+// handleGetDeliveryCertificate handles GET /v1/certificate/delivery; includeE164 embeds the sender's number.
 func (s *Server) handleGetDeliveryCertificate(w http.ResponseWriter, r *http.Request) {
 	acct := accountFromContext(r.Context())
 	if acct == nil {

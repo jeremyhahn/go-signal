@@ -4,10 +4,7 @@ import (
 	"crypto/sha256"
 )
 
-// merkleLeaf hashes one log entry into a leaf node. Domain-separated
-// from internal nodes (prefix byte 0x00) so a malicious server can't
-// reframe an internal hash as a leaf or vice versa — RFC 6962 §2.1
-// uses the same construction.
+// merkleLeaf hashes an entry as a leaf with prefix 0x00, per RFC 6962 §2.1.
 func merkleLeaf(serialized []byte) [32]byte {
 	h := sha256.New()
 	h.Write([]byte{0x00})
@@ -29,10 +26,7 @@ func merkleNode(left, right [32]byte) [32]byte {
 	return out
 }
 
-// MerkleRoot computes the RFC-6962-style left-balanced Merkle root
-// over leaves. An empty slice produces sha256(nothing) — the same
-// convention go-libsignal/pkg/keytrans verification expects for an
-// empty log.
+// MerkleRoot returns the RFC 6962 left-balanced root; an empty slice gives sha256 of nothing.
 func MerkleRoot(leaves [][32]byte) [32]byte {
 	if len(leaves) == 0 {
 		h := sha256.New()
@@ -54,12 +48,7 @@ func MerkleRoot(leaves [][32]byte) [32]byte {
 	return merkleNode(left, right)
 }
 
-// MerkleInclusionProof returns the audit path proving that the leaf
-// at idx is included in a tree of leaves. The returned slice contains
-// the sibling hashes from leaf-to-root order; pair with
-// VerifyMerkleInclusion to validate against a known root.
-//
-// Returns nil + false when idx is out of range.
+// MerkleInclusionProof returns leaf-to-root sibling hashes for idx, or nil and false when idx is out of range.
 func MerkleInclusionProof(leaves [][32]byte, idx int) ([][32]byte, bool) {
 	if idx < 0 || idx >= len(leaves) {
 		return nil, false
@@ -88,14 +77,7 @@ func buildInclusion(leaves [][32]byte, idx int) [][32]byte {
 	return path
 }
 
-// VerifyMerkleInclusion reconstructs the root from leafHash + the
-// audit path and compares it against expectedRoot. Returns true when
-// the proof witnesses leaf inclusion at position idx in a tree of
-// treeSize leaves.
-//
-// The verifier mirrors buildInclusion's recursive descent so
-// path[0] is the deepest sibling and path[len-1] is the topmost —
-// the prover and verifier round-trip in lockstep.
+// VerifyMerkleInclusion recomputes the root from leafHash and path (deepest sibling first) and compares it with expectedRoot.
 func VerifyMerkleInclusion(leafHash [32]byte, idx, treeSize int, path [][32]byte, expectedRoot [32]byte) bool {
 	if idx < 0 || idx >= treeSize {
 		return false

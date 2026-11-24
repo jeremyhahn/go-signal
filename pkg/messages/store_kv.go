@@ -44,10 +44,7 @@ func (s *KVMessageStore) Insert(ctx context.Context, destinationUUID string, des
 	return id, nil
 }
 
-// errStopHasMessagesScan exits the Scan callback after the first
-// hit. KVClient.Scan stops as soon as the callback returns an
-// error, so this is the cheapest way to answer "any?" without
-// materialising every key into a slice.
+// errStopHasMessagesScan stops the Scan at the first hit.
 var errStopHasMessagesScan = errors.New("kv messages: stop scan")
 
 // HasMessagesForDevice reports whether any pending envelope exists.

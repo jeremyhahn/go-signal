@@ -217,8 +217,7 @@ func TestManager_Evaluate_MissingValueFallsBackToBool(t *testing.T) {
 }
 
 func TestManager_Evaluate_DeterministicAcrossCalls(t *testing.T) {
-	// The same (uuid, configs) must produce byte-identical output so
-	// REST handlers can compute a stable ETag.
+	// The same (uuid, configs) gives byte-identical output, for a stable ETag.
 	mgr := mustManager(t,
 		Config{Name: "global.a", Percentage: 50, Value: "ON"},
 		Config{Name: "global.b", Percentage: 75, Value: "ON"},
@@ -237,13 +236,7 @@ func TestManager_Evaluate_DeterministicAcrossCalls(t *testing.T) {
 }
 
 func TestManager_Evaluate_HashKeyShiftsBucket(t *testing.T) {
-	// Two configs with identical Name + Percentage but different
-	// HashKeys must (with high probability) deliver different verdicts
-	// to at least one of a small UUID sample. The chance of both
-	// HashKeys producing the same bucket for every sampled UUID at
-	// Percentage=50 is (1/2)^N — for N=8 that's 1/256, low enough that
-	// a green test gives high confidence the HashKey actually shifted
-	// the bucketing.
+	// Different HashKeys give a different verdict for at least one of 8 UUIDs at 50% (false failure 1/256).
 	configA := Config{Name: "global.x", Percentage: 50, HashKey: "alpha", Value: "ON"}
 	configB := Config{Name: "global.x", Percentage: 50, HashKey: "beta", Value: "ON"}
 	uuids := []string{

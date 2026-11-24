@@ -52,9 +52,7 @@ func BenchmarkNKhfsServerHandshake(b *testing.B) {
 	}
 }
 
-// BenchmarkCDSIDispatch_SmallLookup measures one CDSI ClientRequest
-// → ClientResponse round-trip with a single E.164 lookup. Hot path
-// for every contact-discovery call.
+// BenchmarkCDSIDispatch_SmallLookup measures one CDSI request round trip with a single E.164.
 func BenchmarkCDSIDispatch_SmallLookup(b *testing.B) {
 	dir := cdsi.NewMemoryDirectory()
 	var aci, pni [16]byte

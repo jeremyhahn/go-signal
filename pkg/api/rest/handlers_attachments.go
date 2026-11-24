@@ -12,10 +12,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/extservice/common"
 )
 
-// isSafeCDNKey reports whether a client-supplied CDN object key is safe to pass
-// to the attachment store. It rejects empty keys, absolute paths, backslashes,
-// NUL bytes, and any "."/".." path segment so that a crafted key cannot escape
-// a filesystem-backed store's root directory (path traversal).
+// isSafeCDNKey rejects empty keys, absolute paths, backslashes, NUL bytes and "." or ".." segments.
 func isSafeCDNKey(key string) bool {
 	if key == "" || strings.HasPrefix(key, "/") || strings.ContainsAny(key, "\\\x00") {
 		return false
@@ -28,14 +25,7 @@ func isSafeCDNKey(key string) bool {
 	return true
 }
 
-// handleAttachmentUploadForm handles GET /v4/attachments/form/upload and
-// returns an upload descriptor. When an external TUS server is configured
-// the descriptor carries an HMAC-signed Authorization header so the TUS
-// server can validate the upload was authorized by Signal. Otherwise the
-// embedded /cdn3 route is used (dev mode).
-//
-// Mirrors Java AttachmentControllerV4.getAttachmentUploadForm — same
-// AttachmentDescriptorV3 shape on the wire.
+// handleAttachmentUploadForm serves GET /v4/attachments/form/upload: an HMAC-signed TUS descriptor, or the embedded /cdn3 route in development.
 func (s *Server) handleAttachmentUploadForm(w http.ResponseWriter, r *http.Request) {
 	acct := accountFromContext(r.Context())
 	if acct == nil {
@@ -56,15 +46,7 @@ func (s *Server) handleAttachmentUploadForm(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusInternalServerError, "internal server error")
 			return
 		}
-		// The TUS credential is opened only to build the Authorization
-		// header the client forwards, then wiped. An unavailable credential
-		// fails the request rather than emitting a header with an empty
-		// password the TUS server would reject.
-		//
-		// Assembled by the shared helper rather than open-coded: the previous
-		// spelling revealed the password into a Go string and then built two
-		// more — the `user:pass` concatenation and its base64 — none of which
-		// can be wiped, and all of which outlived the request.
+		// Build the Authorization header from protected memory with the shared helper; an unavailable credential fails the request.
 		auth := common.BasicAuthHeaderCredential(creds.Username, creds.Password)
 		creds.Destroy()
 		if auth == "" {

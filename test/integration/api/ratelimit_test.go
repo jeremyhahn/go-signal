@@ -39,10 +39,7 @@ import (
 // inProcessBucketSize is the bucket size used for the in-process test server.
 const inProcessBucketSize = 3
 
-// setupRateLimitedTestServer creates an in-process test REST server with a
-// tightly configured rate limiter. All limiters use a bucket size of 3 to
-// allow fast exhaustion. Returns nil server and the external URL when
-// SIGNAL_SERVER_URL is set.
+// setupRateLimitedTestServer starts a REST server whose limiters have bucket size 3; nil server and the external URL when SIGNAL_SERVER_URL is set.
 func setupRateLimitedTestServer(t *testing.T) (*rest.Server, string) {
 	t.Helper()
 

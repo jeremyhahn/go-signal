@@ -10,11 +10,7 @@ import (
 	"sync"
 )
 
-// APNsMock is a fake Apple Push Notification HTTP/2 server. Real APNs
-// requires HTTP/2 + ALPN; the httptest.Server is HTTP/1.1, which is
-// fine because go-signal connects through `github.com/sideshow/apns2`
-// whose Host field accepts any URL — we just need to accept POSTs at
-// `/3/device/{token}` and respond with APNs-shaped status + headers.
+// APNsMock is a fake APNs over HTTP/1.1 that answers POST /3/device/{token}; apns2 accepts any host.
 type APNsMock struct {
 	Server *httptest.Server
 

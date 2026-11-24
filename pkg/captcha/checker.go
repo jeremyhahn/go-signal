@@ -7,8 +7,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
-// tokenSeparator is the dot character between slots in the captcha token
-// format. Mirrors Java CaptchaChecker.SEPARATOR.
+// tokenSeparator separates the slots of a captcha token.
 const tokenSeparator = "."
 
 // shortCodeSuffix is appended to the provider prefix when the client wants
@@ -23,11 +22,7 @@ type parsedToken struct {
 	Provider string // "recaptcha" / "hcaptcha" / etc.
 	SiteKey  string // lower-cased
 	Action   Action // parsed enum
-	// Token is the raw provider-issued solution — a single-use bearer
-	// value. The server's copy is held in protected memory and wiped by
-	// Destroy once the provider call returns; the caller's original input
-	// string is a Go string and cannot be wiped, so this bounds the
-	// server-side residency rather than eliminating it.
+	// Token is the single-use provider solution, held in protected memory and wiped by Destroy after the provider call.
 	Token     *secrets.SecureString
 	IsShort   bool   // true when input used the "-short" provider suffix
 	RawAction string // original action slot (for metrics / error messages)
@@ -41,13 +36,7 @@ func (p *parsedToken) Destroy() {
 	p.Token.Destroy()
 }
 
-// parseToken splits a captcha submission of the form
-// `provider.sitekey.action.token` into its components. `provider` may carry
-// a `-short` suffix indicating Token is a short-code that must be expanded
-// via a ShortCodeExpander before the provider verify call.
-//
-// Returns *InvalidTokenFormatError when the input does not have exactly
-// four dot-separated slots or the action slot does not parse.
+// parseToken splits provider.sitekey.action.token; a "-short" provider suffix marks a short code to expand. Bad input is *InvalidTokenFormatError.
 func parseToken(input string) (*parsedToken, error) {
 	// SplitN(_, 4) preserves any literal dots inside the token slot.
 	parts := strings.SplitN(input, tokenSeparator, 4)
@@ -91,13 +80,7 @@ type ShortCodeExpander interface {
 	Expand(ctx context.Context, code string) (string, error)
 }
 
-// Checker parses an incoming captcha submission, dispatches to the right
-// provider, and validates the site-key + action allowlist. It is the Go
-// analogue of Java CaptchaChecker.
-//
-// Providers is the lookup table from the leading `provider` slot to the
-// CaptchaVerifier responsible for that scheme. Unknown providers produce
-// *UnknownProviderError so the REST layer can return HTTP 400.
+// Checker parses a captcha submission, dispatches it to its provider and enforces the site-key and action allowlist; unknown providers are *UnknownProviderError.
 type Checker struct {
 	Providers  map[string]CaptchaVerifier
 	ShortCodes ShortCodeExpander
@@ -118,14 +101,7 @@ func (a *Assessment) Accepted() bool {
 	return a != nil && a.Result != nil && a.Result.Success
 }
 
-// Verify parses input, looks up the provider, runs site-key + action
-// validation, and delegates the cryptographic check to the provider's
-// CaptchaVerifier. Mirrors Java CaptchaChecker.verify.
-//
-//   - expectedAction is the action this call site requires. A token whose
-//     embedded action differs is rejected even when the provider would have
-//     accepted the underlying solution; this prevents replay across flows.
-//   - remoteIP is forwarded to the provider for fraud signals.
+// Verify checks a captcha for expectedAction (a different embedded action is rejected) and passes remoteIP to the provider.
 func (c *Checker) Verify(ctx context.Context, expectedAction Action, input, remoteIP string) (*Assessment, error) {
 	parsed, err := parseToken(input)
 	if err != nil {

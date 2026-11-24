@@ -13,10 +13,7 @@ import (
 // Key layout: verification:{sessionID} → JSON VerificationSession.
 const verificationKeyPrefix = "verification:"
 
-// timeNow is swappable for tests; callers use it instead of time.Now().
-// Tests that mutate this var must NOT call t.Parallel(), since concurrent
-// swap/restore races against itself and against any reader. Use a per-test
-// save+restore guarded by serial test execution.
+// timeNow is swappable for tests; tests that swap it must not run in parallel.
 var timeNow = time.Now
 
 var _ verification.VerificationSessionStore = (*VerificationSessionStore)(nil)
@@ -111,10 +108,7 @@ func (s *VerificationSessionStore) Count(ctx context.Context) (int, error) {
 	return len(keys), nil
 }
 
-// DeleteExpired removes every session whose ExpiresAt is before now. It
-// scans the full prefix and issues one Delete per expired entry; for high
-// session counts a native-index approach would scale better, but at the
-// volumes verification sessions see (bounded by rate limits) this is fine.
+// DeleteExpired scans the prefix and deletes every session expired before now.
 func (s *VerificationSessionStore) DeleteExpired(ctx context.Context) error {
 	now := timeNow()
 	keys, err := s.kv.List(ctx, verificationKeyPrefix)

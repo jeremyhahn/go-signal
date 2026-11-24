@@ -376,8 +376,7 @@ func TestDefaultFraudChecker_Stop_Idempotent(t *testing.T) {
 	fc.Stop()
 }
 
-// TestDefaultFraudChecker_Stop_HaltsCleanupLoop verifies that after Stop the
-// cleanup goroutine no longer runs, confirmed by the doneCh being closed.
+// TestDefaultFraudChecker_Stop_HaltsCleanupLoop: after Stop, doneCh is closed.
 func TestDefaultFraudChecker_Stop_HaltsCleanupLoop(t *testing.T) {
 	fc := NewDefaultFraudChecker(FraudCheckerConfig{})
 	fc.Stop()

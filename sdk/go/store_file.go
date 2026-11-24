@@ -12,10 +12,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
-// FileStore is a file-based implementation of Store that persists data
-// as JSON files in a directory hierarchy. Sensitive credential material
-// is stored in a separate file with restricted permissions and loaded
-// into protected memory on read.
+// FileStore stores JSON files in a directory; credentials sit in a restricted file and load into protected memory.
 type FileStore struct {
 	mu      sync.RWMutex
 	rootDir string

@@ -9,10 +9,7 @@ import (
 	"testing"
 )
 
-// runThroughLoggingMiddleware drives the REAL loggingMiddleware and returns
-// everything it wrote. Testing redactPathSegments alone would not prove the
-// middleware calls it — the defect was precisely that the middleware redacted
-// the query string and logged the path verbatim.
+// runThroughLoggingMiddleware drives the real loggingMiddleware and returns what it wrote.
 func runThroughLoggingMiddleware(t *testing.T, target string) string {
 	t.Helper()
 	var buf bytes.Buffer
@@ -25,13 +22,7 @@ func runThroughLoggingMiddleware(t *testing.T, target string) string {
 	return buf.String()
 }
 
-// TestLoggingMiddleware_DoesNotLogVerificationSessionID is the regression test
-// for #40.
-//
-// A verification session id is what POST /v1/registration accepts as proof of
-// verification, so an access log containing it hands account takeover to
-// anyone who can read logs — an operator, a log shipper, a backup, a support
-// bundle.
+// TestLoggingMiddleware_DoesNotLogVerificationSessionID: a session id is a bearer credential and never reaches the access log.
 func TestLoggingMiddleware_DoesNotLogVerificationSessionID(t *testing.T) {
 	const sessionID = "e81a353c-356d-404d-b60c-b1040ea70f7b"
 

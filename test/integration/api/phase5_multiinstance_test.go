@@ -27,15 +27,7 @@ func newMultiInstanceCache(t *testing.T, mr *miniredis.Miniredis) cache.Client {
 	return cacheredis.NewFromClient(rdb)
 }
 
-// TestPhase5Multiinstance_LeaderLeasePreventsDoubleExecution drives the
-// worker-coordination wire: instance-A acquires a lease via the shared
-// cache, instance-B's Acquire fails with ErrLeaderElectionFailed.
-// After instance-A releases (or the lease TTL expires), instance-B
-// can re-acquire.
-//
-// This is the production-shape failover that protects continuous
-// workers (message-persister, dispatch flusher, backup cleanup) from
-// running on every replica at once.
+// TestPhase5Multiinstance_LeaderLeasePreventsDoubleExecution checks a second instance cannot take a held lease until it is released.
 func TestPhase5Multiinstance_LeaderLeasePreventsDoubleExecution(t *testing.T) {
 	mr := miniredis.RunT(t)
 	cacheA := newMultiInstanceCache(t, mr)
@@ -96,13 +88,7 @@ func TestPhase5Multiinstance_LeaseExpiryAllowsReacquisition(t *testing.T) {
 	}
 }
 
-// TestPhase5Multiinstance_PubSubDeliversAcrossInstances confirms the
-// WebSocket-session-clustering wire: a Publish from cache client A is
-// delivered to a Subscribe on cache client B. This is the foundation
-// signald's NewSessionManagerWithCache builds on — without
-// cross-instance pub/sub delivery, message-arrival notifications
-// would stall when the recipient's WebSocket lands on a different
-// replica.
+// TestPhase5Multiinstance_PubSubDeliversAcrossInstances checks a Publish on one cache client reaches a Subscribe on another.
 func TestPhase5Multiinstance_PubSubDeliversAcrossInstances(t *testing.T) {
 	mr := miniredis.RunT(t)
 	cacheA := newMultiInstanceCache(t, mr)

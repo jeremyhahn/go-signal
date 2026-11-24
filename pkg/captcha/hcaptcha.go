@@ -50,10 +50,7 @@ type HCaptchaConfig struct {
 	// a client with a 10 s timeout is used.
 	HTTPClient *http.Client
 
-	// SiteKeysByAction is the per-action allowlist of site keys the
-	// Checker enforces against incoming submissions. Empty map means
-	// "no enforcement" — every site key is accepted. Site keys are
-	// compared case-insensitively (lower-cased here at config time).
+	// SiteKeysByAction is the per-action site-key allowlist, compared case-insensitively; empty accepts every key.
 	SiteKeysByAction map[Action][]string
 }
 
@@ -110,9 +107,7 @@ func normalizeSiteKeys(in map[Action][]string) map[Action][]string {
 	return out
 }
 
-// Verify sends a POST request to the hCaptcha siteverify endpoint and returns
-// the parsed result. A non-nil error indicates a network or parse failure;
-// a failed CAPTCHA challenge is reported through VerifyResult.Success == false.
+// Verify posts to hCaptcha siteverify; an error is a network or parse failure, a failed challenge is Success == false.
 func (v *HCaptchaVerifier) Verify(ctx context.Context, token string, remoteIP string, _ string) (*VerifyResult, error) {
 	form := url.Values{}
 	form.Set("secret", v.secretKey.Plaintext())

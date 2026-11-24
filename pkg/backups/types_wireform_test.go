@@ -8,22 +8,13 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
-// svrbWireShape is the struct this credential used to be marshalled through,
-// kept HERE rather than in production because it is now an oracle, not an
-// implementation. AppendJSON builds the JSON by hand so the password never
-// becomes a Go string; this is what proves that produces the same bytes.
+// svrbWireShape is the encoding/json shape AppendJSON must reproduce byte for byte.
 type svrbWireShape struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
-// The acceptance criterion for #47: the JSON a client receives must be
-// identical, or this is a protocol change wearing a security fix's clothes.
-//
-// The corpus hits every escaping branch — a password containing a quote, a
-// backslash, an angle bracket or a control byte is exactly where a hand-built
-// encoder and encoding/json would diverge, and exactly the input nobody tries
-// by hand.
+// The hand-built JSON matches encoding/json for passwords exercising every escaping branch.
 func TestExternalServiceCredentials_AppendJSON_ByteIdenticalToTheOldStructPath(t *testing.T) {
 	passwords := []string{
 		"hunter2",
@@ -66,8 +57,7 @@ func TestExternalServiceCredentials_AppendJSON_ByteIdenticalToTheOldStructPath(t
 	}
 }
 
-// AppendJSON must APPEND, not overwrite: it writes into a buffer the caller
-// owns and may already have written into.
+// AppendJSON appends to the caller's buffer.
 func TestExternalServiceCredentials_AppendJSON_AppendsToExistingBuffer(t *testing.T) {
 	c := &ExternalServiceCredentials{Username: "u", Password: secrets.MustNewSecureString("pw")}
 	defer c.Destroy()

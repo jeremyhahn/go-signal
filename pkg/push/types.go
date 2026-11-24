@@ -1,8 +1,4 @@
-// Package push provides push notification delivery for the Signal server.
-// Mirrors the Java APNSender + FcmSender contract: typed NotificationType
-// values map to per-platform payloads, and Send returns a structured
-// SendPushNotificationResult so callers can route invalid-token responses
-// back to account cleanup.
+// Package push delivers push notifications; Send returns a SendPushNotificationResult that flags invalidated tokens for cleanup.
 package push
 
 import (
@@ -26,16 +22,13 @@ const (
 type NotificationType int
 
 const (
-	// NotificationTypeNotification is the standard "new message available"
-	// wakeup. Urgency controls APNs push-type (ALERT vs BACKGROUND) and
-	// FCM AndroidConfig priority (HIGH vs NORMAL).
+	// NotificationTypeNotification is the new-message wakeup; urgency selects APNs alert or background and FCM high or normal priority.
 	NotificationTypeNotification NotificationType = iota
 	// NotificationTypeAttemptLogin signals a high-priority device-linking
 	// attempt; APNs uses an alert payload with attemptLoginContext, FCM
 	// puts the same data under the attemptLoginContext key.
 	NotificationTypeAttemptLogin
-	// NotificationTypeChallenge wakes a device to solve a challenge —
-	// silent (content-available / NORMAL) with a `challenge` data field.
+	// NotificationTypeChallenge is a silent wakeup carrying a challenge field.
 	NotificationTypeChallenge
 	// NotificationTypeRateLimitChallenge is the rate-limit variant of
 	// Challenge, carried under `rateLimitChallenge`.
@@ -66,11 +59,7 @@ type PushNotification struct {
 	Data string
 }
 
-// SendPushNotificationResult mirrors Java SendPushNotificationResult: it
-// distinguishes (a) accepted/rejected, (b) the provider's rejection
-// reason, (c) whether the token has been invalidated so callers can
-// clean up the account record, and (d) when the invalidation became
-// effective (APNs reports this in `timestamp`).
+// SendPushNotificationResult reports acceptance, the rejection reason, whether the token was invalidated, and since when.
 type SendPushNotificationResult struct {
 	Accepted                   bool
 	RejectionReason            string

@@ -17,15 +17,7 @@ func failClone(t *testing.T, injected error) {
 	t.Cleanup(func() { cloneSecret = original })
 }
 
-// TestNewHTTP_CloneFailureIsReportedNotMistakenForAMissingSecret pins the
-// fail-closed half of the constructor.
-//
-// Clone used to answer "no secret to copy" and "the copy could not be
-// allocated" with the same empty value, so a protected-memory failure would
-// have surfaced as "SharedSecret is required" — a configuration error for what
-// is actually a runtime resource failure. Worse, a caller retrying on
-// configuration errors would never recover. The two are now distinct: the
-// allocation failure is an internal error carrying its cause.
+// TestNewHTTP_CloneFailureIsReportedNotMistakenForAMissingSecret checks a clone failure is an internal error, not a missing secret.
 func TestNewHTTP_CloneFailureIsReportedNotMistakenForAMissingSecret(t *testing.T) {
 	secret := secrets.MustNewSecureString("shared-secret")
 	defer secret.Destroy()

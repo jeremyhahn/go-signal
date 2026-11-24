@@ -12,21 +12,10 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/accounts"
 )
 
-// testPostgresEnv is the environment variable that points tests at a live
-// Postgres instance. When unset, all postgres-backed tests in this package
-// skip — they are integration tests that require a running database.
-//
-// In the project devcontainer this is preset to:
-//
-//	postgres://signal:signal@postgres:5432/signal?sslmode=disable
+// testPostgresEnv names the live Postgres URL; without it these tests skip (devcontainer: postgres://signal:signal@postgres:5432/signal?sslmode=disable).
 const testPostgresEnv = "TEST_POSTGRES_URL"
 
-// testLockKey is the Postgres advisory-lock key used to serialize tests
-// across every package that shares the same test database. Without this,
-// `go test ./pkg/storage/postgres/... ./test/integration/storage/...` runs
-// the two packages in parallel and their TRUNCATE / seed sequences
-// interleave, producing FK-violation noise on a shared DB. The integration
-// harness uses the same key. Do not change it.
+// testLockKey is the advisory lock shared with the integration harness so packages using the same database do not interleave; do not change it.
 const testLockKey int64 = 0x607551147A1A2A2D
 
 // newTestClient returns a migrated *Client pointed at the test database, or
@@ -53,12 +42,7 @@ func newTestClient(t *testing.T) *Client {
 		t.Fatalf("postgres migrate: %v", err)
 	}
 
-	// Hold a session-level advisory lock across the whole test. The lock
-	// is acquired on a *dedicated* pgx.Conn — separate from the test's
-	// pool — so tests that intentionally close the pool (Pool_Closed
-	// coverage cases) do not deadlock waiting for this connection to
-	// return. Cleanup closes the conn, which releases the session lock
-	// automatically.
+	// Hold the advisory lock on a dedicated connection so tests that close the pool do not deadlock.
 	lockConn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
 		t.Fatalf("postgres connect lock conn: %v", err)
@@ -105,9 +89,7 @@ func seedAccount(t *testing.T, c *Client, aci string) {
 // profiles.go) without a real transaction.
 type noTxQuerier struct{ Querier }
 
-// truncateAll empties every domain table to give each test a clean slate.
-// The list is hand-maintained so it stays explicit when new tables are
-// added to a migration. CASCADE clears FK-dependent rows in one statement.
+// truncateAll empties every domain table (CASCADE); keep the list in step with the migrations.
 func truncateAll(ctx context.Context, c *Client) error {
 	const sql = `TRUNCATE TABLE
 		remote_config,

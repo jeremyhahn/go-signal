@@ -20,26 +20,14 @@ import (
 // persist a sticker pack with no PackID.
 var errSDKInvalidStickerPack = errors.New("sdk: sticker pack PackID is required")
 
-// DAOStore implements the Store interface using QRDB GenericDAO for
-// persistence. This is the default store for both CLI and desktop modes,
-// replacing the legacy FileStore with a proper database-backed implementation.
+// DAOStore implements Store on QRDB GenericDAO; the default store for CLI and desktop.
 type DAOStore struct {
 	factory *daostore.Factory
-	// owned is the embedded store this DAOStore opened itself, and therefore
-	// the only one it may close. A DAOStore built from a caller-supplied
-	// factory leaves this nil: that store's lifetime belongs to whoever
-	// opened it, and closing it here would pull the database out from under
-	// them.
+	// owned is the embedded store this DAOStore opened and must close; nil when the caller supplied the factory.
 	owned io.Closer
 }
 
-// NewDAOStore creates a Store backed by the given DAO factory.
-//
-// Asserts that StickerPackEntity carries the `PackID` secondary
-// index — without it, SaveStickerPack's upsert path would silently
-// degrade to "always insert" and DeleteStickerPack to a full scan
-// with empty results. The assertion is a fail-fast contract check
-// against struct-tag drift.
+// NewDAOStore returns a Store backed by factory, checking StickerPackEntity.PackID is indexed.
 func NewDAOStore(factory *daostore.Factory) *DAOStore {
 	if err := assertStickerPackIndex(); err != nil {
 		// Panic at boot rather than silently behave wrong at runtime.
@@ -48,10 +36,7 @@ func NewDAOStore(factory *daostore.Factory) *DAOStore {
 	return &DAOStore{factory: factory}
 }
 
-// assertStickerPackIndex confirms entities.StickerPackEntity.PackID
-// carries the `index:"true"` struct tag. Returns a descriptive error
-// when the tag is missing so the panic message at boot points the
-// operator at the exact field.
+// assertStickerPackIndex errors when entities.StickerPackEntity.PackID lacks the index:"true" tag.
 func assertStickerPackIndex() error {
 	var ent entities.StickerPackEntity
 	t := reflect.TypeOf(ent)
@@ -65,28 +50,17 @@ func assertStickerPackIndex() error {
 	return nil
 }
 
-// newFactory is daostore.NewFactory, indirected so NewDefaultDAOStore's
-// cleanup path can be exercised. A factory failure cannot be provoked from
-// outside — it depends on entity and index registration — and that path is the
-// one that used to strand an open database behind a failed constructor.
-// Production code never reassigns it.
+// newFactory is daostore.NewFactory, a variable so tests can fail it; production never reassigns it.
 var newFactory = daostore.NewFactory
 
-// NewDefaultDAOStore creates a Store with an embedded QRDB KVStore
-// backed by PebbleDB in the given data directory. This is the default
-// store used by both CLI and desktop modes.
+// NewDefaultDAOStore returns a Store on an embedded PebbleDB-backed QRDB KVStore in dataDir.
 func NewDefaultDAOStore(dataDir string) (*DAOStore, error) {
 	kvStore, err := daostore.NewEmbeddedKVStore(dataDir)
 	if err != nil {
 		return nil, signalerrors.Wrap(signalerrors.ErrInternal, "create embedded kvstore", err)
 	}
 
-	// From here on the store is open and the caller has no handle to close it,
-	// so every failure path below has to close it. Leaving it open strands
-	// Pebble's exclusive directory lock behind a constructor that reported
-	// failure, and a retry against the same dataDir then fails for a different
-	// reason than the one being retried. The interface kvStore satisfies does
-	// not declare Close; the concrete embedded store does.
+	// The store is open from here; every failure path closes it so Pebble's directory lock is released.
 	closer, _ := kvStore.(io.Closer)
 
 	factory, err := newFactory(kvStore)
@@ -356,14 +330,7 @@ func (s *DAOStore) DeleteStickerPack(packID string) error {
 	return s.factory.StickerPacks.Delete(ctx, existing)
 }
 
-// Close releases the embedded store this DAOStore opened, if it opened one.
-//
-// It used to return nil without doing anything, which meant the PebbleDB
-// behind a NewDefaultDAOStore was never released: its exclusive directory lock
-// outlived every caller that shut down correctly, and the database kept
-// writing to a directory the caller believed it was done with (#55). A
-// DAOStore built by NewDAOStore from a caller-supplied factory still closes
-// nothing — it did not open that store.
+// Close closes the embedded store this DAOStore opened; a store from a caller-supplied factory is left open.
 func (s *DAOStore) Close() error {
 	if s.owned == nil {
 		return nil

@@ -5,13 +5,8 @@ import (
 	"testing"
 )
 
-// TestSigV4SigningKey_AWSVector validates the SigV4 signing-key derivation (the
-// HMAC chain underlying SignS3PostPolicy) against the canonical vector AWS
-// publishes in its "Calculate the signature" documentation:
-//
-//	secret  = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
-//	date    = "20150830", region = "us-east-1", service = "iam"
-//	=> signing key c4afb1cc5771d871763a393e44b703571b55cc28424d1a5e86da6ed3c154a4b9
+// TestSigV4SigningKey_AWSVector checks the SigV4 signing key against AWS's published vector:
+// secret = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", date 20150830, us-east-1, iam => c4afb1cc5771d871763a393e44b703571b55cc28424d1a5e86da6ed3c154a4b9
 func TestSigV4SigningKey_AWSVector(t *testing.T) {
 	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"
 	kDate := hmacSHA256([]byte("AWS4"+secret), []byte("20150830"))

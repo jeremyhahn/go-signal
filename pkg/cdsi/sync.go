@@ -8,10 +8,7 @@ import (
 	dirpb "github.com/jeremyhahn/go-signal/pkg/api/grpc/genproto/directory"
 )
 
-// LoadFromSignald drains signald's DirectoryService.ListEntries stream
-// and atomically replaces the contents of dir. Called at cmd/cdsi
-// startup; future deployments may also call it periodically to refresh
-// from a stable replica.
+// LoadFromSignald drains DirectoryService.ListEntries and atomically replaces dir.
 func LoadFromSignald(ctx context.Context, client dirpb.DirectoryServiceClient, dir *MemoryDirectory, pageSize uint32) error {
 	if client == nil {
 		return errors.New("cdsi: directory client is required")

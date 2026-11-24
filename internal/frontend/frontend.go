@@ -1,10 +1,4 @@
-// Package frontend embeds the compiled React/Vite SPA build output so that
-// the signald binary can serve the web UI without any external file system
-// dependency.
-//
-// The embedded files live in the dist/ subdirectory of this package, which is
-// populated by `make build-frontend` as part of the server build process.
-// Run that target before building the signald binary.
+// Package frontend embeds the built SPA from dist/; run make build-frontend before building signald.
 package frontend
 
 import (

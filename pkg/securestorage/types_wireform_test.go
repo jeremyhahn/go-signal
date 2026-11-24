@@ -8,22 +8,13 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
-// wireShape is the struct these credentials used to be marshalled through, kept
-// HERE rather than in production because it is now an oracle, not an
-// implementation. MarshalJSON builds the JSON by hand so the password never
-// becomes a Go string; this is what proves that produces the same bytes.
+// wireShape is the reference struct: MarshalJSON must produce the same bytes.
 type wireShape struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
 
-// The acceptance criterion for #47: the JSON a client receives must be
-// identical, or this is a protocol change wearing a security fix's clothes.
-//
-// The corpus is chosen to hit every escaping branch — a password containing a
-// quote, a backslash, an angle bracket or a control byte is exactly where a
-// hand-built encoder and encoding/json would diverge, and exactly the input
-// nobody tries by hand.
+// The JSON must be byte-identical; the corpus hits every escaping branch.
 func TestStorageCredentials_MarshalJSON_ByteIdenticalToTheOldStructPath(t *testing.T) {
 	passwords := []string{
 		"hunter2",

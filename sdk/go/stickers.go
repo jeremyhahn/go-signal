@@ -34,10 +34,7 @@ func (c *Client) DeleteStickerPack(packID string) error {
 	return c.store.DeleteStickerPack(packID)
 }
 
-// StickerPath formats the CDN object path for one sticker in a pack.
-// id=-1 selects the manifest slot; id>=0 selects sticker index id.
-// Mirrors the path layout pkg/stickers/manager.go writes when
-// signing upload forms.
+// StickerPath returns a sticker's CDN path; id -1 is the manifest.
 func StickerPath(packID string, id int) string {
 	if id < 0 {
 		return "/cdn3/stickers/" + packID + "/manifest.proto"
@@ -45,15 +42,7 @@ func StickerPath(packID string, id int) string {
 	return "/cdn3/stickers/" + packID + "/full/" + strconv.Itoa(id)
 }
 
-// GetSticker downloads a single sticker payload from the configured
-// signal server's embedded CDN, verifies the HMAC, decrypts it with
-// packKey, and returns the plaintext bytes. Use id=-1 to retrieve
-// the encoded Pack manifest instead.
-//
-// Production deployments that serve stickers from S3 must surface a
-// signed-GET endpoint on the server side; this SDK method only
-// targets the embedded-CDN path that ships with go-signal's REST
-// server.
+// GetSticker downloads one sticker (id -1 for the manifest) from the server's embedded CDN, verifies and decrypts it with packKey.
 func (c *Client) GetSticker(ctx context.Context, packID string, id int, packKey []byte) ([]byte, error) {
 	if packID == "" {
 		return nil, signalerrors.New(signalerrors.ErrInvalidArgument, "signal: packID is required")
@@ -91,19 +80,7 @@ type StickerPackUpload struct {
 	URL     string
 }
 
-// UploadStickerPack reads manifest.json + every referenced sticker
-// image from path, encrypts everything with a fresh pack key, fetches
-// a signed CDN upload form from the configured Signal server, and
-// uploads each payload. Returns the share URL on success.
-//
-// path may be:
-//   - a directory containing manifest.json
-//   - a path ending in `manifest.json` (parent treated as the pack root)
-//   - a .zip archive of the same layout
-//
-// The pack key MUST be persisted by the caller — Signal stores no
-// copy of it server-side, so losing the key means the pack can never
-// be decrypted again.
+// UploadStickerPack encrypts a pack (directory, manifest.json path or .zip) under a fresh key, uploads it and returns the share URL; the caller MUST keep the key.
 func (c *Client) UploadStickerPack(ctx context.Context, path string) (*StickerPackUpload, error) {
 	pack, err := stickers.LoadPack(path)
 	if err != nil {
@@ -168,16 +145,7 @@ func (c *Client) getStickerUploadForm(ctx context.Context, count int) (*stickers
 	return &form, nil
 }
 
-// uploadStickerPayload POSTs payload to the location identified by the
-// supplied form field. Two paths:
-//
-//   - When the server returned a real S3 POST policy (Algorithm /
-//     Policy / Signature populated), submit a multipart/form-data
-//     request with each policy field plus the payload as the `file`
-//     part. This is the wire shape S3 requires.
-//
-//   - Otherwise, fall back to the embedded-CDN path: a raw PUT to the
-//     Location URL. Dev / single-node deployments use this branch.
+// uploadStickerPayload submits an S3 POST policy as multipart when the form has one, else PUTs to Location (embedded CDN).
 func (c *Client) uploadStickerPayload(ctx context.Context, field stickers.StickerFormField, payload []byte) error {
 	if field.Policy != "" && field.Signature != "" {
 		return c.uploadStickerS3(ctx, field, payload)
@@ -231,12 +199,7 @@ func (c *Client) uploadStickerS3(ctx context.Context, field stickers.StickerForm
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	// S3 returns 204 No Content on a successful POST policy upload.
-	// 200 is also accepted as a defensive measure (some compatible
-	// gateways return 200). Anything else — including 3xx redirects
-	// (which suggest a proxy intercepting), 1xx, or 4xx/5xx — is a
-	// failure: surface it with the response body so operators have
-	// the S3 error text to debug.
+	// Accept 204 or 200; anything else fails with the response body.
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		respBody, _ := io.ReadAll(resp.Body)
 		return &APIError{StatusCode: resp.StatusCode, Message: string(respBody)}

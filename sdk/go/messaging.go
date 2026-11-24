@@ -155,8 +155,7 @@ func (c *Client) Receive(ctx context.Context, _ *ReceiveOptions) ([]ReceivedMess
 
 // SendReaction sends an emoji reaction to a message.
 func (c *Client) SendReaction(ctx context.Context, recipient string, reaction Reaction) error {
-	// Reactions are sent as encrypted DataMessage with reaction field.
-	// For now, send via REST until full protobuf Content serialization is ready.
+	// Reactions go over REST.
 	return c.sendSignalContent(ctx, recipient, map[string]any{
 		"reaction": map[string]any{
 			"emoji":               reaction.Emoji,
@@ -230,10 +229,7 @@ func (c *Client) sendSignalContent(ctx context.Context, recipient string, conten
 	return c.doRequest(ctx, "PUT", "/v1/messages/"+recipient, body, nil)
 }
 
-// SendContacts sends a contacts-sync message to all linked devices. The full
-// contacts list is read from the local store and sent as a sync payload to
-// the account's own UUID so the server can fan it out to every linked device.
-// An error is returned if credentials are not present in the local store.
+// SendContacts sends the stored contacts list as a sync message to the account's own linked devices; it errors without stored credentials.
 func (c *Client) SendContacts(ctx context.Context) error {
 	creds, err := c.store.GetCredentials()
 	if err != nil {

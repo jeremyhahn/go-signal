@@ -1,7 +1,4 @@
-// Package inprocess implements registration.Client by calling a local
-// *core.Service directly. Use it from unit tests and from the
-// monolithic deployment topology where signald embeds the verification
-// stack rather than talking to a remote registration-service binary.
+// Package inprocess implements registration.Client over a local *core.Service.
 package inprocess
 
 import (

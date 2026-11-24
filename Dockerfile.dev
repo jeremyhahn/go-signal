@@ -1,29 +1,12 @@
 # syntax=docker/dockerfile:1.7
-# =============================================================================
-# DEVELOPMENT / DEMO IMAGE — NOT FOR PRODUCTION.
-#
-# This image bakes the in-memory test configuration, the stub verification
-# transport (fixed code 123456), the test CAPTCHA provider, and self-signed
-# test TLS certificates so a single `docker run` yields a working demo with
-# no external dependencies. It deliberately runs in development mode (no
-# `mode: production`), so the fail-closed security gate is NOT active.
-#
-# For production use the top-level `Dockerfile`, which ships no secrets and
-# requires a mounted `mode: production` config.
-# =============================================================================
+# Development and demo image, not for production: test config, stub verification (code 123456), test CAPTCHA and self-signed certs, development mode.
 FROM golang:1.27.3-bookworm AS builder
 
 WORKDIR /app
 
 COPY go.mod go.sum ./
 
-# See the top-level Dockerfile for why the four `COPY --from=go-*` lines are
-# gone and what replaced them: go.mod carries no local-path replaces, so those
-# contexts fed nothing and only made this image unbuildable by `make
-# docker-build-dev`, which supplies no such contexts. First-party modules
-# resolve from Gitea with the credentials mounted here as a BuildKit secret
-# (dependency-resolution.md §6); the mount is optional so the build still works
-# where no secret is supplied.
+# First-party modules resolve with the optional BuildKit secret mounted here; the build works without it.
 RUN --mount=type=secret,id=gomodauth \
     set -eu; \
     if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \

@@ -407,12 +407,7 @@ func TestMessages_Insert_EmptyServerGUID_ReturnsError(t *testing.T) {
 	}
 }
 
-// TestMessages_GetMessagesForDevice_CorruptedData_UnmarshalError exercises the
-// json.Unmarshal error branch in GetMessagesForDevice (messages.go:93-95).
-// A row is inserted via raw SQL whose envelope column contains valid JSONB but
-// with a "content" field set to an invalid base64 string (Envelope.Content is
-// []byte, encoded as base64 in JSON), so json.Unmarshal fails even though the
-// row exists and is scanned successfully.
+// TestMessages_GetMessagesForDevice_CorruptedData_UnmarshalError stores invalid base64 content so json.Unmarshal fails.
 func TestMessages_GetMessagesForDevice_CorruptedData_UnmarshalError(t *testing.T) {
 	c := newTestClient(t)
 	s := NewMessageStore(c.Pool())

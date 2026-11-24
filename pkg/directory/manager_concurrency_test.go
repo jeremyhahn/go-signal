@@ -10,14 +10,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
-// TestGetAuthToken_ConcurrentWithDestroy overlaps live credential issuance
-// with the shutdown-path wipe, which is exactly how the manager is used: the
-// REST handler mints on request goroutines while runStart destroys on the way
-// out. Under -race this fails if the secret is touched unsynchronised.
-//
-// Every issuance must land on one of two outcomes — a real HMAC password, or
-// a SharedSecretUnavailableError. A random-UUID stub password would mean the
-// wipe had been mistaken for "HMAC was never configured".
+// TestGetAuthToken_ConcurrentWithDestroy checks issuance racing Destroy yields an HMAC password or SharedSecretUnavailableError, never a stub.
 func TestGetAuthToken_ConcurrentWithDestroy(t *testing.T) {
 	const (
 		callers   = 16

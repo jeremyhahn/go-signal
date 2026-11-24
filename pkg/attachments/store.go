@@ -6,12 +6,7 @@ import (
 	"io"
 )
 
-// Store defines the interface for attachment (CDN) storage. Implementations
-// handle large binary blobs using streaming I/O rather than loading entire
-// files into memory.
-//
-// When go-signal is embedded in go-quicbaas, the ObjectStorageService
-// (S3/GCS/MinIO) can be adapted to this interface.
+// Store is streaming attachment (CDN) storage.
 type Store interface {
 	// Put stores an attachment. The caller provides a reader and the
 	// expected size. The key uniquely identifies the attachment.

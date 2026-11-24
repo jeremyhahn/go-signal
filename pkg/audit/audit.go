@@ -1,17 +1,4 @@
-// Package audit is the structured audit-event sink for sensitive
-// operations. Every operation Java Signal-Server flags as
-// account-level-mutating (ChangeNumber, DeleteAccount, LinkDevice,
-// SetRegistrationLock) emits an Event through a *Logger; production
-// deployments wire the *Logger to a dedicated sink (separate log
-// stream, append-only Postgres table, or external SIEM) so audit
-// records survive log-rotation policies that may discard regular
-// application logs.
-//
-// Event emission is non-blocking-by-default: events are written via
-// slog.Handler.Handle which copies the attributes into the handler's
-// buffer immediately. If the sink is slow, the slog handler's own
-// buffering / dropping policy applies — never extend the request hot
-// path past the handler call.
+// Package audit emits structured audit events for account-mutating operations (ChangeNumber, DeleteAccount, LinkDevice, SetRegistrationLock) through slog.
 package audit
 
 import (
@@ -83,10 +70,7 @@ type Logger struct {
 	out *slog.Logger
 }
 
-// New constructs a Logger that emits events via the supplied
-// *slog.Logger. Pass slog.Default() to ride along with the
-// application logs; pass a dedicated handler for an isolated audit
-// sink.
+// New returns a Logger writing to l; pass a dedicated handler for an isolated audit sink.
 func New(out *slog.Logger) *Logger {
 	if out == nil {
 		out = slog.Default()

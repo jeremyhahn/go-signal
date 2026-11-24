@@ -8,9 +8,7 @@ import (
 	"github.com/jeremyhahn/go-qrdb/pkg/service"
 )
 
-// kvStoreAdapter bridges service.KVServicer to kvstore.KVStore.
-// This allows the desktop client to use the GenericDAO layer with
-// an embedded QRDB backend without requiring the full SDK transport.
+// kvStoreAdapter bridges service.KVServicer to kvstore.KVStore for an embedded QRDB backend.
 type kvStoreAdapter struct {
 	svc service.KVServicer
 }

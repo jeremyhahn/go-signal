@@ -37,4 +37,4 @@ No documentation is generated from source today. The `make docs` targets (`docs-
 - Every architectural change adds or updates one ADR.
 - Every new package, endpoint, worker, config key, or Redis/DB key gets a doc entry in the same change.
 - Update `../CHANGELOG.md` with every user-visible change.
-- Update `../CLAUDE.md` when the agent-facing architecture surface changes.
+- Update `../CLAUDE.md` when the architecture it describes changes.

@@ -295,8 +295,7 @@ func TestDecodeSendError_AllCases(t *testing.T) {
 		{
 			regpb.SendVerificationCodeErrorType_SEND_VERIFICATION_CODE_ERROR_TYPE_SESSION_ALREADY_VERIFIED,
 			func(err error) bool {
-				// Typed, so the REST layer can map it to 409. `err != nil`
-				// would pass on the untyped value that produced a 500.
+				// Typed, so the REST layer can map it to 409.
 				var av *verification.SessionAlreadyVerifiedError
 				return errors.As(err, &av)
 			},

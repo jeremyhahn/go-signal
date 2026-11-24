@@ -1,12 +1,4 @@
-// Package cdsi is the server-side state engine for Contact Discovery
-// v2. cmd/cdsi wires it behind a Noise-NKhfs-attested WebSocket and
-// pulls its (E.164 → ACI/PNI/access_key) snapshot from signald over
-// internal gRPC at startup.
-//
-// Per Java's architecture (and the Phase 4.3 plan), mobile clients
-// connect DIRECTLY to cdsi for batch lookups; signald is not on the
-// call path. signald issues HMAC credentials at /v2/directory/auth
-// that mobile clients present as HTTP Basic on the WebSocket upgrade.
+// Package cdsi is the Contact Discovery v2 server engine; cmd/cdsi serves it over an attested Noise WebSocket and loads its snapshot from signald over gRPC.
 package cdsi
 
 import (
@@ -15,10 +7,7 @@ import (
 	"sync/atomic"
 )
 
-// Entry is one row of the contact-discovery directory: the
-// (E.164 phone number, ACI, PNI, access_key) tuple. Zero-value UUID
-// bytes mean "absent" — common for PNI-only accounts that have not
-// opted in to contact-discovery.
+// Entry is one directory row (E.164, ACI, PNI, access key); a zero UUID means absent.
 type Entry struct {
 	// E164 is the canonical phone number as a uint64 (no + prefix).
 	E164 uint64

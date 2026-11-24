@@ -86,10 +86,7 @@ type FCMProvider struct {
 	now func() time.Time
 }
 
-// NewFCMProvider parses the service-account JSON, validates the private key,
-// and returns a ready-to-use provider. No network calls are made until the
-// first Send. ProjectID may be empty when the service-account JSON embeds a
-// project_id field.
+// NewFCMProvider parses and validates the service-account JSON without network calls; ProjectID may come from the JSON.
 func NewFCMProvider(cfg FCMConfig) (*FCMProvider, error) {
 	var sa serviceAccount
 	if err := json.Unmarshal(cfg.ServiceAccountJSON, &sa); err != nil {
@@ -134,8 +131,7 @@ func NewFCMProvider(cfg FCMConfig) (*FCMProvider, error) {
 	}, nil
 }
 
-// parseRSAPrivateKey accepts PKCS#1 ("RSA PRIVATE KEY") or PKCS#8
-// ("PRIVATE KEY") PEM blocks. Google service-account JSON ships PKCS#8.
+// parseRSAPrivateKey accepts PKCS#1 or PKCS#8 PEM blocks.
 func parseRSAPrivateKey(pemBytes []byte) (*rsa.PrivateKey, error) {
 	block, _ := pem.Decode(pemBytes)
 	if block == nil {
@@ -242,8 +238,7 @@ type fcmAndroidConfig struct {
 	Priority string `json:"priority,omitempty"`
 }
 
-// fcmErrorResponse mirrors the v1 error envelope. We only need the inner
-// status enum to distinguish UNREGISTERED.
+// fcmErrorResponse is the FCM v1 error envelope; only the status is used.
 type fcmErrorResponse struct {
 	Error struct {
 		Code    int    `json:"code"`
@@ -317,9 +312,7 @@ func (p *FCMProvider) Send(ctx context.Context, n *PushNotification) (SendPushNo
 	return interpretFCMError(resp.StatusCode, respBody), nil
 }
 
-// interpretFCMError maps an FCM v1 error response onto our typed result.
-// UNREGISTERED in any error detail (or status=NOT_FOUND with messaging-
-// error code UNREGISTERED) marks the token as invalid.
+// interpretFCMError marks the token invalid when any error detail says UNREGISTERED.
 func interpretFCMError(statusCode int, body []byte) SendPushNotificationResult {
 	var er fcmErrorResponse
 	_ = json.Unmarshal(body, &er)

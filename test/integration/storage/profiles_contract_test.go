@@ -150,13 +150,7 @@ func TestProfileStoreContract_QRDB(t *testing.T) {
 	})
 }
 
-// TestProfileStoreContract_Postgres runs the profile contract against a live
-// Postgres instance. Skips if TEST_POSTGRES_URL is unset.
-//
-// The postgres profiles table has an FK to accounts(aci). Contract callers
-// don't seed accounts (memory and qrdb don't require it), so the factory
-// returns a tiny wrapper that auto-seeds the parent account row on Set.
-// The wrapper is invisible to the contract — every other method delegates.
+// TestProfileStoreContract_Postgres runs the profile contract on Postgres (TEST_POSTGRES_URL); a wrapper seeds the parent account row the FK requires.
 func TestProfileStoreContract_Postgres(t *testing.T) {
 	c := postgresClient(t)
 	runProfileStoreContract(t, func(t *testing.T) profiles.ProfileStore {

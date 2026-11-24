@@ -90,11 +90,7 @@ func (s *Server) handleSetAccountAttributes(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleAccountExists processes HEAD /v1/accounts/account/{identifier} and
-// returns 200 if the account exists, 404 otherwise. This endpoint is rate
-// limited by IP to prevent enumeration. Both authenticated and unauthenticated
-// requests are accepted, matching the Java Signal-Server's OptionalAccess
-// pattern where the endpoint works regardless of auth state.
+// handleAccountExists answers HEAD /v1/accounts/account/{identifier} with 200 or 404, with or without auth, rate limited by IP.
 func (s *Server) handleAccountExists(w http.ResponseWriter, r *http.Request) {
 	identifier := r.PathValue("identifier")
 	// Validate the identifier shape before touching the store so an

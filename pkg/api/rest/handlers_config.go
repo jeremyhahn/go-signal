@@ -2,14 +2,7 @@ package rest
 
 import "net/http"
 
-// handleGetConfig handles GET /v1/config. This is a legacy, unauthenticated
-// endpoint that is not present in the pinned Java reference (which exposes
-// only the authenticated, per-account /v2/config — see handleGetRemoteConfig).
-// To avoid being a dead stub it serves the platform-neutral global feature
-// flags from the same remoteconfig.Manager, evaluated without an account so
-// the result is deterministic and account-independent. The response uses the
-// canonical name→value map shape. When no manager is configured it returns an
-// empty map.
+// handleGetConfig serves GET /v1/config: the global feature flags from remoteconfig.Manager, evaluated without an account, or an empty map.
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	rendered := map[string]string{}
 	if s.remoteConfig != nil {

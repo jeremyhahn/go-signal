@@ -35,8 +35,7 @@ func NewTransport(config TransportConfig) *Transport {
 	return &Transport{config: config}
 }
 
-// SendCode delivers a verification code to the given destination phone number
-// via an SMTP email-to-SMS gateway.
+// SendCode emails a verification code to the number's SMS gateway.
 func (t *Transport) SendCode(_ context.Context, destination string, code string, opts ...verification.SendOption) error {
 	resolved := verification.ApplySendOptions(opts...)
 

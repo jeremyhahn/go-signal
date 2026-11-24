@@ -19,21 +19,7 @@ func failClone(t *testing.T, injected error) {
 	t.Cleanup(func() { cloneSecret = original })
 }
 
-// TestSetSharedSecret_CloneFailureDoesNotDowngradeToStub is the regression
-// test for the fail-open Codex found.
-//
-// SetSharedSecret branched on "is the clone empty?" to choose legacy stub
-// mode. Clone returned an empty value both when there was no secret to copy
-// AND when the copy could not be allocated, so a protected-memory failure was
-// indistinguishable from an unconfigured deployment. The consequence was not a
-// crash but something quieter and worse: a CDSI-configured server would come
-// up in stub mode and hand clients random UUIDs with a nil error — credentials
-// cdsi rejects — under nothing more exotic than memory pressure.
-//
-// The manager now propagates the failure and changes nothing.
-//
-// Reverting SetSharedSecret to treat a failed clone as an absent secret makes
-// this fail.
+// TestSetSharedSecret_CloneFailureDoesNotDowngradeToStub checks a clone failure is an error, not stub mode.
 func TestSetSharedSecret_CloneFailureDoesNotDowngradeToStub(t *testing.T) {
 	m := NewDirectoryManager(slog.Default())
 	defer m.Destroy()
@@ -66,12 +52,7 @@ func TestSetSharedSecret_CloneFailureDoesNotDowngradeToStub(t *testing.T) {
 	}
 }
 
-// TestSetSharedSecret_CloneFailurePreservesTheInstalledKey covers the rotation
-// case the review named: a manager already minting must not lose its working
-// key because a replacement could not be allocated.
-//
-// Reverting SetSharedSecret to swap before it knows the clone succeeded makes
-// this fail.
+// TestSetSharedSecret_CloneFailurePreservesTheInstalledKey checks a failed rotation keeps the working key.
 func TestSetSharedSecret_CloneFailurePreservesTheInstalledKey(t *testing.T) {
 	ctx := context.Background()
 	m := NewDirectoryManager(slog.Default())
@@ -114,22 +95,7 @@ func TestSetSharedSecret_CloneFailurePreservesTheInstalledKey(t *testing.T) {
 	}
 }
 
-// TestSetSharedSecret_UnopenableSecretDoesNotDowngradeToStub is the
-// regression test for the second half of the same fail-open (#15 §1).
-//
-// The clone-failure path above was fixed, but the branch that CHOSE stub mode
-// still asked IsDestroyed, which reports true for three different states:
-// never configured, destroyed, and configured-but-unopenable. Only the first
-// means "this deployment did not ask for CDSI". The other two mean a key is
-// installed and cannot be read, and answering those with the legacy stub
-// hands out random UUIDs cdsi rejects — the same invisible downgrade, reached
-// by a different route.
-//
-// A configured secret that has been destroyed is exactly that state: it is
-// not absent, and it cannot be revealed.
-//
-// Reverting the branch to IsDestroyed makes this fail: the manager returns
-// nil and quietly installs stub mode.
+// TestSetSharedSecret_UnopenableSecretDoesNotDowngradeToStub checks a configured but destroyed secret is an error, not stub mode.
 func TestSetSharedSecret_UnopenableSecretDoesNotDowngradeToStub(t *testing.T) {
 	m := NewDirectoryManager(slog.Default())
 	defer m.Destroy()

@@ -20,17 +20,14 @@ type App struct {
 	daos   *daostore.Factory
 }
 
-// NewApp creates the desktop application. The Signal SDK client is created
-// with a QRDB-backed DAOStore by default (shared with the CLI). The desktop
-// App wraps the client with Wails-bound methods for the React frontend.
+// NewApp creates the desktop app around a client with a QRDB-backed DAOStore and Wails bindings.
 func NewApp(cfg signal.ClientConfig) (*App, error) {
 	client, err := signal.NewClient(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	// Extract the DAO factory from the client's store for direct DAO access
-	// in bindings (conversations, messages, etc.).
+	// The DAO factory, for direct access in bindings.
 	var factory *daostore.Factory
 	if daoStore, ok := client.Config().Store.(*signal.DAOStore); ok {
 		factory = daoStore.Factory()
@@ -55,11 +52,7 @@ func (a *App) Shutdown(_ context.Context) {
 	_ = a.Close()
 }
 
-// Close releases the client and the store it owns, reporting any failure.
-//
-// A store that will not close is a persistence failure — an unflushed write is
-// lost data, not a tidy-up detail — so the error is returned rather than
-// dropped.
+// Close releases the client and its store and returns any failure.
 func (a *App) Close() error {
 	if a.client == nil {
 		return nil

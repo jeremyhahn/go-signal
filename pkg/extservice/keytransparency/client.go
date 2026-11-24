@@ -1,10 +1,4 @@
-// Package keytransparency is the chat-server-side gRPC client for
-// cmd/key-transparency. signald's KT REST handlers translate inbound
-// JSON requests into proto calls through this Client.
-//
-// The Client wraps the generated KeyTransparencyQueryServiceClient
-// and exposes a typed surface so signald handlers don't import the
-// proto types directly.
+// Package keytransparency is signald's typed gRPC client for cmd/key-transparency.
 package keytransparency
 
 import (

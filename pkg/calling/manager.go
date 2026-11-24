@@ -10,9 +10,7 @@ import (
 	"github.com/jeremyhahn/go-libsignal/pkg/zkgroup"
 )
 
-// CallingManager manages TURN relay credentials, call link credential issuance,
-// and call quality survey submission. It delegates to pluggable providers for
-// TURN credentials and survey publishing.
+// CallingManager issues TURN relay and call-link credentials and publishes call-quality surveys through pluggable providers.
 type CallingManager struct {
 	turnProvider        TurnCredentialProvider
 	genericServerSecret *zkgroup.GenericServerSecretParams
@@ -38,10 +36,7 @@ func NewCallingManager(cfg CallingConfig) *CallingManager {
 	}
 }
 
-// Destroy releases resources held by the CallingManager. If the configured
-// TurnCredentialProvider implements a Destroy method, it is called to wipe
-// protected key material from memory. The genericServerSecret reference is
-// also cleared so the ZKGroup secret can be garbage collected.
+// Destroy wipes the TURN provider's key material when it supports Destroy and drops the zkgroup secret.
 func (m *CallingManager) Destroy() {
 	type destroyer interface {
 		Destroy()
@@ -52,8 +47,7 @@ func (m *CallingManager) Destroy() {
 	m.genericServerSecret = nil
 }
 
-// GetCallingRelays retrieves TURN credentials from the configured provider and
-// returns them wrapped in a GetCallingRelaysResponse.
+// GetCallingRelays returns TURN credentials from the provider.
 func (m *CallingManager) GetCallingRelays(ctx context.Context) (*GetCallingRelaysResponse, error) {
 	token, err := m.turnProvider.RetrieveCredentials(ctx)
 	if err != nil {
@@ -63,10 +57,7 @@ func (m *CallingManager) GetCallingRelays(ctx context.Context) (*GetCallingRelay
 	return &GetCallingRelaysResponse{Relays: []TurnToken{*token}}, nil
 }
 
-// CreateCallLinkAuth issues a CreateCallLink credential using zkgroup,
-// matching Java's CallLinkController.getCreateAuth(). The client sends a
-// serialized CreateCallLinkCredentialRequest which contains a blinded room ID
-// and blinding public key. The server issues a blinded credential response.
+// CreateCallLinkAuth issues a blinded CreateCallLink credential for the client's request via zkgroup.
 func (m *CallingManager) CreateCallLinkAuth(
 	ctx context.Context,
 	accountUUID string,
@@ -101,8 +92,7 @@ func (m *CallingManager) CreateCallLinkAuth(
 		return nil, &InvalidCredentialRequestError{Message: "invalid call link credential request: " + err.Error()}
 	}
 
-	// Calculate today's day-aligned timestamp for the credential.
-	// Java: Instant.now().truncatedTo(ChronoUnit.DAYS)
+	// Today's timestamp, truncated to the day.
 	now := time.Now().UTC()
 	todaySeconds := uint64(now.Unix())
 	dayAligned := (todaySeconds / zkgroup.SecondsPerDay) * zkgroup.SecondsPerDay

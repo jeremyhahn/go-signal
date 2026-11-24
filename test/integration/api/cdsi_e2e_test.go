@@ -182,12 +182,7 @@ func packE164sBE(nums ...uint64) []byte {
 	return out
 }
 
-// TestCDSIE2E_FullLookupFlow exercises:
-//
-//  1. signald gRPC DirectoryService sync (cdsi loads its index)
-//  2. WebSocket auth + attestation + Noise NKhfs handshake
-//  3. Encrypted ClientRequest → ClientResponse with correct PNI bytes
-//     for a registered number and zero bytes for an unregistered one.
+// TestCDSIE2E_FullLookupFlow: directory sync over gRPC, WebSocket auth, attestation and Noise NKhfs, then a lookup returning the PNI for a registered number and zeros otherwise.
 func TestCDSIE2E_FullLookupFlow(t *testing.T) {
 	const sharedSecret = "phase-4-3-cdsi-secret"
 	var aliceACI, alicePNI [16]byte

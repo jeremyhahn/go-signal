@@ -129,10 +129,7 @@ func (c *Client) getPassword() string {
 	return c.config.Password.Plaintext()
 }
 
-// NewSecurePassword creates a SecureString from a plain password string,
-// wiping the source. Convenience for CLI flag → SecureString conversion.
-// An empty password, or a failure to obtain a protected allocation, is
-// returned as an error rather than yielding an unusable credential.
+// NewSecurePassword moves password into a SecureString, wiping the source; empty input or an allocation failure is an error.
 func NewSecurePassword(password string) (*secrets.SecureString, error) {
 	return secrets.NewSecureString(password)
 }

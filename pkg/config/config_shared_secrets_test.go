@@ -129,15 +129,7 @@ func TestConfig_Destroy_NilReceiver(t *testing.T) {
 	cfg.Destroy() // must not panic
 }
 
-// TestLoad_SharedSecretsAreNotReportedAbsent guards the application-level
-// consequence of the YAML decoding defect found on go-signal #33.
-//
-// SecureString.UnmarshalYAML installed the decoded enclave but left the
-// configured flag false, so every secret loaded from a config file reported
-// IsAbsent() == true. The directory and secure-storage managers select their
-// legacy random-UUID stub on absence, so a deployment with real HMAC secrets
-// in its config would have come up issuing credentials the peer rejects —
-// silently, and only through the loading path.
+// TestLoad_SharedSecretsAreNotReportedAbsent checks secrets loaded from a file are not reported absent.
 func TestLoad_SharedSecretsAreNotReportedAbsent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yml")

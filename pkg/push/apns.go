@@ -32,10 +32,7 @@ type APNsConfig struct {
 	Sandbox bool
 }
 
-// APNsProvider delivers push notifications via the Apple Push Notification
-// service HTTP/2 API. It wraps sideshow/apns2 so the provider boundary
-// matches the Java APNSender contract: typed NotificationType values map
-// to per-type payloads, priorities, and collapse-ids.
+// APNsProvider sends push notifications over the APNs HTTP/2 API (sideshow/apns2) with per-type payloads, priorities and collapse IDs.
 type APNsProvider struct {
 	client   *apns2.Client
 	bundleID string
@@ -130,8 +127,7 @@ func buildAPNsPayloadAndPushType(n *PushNotification) (*payload.Payload, apns2.E
 	}
 }
 
-// deliveryPriorityFor mirrors Java: BACKGROUND push-type is always
-// CONSERVE_POWER (5); ALERT honors the notification's urgent bit.
+// deliveryPriorityFor: background pushes are priority 5; alerts honour the urgent bit.
 func deliveryPriorityFor(pushType apns2.EPushType, urgent bool) int {
 	if pushType == apns2.PushTypeBackground {
 		return apns2.PriorityLow

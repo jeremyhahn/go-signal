@@ -80,10 +80,7 @@ func (s *Server) handleSetProfile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Enforce per-field ciphertext sizes, matching the exact byte lengths the
-	// Java CreateProfileRequest accepts (@ExactlySize). Empty fields are treated
-	// as "not provided" and skipped; a present field with a disallowed size is
-	// rejected with 400 so oversized/malformed blobs never reach storage.
+	// Enforce the exact ciphertext sizes per field; empty means not provided, any other size is 400.
 	if !profileFieldLenOK(name, 81, 285) {
 		writeError(w, http.StatusBadRequest, "invalid name length")
 		return
@@ -124,10 +121,7 @@ func (s *Server) handleSetProfile(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusServiceUnavailable, "avatar upload is not configured")
 			return
 		case err != nil:
-			// The CDN is configured but its credential could not be read
-			// back out of protected memory: that is our failure, not a
-			// deployment gap, and it must not produce a signed-with-nothing
-			// upload form.
+			// A configured CDN whose credential cannot be read is a server failure.
 			s.logger.Error("avatar upload signing failed",
 				slog.String("uuid", acct.UUID), slog.String("error", err.Error()))
 			writeError(w, http.StatusInternalServerError, "internal server error")
@@ -191,14 +185,7 @@ const (
 	avatarUpdate
 )
 
-// resolveAvatarChange maps a request onto one of the three cases, in Java's
-// order (CreateProfileRequest.getAvatarChange).
-//
-// The order is the point: `avatar` is read FIRST, so {avatar:false,
-// sameAvatar:true} CLEARS. Testing sameAvatar first instead makes that
-// combination keep the avatar — the opposite of what the reference server
-// gives a client asking to remove one, on a request the client is free to
-// send.
+// resolveAvatarChange reads `avatar` before `sameAvatar`, so {avatar:false, sameAvatar:true} clears the avatar.
 func resolveAvatarChange(req SetProfileRequest) avatarChange {
 	switch {
 	case !req.AvatarUpload:
@@ -210,26 +197,7 @@ func resolveAvatarChange(req SetProfileRequest) avatarChange {
 	}
 }
 
-// previousAvatarKey returns the avatar the account's profile at THIS version
-// already carries, for the sameAvatar case.
-//
-// The version is the one about to be written, matching Java
-// ProfileController.setProfile, which resolves UNCHANGED against
-// profilesManager.get(accountIdentifier, request.version()). Reading the
-// LATEST version instead lets a write at one version adopt another version's
-// key — and because KVProfileStore.Set repoints the latest marker
-// unconditionally, that same write then becomes latest, so a stale read is
-// promoted rather than shadowed.
-//
-// Only a key under avatarObjectPrefix is carried forward, as Java does: an
-// avatar this server never issued is not one it can keep signing for.
-//
-// Only a missing profile resolves to "no avatar": the client is asking to
-// keep an avatar that does not exist yet. Every other failure — a database
-// outage, a cancelled context, an unreadable row — is propagated, because the
-// caller writes this value. Collapsing those into an empty key would let a
-// request that explicitly said "keep my avatar" delete it during a transient
-// backend failure, and report 200 for doing so.
+// previousAvatarKey returns the avatar of the profile at the version being written, only under avatarObjectPrefix; only a missing profile means no avatar, other errors propagate.
 func (s *Server) previousAvatarKey(ctx context.Context, accountUUID, version string) (string, error) {
 	previous, err := s.profiles.Get(ctx, accountUUID, version)
 	if err != nil {
@@ -245,17 +213,10 @@ func (s *Server) previousAvatarKey(ctx context.Context, accountUUID, version str
 	return previous.Avatar, nil
 }
 
-// avatarObjectPrefix is the CDN key prefix every avatar this server issues
-// lives under. generateAvatarObjectName writes it and previousAvatarKey
-// requires it, so the two cannot drift: a prefix change that reached only one
-// of them would silently clear every avatar it was asked to keep.
+// avatarObjectPrefix is the CDN prefix of every avatar this server issues.
 const avatarObjectPrefix = "profiles/"
 
-// generateAvatarObjectName returns a fresh, unguessable CDN object name for a
-// profile avatar. Mirrors Java ProfileHelper.generateAvatarObjectName: 16
-// random bytes, URL-safe base64, under the profiles/ prefix. Deriving the
-// name from the account UUID instead would make every user's avatar object
-// name a function of their account id.
+// generateAvatarObjectName returns 16 random bytes, URL-safe base64, under profiles/.
 func generateAvatarObjectName() (string, error) {
 	var object [16]byte
 	if _, err := rand.Read(object[:]); err != nil {
@@ -272,10 +233,7 @@ type avatarCDNNotConfiguredError struct{}
 
 func (e *avatarCDNNotConfiguredError) Error() string { return "avatar CDN not configured" }
 
-// buildAvatarUploadAttributes constructs a real AWS SigV4 S3 POST-policy for a
-// profile-avatar upload, signed with the configured CDN credentials. It fails
-// (errAvatarCDNNotConfigured) when the CDN is not configured rather than
-// returning a non-functional placeholder signature.
+// buildAvatarUploadAttributes builds an AWS SigV4 S3 POST policy for an avatar upload, or errAvatarCDNNotConfigured.
 func (s *Server) buildAvatarUploadAttributes() (ProfileAvatarUploadAttributes, error) {
 	if !s.avatarCDN.Enabled() {
 		return ProfileAvatarUploadAttributes{}, errAvatarCDNNotConfigured
@@ -301,12 +259,7 @@ func (s *Server) buildAvatarUploadAttributes() (ProfileAvatarUploadAttributes, e
 		amzDate,
 	)
 	policyB64 := base64.StdEncoding.EncodeToString([]byte(policyJSON))
-	// The secret key lives in protected memory; it is opened here for the
-	// single HMAC chain and the copy goes out of scope immediately. Reveal,
-	// not Plaintext: Enabled() checked the secret earlier, but a destroy or
-	// an enclave failure between that check and this read must fail the
-	// request rather than sign the policy with an empty key and hand the
-	// client an upload form S3 will reject.
+	// Reveal the secret key for this HMAC chain only; a destroyed or unreadable secret fails the request.
 	secretKey, err := s.avatarCDN.SecretKey.Reveal()
 	if err != nil {
 		return ProfileAvatarUploadAttributes{}, err
@@ -347,10 +300,7 @@ func (s *Server) handleGetVersionedProfile(w http.ResponseWriter, r *http.Reques
 
 	profile, err := s.profiles.Get(r.Context(), targetAcct.UUID, version)
 	if err != nil {
-		// If no profile exists for this version, return a minimal response
-		// with account-level fields. This matches the Java server behavior
-		// and prevents signal-cli from logging spurious 404 warnings after
-		// registration.
+		// No profile at this version: return the account-level fields rather than 404.
 		writeJSON(w, http.StatusOK, buildProfileResponse(targetAcct, nil))
 		return
 	}
@@ -426,11 +376,7 @@ func buildProfileResponse(acct *accounts.Account, profile *profiles.Profile) Pro
 	return resp
 }
 
-// isValidProfileVersion reports whether v is a syntactically valid profile
-// version. Because the version is concatenated into the profile storage key
-// (<uuid>/<version>), it must be a bounded token drawn from a safe character
-// set — no path separators — and must not collide with the reserved "_latest"
-// marker key.
+// isValidProfileVersion reports whether v is a bounded safe token for the storage key and not the reserved "_latest".
 func isValidProfileVersion(v string) bool {
 	if len(v) == 0 || len(v) > 64 || v == profileLatestMarker {
 		return false

@@ -48,13 +48,7 @@ func (s *Server) handleCallHangup(w http.ResponseWriter, r *http.Request) {
 // signalRelayFn is the per-handler dispatch function passed to relayCallSignal.
 type signalRelayFn func(svc service.CallSignalingService, senderUUID string, msg *calling.CallSignalMessage) error
 
-// relayCallSignal is the shared implementation for all four call signaling
-// handlers. It authenticates the request, decodes the body, and delegates to fn.
-// Responses:
-//   - 401 — no authenticated account in context
-//   - 400 — malformed JSON body or InvalidCallSignalError
-//   - 404 — PeerNotConnectedError
-//   - 204 — signal relayed successfully
+// relayCallSignal backs the four call-signaling handlers: 401 unauthenticated, 400 bad body, 404 peer not connected, 204 relayed.
 func (s *Server) relayCallSignal(w http.ResponseWriter, r *http.Request, fn signalRelayFn) {
 	acct := accountFromContext(r.Context())
 	if acct == nil {

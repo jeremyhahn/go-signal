@@ -10,10 +10,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/verification"
 )
 
-// verificationSessionResponse formats a session for the REST surface and
-// populates requestedInformation from the session state — currently just
-// the "captcha" hint when CaptchaRequired is set. Mirrors Java's
-// RegistrationServiceSession.getRequestedInformation().
+// verificationSessionResponse formats a session, listing "captcha" in requestedInformation when CaptchaRequired.
 func verificationSessionResponse(s *verification.VerificationSession) VerificationSessionResponse {
 	info := []string{}
 	if s.CaptchaRequired {
@@ -27,16 +24,7 @@ func verificationSessionResponse(s *verification.VerificationSession) Verificati
 	}
 }
 
-// handleCreateVerificationSession processes POST /v1/verification/session.
-//
-// Security invariants:
-//   - This endpoint is unauthenticated; session management is enforced by the
-//     verification.Manager service layer.
-//   - Session count is capped at MaxSessions (default 10,000) by the Manager;
-//     exceeding the cap returns HTTP 429 (Too Many Requests).
-//   - Each session is assigned a TTL of SessionTTL (default 10 minutes); the
-//     Manager's background cleanup goroutine evicts expired sessions every
-//     CleanupInterval (default 60 seconds).
+// handleCreateVerificationSession handles POST /v1/verification/session, unauthenticated; the Manager caps sessions (429), sets their TTL and evicts expired ones.
 func (s *Server) handleCreateVerificationSession(w http.ResponseWriter, r *http.Request) {
 	var req CreateVerificationSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -147,16 +135,7 @@ func (s *Server) handleRequestVerificationCode(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, verificationSessionResponse(session))
 }
 
-// writeSessionConflict answers a 409 carrying the session, which is the shape
-// Java uses for both the already-verified and captcha-required outcomes: the
-// client reads the session state and decides what to do next.
-//
-// A failed reload is NOT a conflict. Reporting a storage or transport failure
-// as a well-formed 409 tells the client something definite about a session
-// nobody could read, and the client then acts on it — so anything other than
-// a recognised session state becomes a 500. Not-found and expired are mapped
-// deliberately, because those are real answers about the session rather than
-// failures to obtain one.
+// writeSessionConflict answers 409 with the session; not-found and expired map to their codes, any other reload failure is 500.
 func (s *Server) writeSessionConflict(w http.ResponseWriter, r *http.Request, id string) {
 	updated, err := s.verification.GetSession(r.Context(), id)
 	if err != nil {
@@ -168,11 +147,7 @@ func (s *Server) writeSessionConflict(w http.ResponseWriter, r *http.Request, id
 		case errors.As(err, &expired):
 			writeError(w, http.StatusGone, "session expired")
 		default:
-			// The session id is deliberately NOT logged. A verified session
-			// id is the bearer credential POST /v1/registration accepts as
-			// proof of verification (enforceVerifiedSession), so writing it
-			// to logs turns log access into account takeover for any number
-			// with a live session.
+			// Never log the session id: a verified id is a registration bearer credential.
 			s.logger.Error("failed to reload verification session for conflict response",
 				slog.String("error", err.Error()))
 			writeError(w, http.StatusInternalServerError, "internal error")
@@ -182,10 +157,7 @@ func (s *Server) writeSessionConflict(w http.ResponseWriter, r *http.Request, id
 	writeJSON(w, http.StatusConflict, verificationSessionResponse(updated))
 }
 
-// handleUpdateVerificationSession processes PATCH /v1/verification/session/{id}.
-// Today it accepts an optional captcha solution (provider.sitekey.action.token
-// format). On success the session's CaptchaRequired flag is cleared and the
-// updated session is returned. Mirrors Java RegistrationController#updateSession.
+// handleUpdateVerificationSession handles PATCH /v1/verification/session/{id}, accepting a captcha solution that clears CaptchaRequired.
 func (s *Server) handleUpdateVerificationSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
@@ -246,11 +218,7 @@ func (s *Server) handleUpdateVerificationSession(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, verificationSessionResponse(session))
 }
 
-// handleSubmitVerificationCode processes PUT /v1/verification/session/{id}/code.
-// It validates the submitted code via the verification.Manager using a
-// constant-time comparison to prevent timing attacks. The session must exist
-// and the code must match exactly; expired sessions and invalid codes each
-// return distinct 4xx status codes.
+// handleSubmitVerificationCode handles PUT /v1/verification/session/{id}/code with a constant-time code check; expired and invalid get distinct 4xx codes.
 func (s *Server) handleSubmitVerificationCode(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 

@@ -6,9 +6,7 @@ import "testing"
 // parse – uncovered branches: negative minor, negative patch
 // --------------------------------------------------------------------------
 
-// TestParse_NegativeMinorReturnsFalse verifies that a version string with a
-// negative minor component is rejected. This exercises the "minor < 0" guard
-// inside parse that was not previously reached.
+// TestParse_NegativeMinorReturnsFalse checks a negative minor component is rejected.
 func TestParse_NegativeMinorReturnsFalse(t *testing.T) {
 	cases := []string{
 		"1.-1.0",

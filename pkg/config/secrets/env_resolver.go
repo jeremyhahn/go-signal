@@ -23,10 +23,7 @@ func (r *EnvResolver) Scheme() string {
 	return "env"
 }
 
-// Resolve expands environment variable references in the value. A value of
-// "${VAR_NAME}" resolves to the value of the VAR_NAME environment variable
-// wrapped in a SecureString. If the variable is not set, an EnvVarNotSetError
-// is returned. Values that are not env var references are wrapped unchanged.
+// Resolve expands "${VAR_NAME}" to that variable's value, or EnvVarNotSetError; other values are wrapped unchanged.
 func (r *EnvResolver) Resolve(_ context.Context, value string) (*SecureString, error) {
 	varName, ok := parseEnvVar(value)
 	if !ok {

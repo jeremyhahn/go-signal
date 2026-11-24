@@ -50,12 +50,7 @@ import (
 	signalws "github.com/jeremyhahn/go-signal/pkg/websocket"
 )
 
-// phoneRunBase is a per-process random base offset for phone number generation.
-// It is initialised once at package load time from a cryptographically secure
-// random source so that successive integration test runs against a persistent
-// external server never reuse phone numbers from a previous run. The upper
-// four digits of the seven-digit suffix encode the run base (0000–9999); the
-// lower three digits encode the per-test counter (001–999).
+// phoneRunBase is a random per-run base (0000-9999) so runs against a persistent server never reuse numbers.
 var phoneRunBase int64
 
 func init() {
@@ -73,11 +68,7 @@ func init() {
 // tests. It is combined with phoneRunBase to produce run-unique numbers.
 var phoneCounter int64
 
-// uniquePhoneNumber generates a unique phone number for each test invocation.
-// The format is "+1555RRRRPPP" where RRRR is the four-digit per-run base and
-// PPP is a zero-padded three-digit per-test counter (001–999). This scheme
-// supports up to 999 tests per run and ensures different runs against a shared
-// persistent server never collide on the same phone number.
+// uniquePhoneNumber returns "+1555RRRRPPP": RRRR the run base, PPP the per-test counter (up to 999 per run).
 func uniquePhoneNumber() string {
 	n := atomic.AddInt64(&phoneCounter, 1)
 	// Clamp to 3-digit range; integration tests never need more than 999 numbers.
@@ -104,19 +95,7 @@ func caCertPath() string {
 	return "../../tls/ca-cert.pem"
 }
 
-// remoteTLSConfig verifies the server against the test CA instead of trusting
-// whatever certificate it presents.
-//
-// This used to be InsecureSkipVerify with a comment asserting the target was a
-// local devcontainer. SIGNAL_SERVER_URL is read verbatim and constrained to
-// nothing, so that assertion was not the code's to make: pointed at any other
-// host, the suite would accept any certificate while sending registration
-// passwords, authorization headers and generated key material to it. The test
-// CA is in the repo and its certificate covers signal-server, localhost and
-// 127.0.0.1, so there is nothing to give up by verifying properly.
-//
-// Failing to load the CA fails the test. A fallback to skipping verification
-// would restore the same hole for anyone whose environment is slightly wrong.
+// remoteTLSConfig verifies the server against the test CA (signal-server, localhost, 127.0.0.1); failing to load it fails the test.
 func remoteTLSConfig(t *testing.T) *tls.Config {
 	t.Helper()
 
@@ -219,9 +198,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 		wsSessions.DeliverMessage(uuid, deviceID, env)
 	})
 
-	// Seed remote (dynamic) configuration so GET /v2/config exercises the
-	// real evaluation pipeline. The global.* flags ship to every platform
-	// at 100% so every account receives value "TRUE".
+	// Seed remote config so GET /v2/config returns the global.* flags as "TRUE".
 	rcStore := remoteconfig.NewMemoryStore()
 	for _, name := range []string{
 		"global.calling", "global.groupsv2", "global.storage",
@@ -449,13 +426,7 @@ type registeredAccount struct {
 	PNIKeys *testKeyMaterial
 }
 
-// registerTestAccount creates a test account via the full registration flow:
-// 1. Creates a verification session for the phone number.
-// 2. Requests a verification code (stub transport accepts any request).
-// 3. Submits code "123456" which the stub transport auto-verifies.
-// 4. Posts the registration request with the verified session ID.
-//
-// It returns the UUID and PNI assigned by the server.
+// registerTestAccount registers through a verification session and code "123456", returning the UUID and PNI.
 func registerTestAccount(t *testing.T, env *testEnv, number, password string) (uuid string, pni string) {
 	t.Helper()
 	acct := registerTestAccountFull(t, env, number, password)

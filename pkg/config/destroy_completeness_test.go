@@ -41,22 +41,7 @@ func walkProtectedFields(v reflect.Value, path string, visit func(path string, f
 	}
 }
 
-// TestDestroy_WipesEveryProtectedFieldInTheConfigTree is the drift guard for
-// Config.Destroy.
-//
-// Destroy enumerates the protected fields by hand. That list has already
-// drifted once — Storage.Postgres.URL holds a database DSN with embedded
-// credentials and was missing from it, so a failed load or a normal shutdown
-// left the URL resident while wiping everything around it. A hand-maintained
-// list of twenty fields will drift again; the fields are added one at a time,
-// in different PRs, by whoever needs them.
-//
-// So this does not test that one field. It walks the whole Config tree by
-// reflection, populates EVERY *secrets.SecureString it finds, calls Destroy,
-// and asserts every one of them is wiped. A field added to Config without
-// being added to Destroy fails here automatically, naming itself.
-//
-// Removing any field from Destroy's list makes this fail.
+// TestDestroy_WipesEveryProtectedFieldInTheConfigTree sets every *secrets.SecureString in Config by reflection and checks Destroy wipes each.
 func TestDestroy_WipesEveryProtectedFieldInTheConfigTree(t *testing.T) {
 	cfg := &Config{}
 

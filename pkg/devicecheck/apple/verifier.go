@@ -1,14 +1,4 @@
-// Package apple implements Apple App Attest attestation + assertion
-// verification. Mirrors Java Signal-Server's
-// org.whispersystems.textsecuregcm.storage.devicecheck.AppleDeviceCheckManager
-// which delegates to webauthn4j-appattest. We hand-roll the verifier
-// against Apple's published spec rather than pulling in a third-party
-// library — it's pure stdlib + cbor/v2 (already a workspace dep).
-//
-// Apple's reference docs:
-//
-//	https://developer.apple.com/documentation/devicecheck/validating-apps-that-connect-to-your-server
-//	https://developer.apple.com/documentation/devicecheck/establishing-your-app-s-integrity
+// Package apple verifies Apple App Attest attestations and assertions per Apple's DeviceCheck documentation, with stdlib and cbor only.
 package apple
 
 import (
@@ -37,24 +27,16 @@ import (
 //go:embed apple_root_ca.pem
 var rootCAPEM []byte
 
-// aaguidProduction and aaguidDevelopment are the AAGUIDs (16 bytes) Apple
-// embeds in the App Attest authenticator data. The development AAGUID is
-// returned by attestation in DEBUG/development builds; production builds
-// use the production AAGUID. Reject any other value.
+// The production and development App Attest AAGUIDs; any other value is rejected.
 var (
 	aaguidProduction  = []byte("appattest\x00\x00\x00\x00\x00\x00\x00")
 	aaguidDevelopment = []byte("appattestdevelop")
 )
 
-// nonceOID is the Apple-defined ASN.1 OID for the App Attest nonce
-// extension on the leaf attestation certificate (1.2.840.113635.100.8.2).
-// The DER value is `SEQUENCE { [0] OCTET STRING <32-byte nonce> }`.
+// nonceOID is the App Attest nonce extension (1.2.840.113635.100.8.2): SEQUENCE { [0] OCTET STRING <32-byte nonce> }.
 var nonceOID = asn1.ObjectIdentifier{1, 2, 840, 113635, 100, 8, 2}
 
-// Verifier holds the configured root CA + Apple team/bundle IDs used to
-// validate App Attest attestations + assertions. One Verifier is safe to
-// share across requests; the root cert pool is computed once at
-// construction.
+// Verifier holds the root CA and team and bundle IDs for App Attest checks; safe to share.
 type Verifier struct {
 	roots    *x509.CertPool
 	teamID   string
@@ -62,14 +44,11 @@ type Verifier struct {
 	// now is the wall-clock source used for certificate validity checks.
 	// Tests override this; production callers leave it as time.Now.
 	now func() time.Time
-	// allowDevelopment controls whether the development AAGUID is
-	// accepted. Production deployments leave this false; QA harnesses
-	// can flip it true to validate dev-build attestations.
+	// allowDevelopment accepts the development AAGUID; false in production.
 	allowDevelopment bool
 }
 
-// Config configures NewVerifier. TeamID/BundleID are required; AAGUID
-// pinning falls back to production-only when allowDevelopment is false.
+// Config configures NewVerifier; TeamID and BundleID are required.
 type Config struct {
 	TeamID           string
 	BundleID         string
@@ -105,10 +84,7 @@ func NewVerifier(cfg Config) (*Verifier, error) {
 	}, nil
 }
 
-// AttestationResult is the parsed + verified output of VerifyAttestation:
-// the device public key (ES256), the credential ID, and the initial sign
-// counter (must be 0). Stored against the account so subsequent assertions
-// can be verified.
+// AttestationResult is the verified device key (ES256), credential ID and initial counter (0), stored for later assertions.
 type AttestationResult struct {
 	PublicKey    *ecdsa.PublicKey
 	CredentialID []byte
@@ -116,12 +92,7 @@ type AttestationResult struct {
 	Receipt      []byte // opaque Apple receipt; relayed back to Apple later if needed
 }
 
-// VerifyAttestation runs the full Apple App Attest verification flow for a
-// new device key. clientChallenge is the original challenge string Signal
-// issued; attestation is the CBOR blob the client returned; keyID is the
-// SHA-256 of the device's public key (base64 in transit, decoded by caller).
-//
-// Returns a stored-device record on success or a typed error.
+// VerifyAttestation verifies a new device key's App Attest attestation for clientChallenge; keyID is the SHA-256 of the device public key.
 func (v *Verifier) VerifyAttestation(challenge string, keyID, attestation []byte) (*AttestationResult, error) {
 	if len(keyID) != 32 {
 		return nil, errInvalid("keyId must be SHA-256 length (32 bytes)")
@@ -197,13 +168,7 @@ func (v *Verifier) VerifyAttestation(challenge string, keyID, attestation []byte
 	}, nil
 }
 
-// VerifyAssertion runs the assertion verification flow. devicePublicKey is
-// the previously-stored ECDSA key from VerifyAttestation; storedCounter is
-// the last seen sign-count for this device; request is the application-
-// level bytes the client signed (Signal embeds the challenge in this);
-// assertion is the CBOR blob returned by the client.
-//
-// Returns the new sign-count on success so the caller can persist it.
+// VerifyAssertion verifies an assertion over request with the stored key and counter, returning the new counter to persist.
 func (v *Verifier) VerifyAssertion(
 	devicePublicKey *ecdsa.PublicKey,
 	storedCounter uint32,
@@ -327,9 +292,7 @@ func (s *attestationStatement) verifyCertChain(roots *x509.CertPool, now time.Ti
 	return leaf, nil
 }
 
-// nonceFromCert extracts the 32-byte App Attest nonce from the leaf cert's
-// 1.2.840.113635.100.8.2 extension. Apple's spec: the extension value is
-// `SEQUENCE { [0] EXPLICIT OCTET STRING }`.
+// nonceFromCert extracts the 32-byte nonce from the leaf certificate's 1.2.840.113635.100.8.2 extension.
 func nonceFromCert(c *x509.Certificate) ([]byte, error) {
 	for _, ext := range c.Extensions {
 		if !ext.Id.Equal(nonceOID) {
@@ -345,8 +308,7 @@ func nonceFromCert(c *x509.Certificate) ([]byte, error) {
 		if err != nil {
 			return nil, signalerrors.Wrap(signalerrors.ErrInternal, "apple: parse nonce ext (inner)", err)
 		}
-		// Some Apple-issued extensions wrap the OCTET STRING inside a
-		// `[0] EXPLICIT` context-specific tag. Unwrap one level if so.
+		// Unwrap one [0] EXPLICIT tag if present.
 		if inner.Tag == 0 && inner.Class == asn1.ClassContextSpecific {
 			if _, err := asn1.Unmarshal(inner.Bytes, &inner); err != nil {
 				return nil, signalerrors.Wrap(signalerrors.ErrInternal, "apple: unwrap context-specific tag", err)
@@ -364,11 +326,8 @@ func nonceFromCert(c *x509.Certificate) ([]byte, error) {
 	return nil, errInvalid("nonce extension missing")
 }
 
-// authenticatorData is the parsed authData block (Apple App Attest layout
-// matches WebAuthn authenticatorData):
-//
-//	rpIdHash (32) | flags (1) | signCount (4) | aaguid (16) |
-//	credIdLength (2) | credId | extensions...
+// authenticatorData is the parsed authData:
+// rpIdHash (32) | flags (1) | signCount (4) | aaguid (16) | credIdLength (2) | credId | extensions...
 type authenticatorData struct {
 	rpIDHash     [32]byte
 	flags        byte
@@ -403,13 +362,7 @@ func parseAuthenticatorData(data []byte) (*authenticatorData, error) {
 	return out, nil
 }
 
-// uncompressedECPoint serializes pub in SEC1 uncompressed form
-// (0x04 || X || Y), the byte layout SHA-256 hashes into the App Attest
-// keyId. Uses (*ecdsa.PublicKey).Bytes — the Go-1.25-stabilized
-// replacement for the deprecated direct big.Int X/Y access. A correctly
-// constructed P-256 public key never produces an error here (the only
-// failure mode is an unsupported curve, which NewVerifier guards against
-// upstream); we panic on the impossible case so the contract is clear.
+// uncompressedECPoint returns pub as SEC1 uncompressed bytes (0x04 || X || Y); it panics only on an unsupported curve, which NewVerifier rules out.
 func uncompressedECPoint(pub *ecdsa.PublicKey) []byte {
 	out, err := pub.Bytes()
 	if err != nil {

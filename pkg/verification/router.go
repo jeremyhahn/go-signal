@@ -6,14 +6,7 @@ import (
 	"strings"
 )
 
-// RouterTransport selects an underlying VerificationTransport based on the
-// destination format. Phone numbers (E.164 — starts with '+') route to the
-// SMS transport; everything containing '@' routes to the Email transport.
-// A nil leg means "this channel is not configured": destinations whose
-// channel is unconfigured produce ErrChannelNotConfigured.
-//
-// The router itself satisfies VerificationTransport, so Manager / handlers
-// don't need to learn about it — they keep talking to one transport.
+// RouterTransport sends '+' destinations to SMS and '@' destinations to Email; an unconfigured channel returns ErrChannelNotConfigured.
 type RouterTransport struct {
 	SMS   VerificationTransport
 	Email VerificationTransport
@@ -37,10 +30,7 @@ func (r *RouterTransport) SendCode(ctx context.Context, destination, code string
 	return t.SendCode(ctx, destination, code, opts...)
 }
 
-// transportFor selects the leaf transport by destination format. SMS wins
-// when the destination begins with '+' (E.164); email wins when it contains
-// '@'. Anything else falls through to SMS as the historical default — Java
-// behaves the same way for legacy non-E.164 numbers.
+// transportFor picks email for '@' destinations and SMS otherwise.
 func (r *RouterTransport) transportFor(destination string) (VerificationTransport, error) {
 	switch DestinationChannel(destination) {
 	case ChannelEmail:

@@ -33,12 +33,7 @@ type MessageService interface {
 	// real-time WebSocket delivery.
 	SetDeliveryCallback(fn messages.DeliveryCallback)
 
-	// SendMRMBinary processes a SealedSender v2 multi-recipient ciphertext:
-	// stores the shared payload in the MRM cache and enqueues per-recipient
-	// envelopes referencing it. Returns the list of recipient UUIDs that
-	// could not be resolved by the supplied lookup. Callers must wire an
-	// MRM cache via the underlying MessagesManager (SetMRMCache) before
-	// calling, otherwise ErrMRMNoCache is returned.
+	// SendMRMBinary stores a Sealed Sender v2 payload once and enqueues per-recipient envelopes, returning unresolved UUIDs; ErrMRMNoCache without SetMRMCache.
 	SendMRMBinary(ctx context.Context, req messages.MRMSendRequest) (*messages.MRMSendResult, error)
 
 	// SetMRMCache wires the multi-recipient message shared-payload cache. When

@@ -8,12 +8,7 @@ import (
 	"github.com/jeremyhahn/go-libsignal/pkg/zkgroup"
 )
 
-// TestGetExpiringProfileKeyCredential_ClientCanReceive exercises the full
-// server-side issuance path with a real zkgroup secret: a client-created
-// request is issued, the serialized response is deserialized, and the client
-// successfully receives (unblinds) the credential. This validates both the
-// manager's use of SerializeExpiringProfileKeyCredentialResponse and the
-// go-libsignal request/commitment/response wire encodings end-to-end.
+// TestGetExpiringProfileKeyCredential_ClientCanReceive issues a credential with a real zkgroup secret and checks the client can receive it.
 func TestGetExpiringProfileKeyCredential_ClientCanReceive(t *testing.T) {
 	var rnd zkgroup.RandomnessBytes
 	for i := range rnd {
@@ -114,7 +109,7 @@ func TestGetExpiringProfileKeyCredential_WrongCommitmentFails(t *testing.T) {
 	clientCtx, _ := public.CreateProfileKeyCredentialRequestContext(reqRnd, aci, profileKey)
 	request := clientCtx.GetRequest()
 
-	// A commitment from a DIFFERENT profile key must not satisfy the request.
+	// A commitment from a different profile key must not satisfy the request.
 	var otherPK zkgroup.ProfileKeyBytes
 	for i := range otherPK {
 		otherPK[i] = byte(i + 99)

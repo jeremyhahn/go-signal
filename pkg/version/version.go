@@ -1,6 +1,4 @@
-// Package version provides utilities for parsing and comparing semantic
-// version strings in the form MAJOR.MINOR.PATCH (e.g. "5.1.0"). Each
-// component must be a non-negative decimal integer.
+// Package version parses and compares MAJOR.MINOR.PATCH version strings.
 package version
 
 import (
@@ -13,9 +11,7 @@ type semver struct {
 	major, minor, patch int
 }
 
-// parse parses a "MAJOR.MINOR.PATCH" string into a semver. Additional
-// dot-separated fields are ignored. Returns false when the string does not
-// contain at least three dot-separated non-negative integer fields.
+// parse parses MAJOR.MINOR.PATCH, ignoring extra fields; false when invalid.
 func parse(s string) (semver, bool) {
 	parts := strings.SplitN(s, ".", 4)
 	if len(parts) < 3 {
@@ -47,9 +43,7 @@ func IsValid(s string) bool {
 	return ok
 }
 
-// Less reports whether version a is strictly less than version b.
-// Both strings must be valid MAJOR.MINOR.PATCH versions; if either is
-// unparsable Less returns false.
+// Less reports whether a < b; false if either is invalid.
 func Less(a, b string) bool {
 	va, ok := parse(a)
 	if !ok {
@@ -68,13 +62,7 @@ func Less(a, b string) bool {
 	return va.patch < vb.patch
 }
 
-// Compare returns an integer comparing two version strings:
-//
-//	-1 if a < b
-//	 0 if a == b
-//	+1 if a > b
-//
-// Unparsable version strings are treated as less than any valid version.
+// Compare returns -1, 0 or +1 for a < b, a == b, a > b; an invalid version sorts below any valid one.
 func Compare(a, b string) int {
 	va, aOK := parse(a)
 	vb, bOK := parse(b)

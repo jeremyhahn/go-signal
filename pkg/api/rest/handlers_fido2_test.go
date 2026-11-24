@@ -121,9 +121,7 @@ func newTestFIDO2Manager(provider fido2.WebAuthnProvider) (*fido2.FIDO2AccountsM
 	return mgr, store
 }
 
-// newTestFIDO2Server creates a test REST server with FIDO2 routes registered,
-// pre-populated with a test account. Returns the mux (as http.Handler), the
-// FIDO2 store, and the server.
+// newTestFIDO2Server returns a REST handler with FIDO2 routes and a test account, its FIDO2 store and the server.
 func newTestFIDO2Server(t *testing.T, provider fido2.WebAuthnProvider) (http.Handler, *fido2.MemoryFIDO2AccountsStore, *Server) {
 	t.Helper()
 

@@ -1,23 +1,4 @@
-// Package tracing carries request-ID + W3C traceparent propagation
-// across the Phase 4 binaries. Mobile clients and intermediate
-// proxies set the standard `traceparent` header; the chat-server
-// parses it, threads the trace + span IDs through the request
-// context, and re-emits them on outbound calls.
-//
-// Wire format follows W3C Trace Context level 1 exactly:
-//
-//	traceparent: 00-<trace-id-32-hex>-<span-id-16-hex>-<flags-2-hex>
-//
-// When no traceparent is present (e.g. the request originates from a
-// client without tracing support), the middleware mints a fresh
-// trace+span pair so downstream services still see a unified
-// correlation ID.
-//
-// This package is deliberately SDK-free — full OpenTelemetry exporter
-// wiring lives in a future sub-phase that bumps go.mod to add the
-// OTLP / stdout exporters. Until then, structured logs and
-// distributed tracing share the trace ID via the context helpers
-// defined here.
+// Package tracing propagates W3C traceparent (00-<32 hex>-<16 hex>-<2 hex>) through request contexts, minting one when absent.
 package tracing
 
 import (

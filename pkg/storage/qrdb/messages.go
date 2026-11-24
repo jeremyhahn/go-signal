@@ -12,19 +12,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/messages"
 )
 
-// Key layout:
-//
-//	msg:{uuid}:{device}:{seq}     → JSON Envelope (per-device queue, ordered
-//	                                  lexicographically by seq so scans are
-//	                                  in insertion order)
-//	msg:byguid:{uuid}:{guid}      → "{uuid}/{device}/{seq}" (mirror used by
-//	                                  Delete-by-GUID)
-//
-// seq is a zero-padded uint64 assigned monotonically by the process. Across
-// instances it is not globally monotonic, which is fine — consumers only
-// need insertion order within a single (uuid, device) queue, and the
-// server's ServerTimestamp field is the authoritative ordering signal for
-// cross-instance scenarios once that pathway exists.
+// Key layout: msg:{uuid}:{device}:{seq} -> JSON Envelope, msg:byguid:{uuid}:{guid} -> primary key; seq is zero-padded and ordered per process.
 
 const (
 	messageKeyPrefix  = "msg:"
@@ -78,8 +66,7 @@ func (s *MessageStore) Insert(ctx context.Context, destinationUUID string, desti
 	if err := s.kv.Put(ctx, primaryKey, data); err != nil {
 		return 0, signalerrors.Wrap(signalerrors.ErrInternal, "qrdb messages: put", err)
 	}
-	// Mirror for Delete-by-GUID: store the full primary key so Delete can
-	// round-trip directly without reconstructing.
+	// Mirror for Delete-by-GUID holds the full primary key.
 	if err := s.kv.Put(ctx, messageGUIDKey(destinationUUID, envelope.ServerGUID), []byte(primaryKey)); err != nil {
 		return 0, signalerrors.Wrap(signalerrors.ErrInternal, "qrdb messages: put guid mirror", err)
 	}
@@ -104,12 +91,7 @@ func (s *MessageStore) GetMessagesForDevice(ctx context.Context, destinationUUID
 	return out, nil
 }
 
-// HasMessagesForDevice reports whether any pending envelope exists
-// for the device. Uses a Scan with an early-exit sentinel so the
-// underlying KV store stops iterating after the first match — a
-// device with 10K pending envelopes still pays only one read here.
-// The prior implementation used List which materialised every
-// matching key into a slice just to compare len > 0.
+// HasMessagesForDevice stops the Scan at the first pending envelope.
 func (s *MessageStore) HasMessagesForDevice(ctx context.Context, destinationUUID string, destinationDevice uint64) (bool, error) {
 	found := false
 	err := s.kv.Scan(ctx, messageDevicePrefix(destinationUUID, destinationDevice), func(_ string, _ []byte) error {
@@ -152,18 +134,12 @@ func (s *MessageStore) DeleteForAccount(ctx context.Context, uuid string) error 
 	return s.deletePrefix(ctx, prefix, uuid)
 }
 
-// RemoveExpired is a no-op for the qrdb backend: the envelope JSON stored
-// today carries no expires_at field, so there is nothing to sweep. The
-// method exists to satisfy [messages.MessageStore] and lets the sweep
-// worker run uniformly against every backend.
+// RemoveExpired is a no-op: stored envelopes carry no expiry.
 func (s *MessageStore) RemoveExpired(_ context.Context, _ time.Time) (int64, error) {
 	return 0, nil
 }
 
-// deletePrefix removes every primary-key message under prefix and the
-// matching GUID mirrors. The mirrors are cleaned up by unmarshaling each
-// envelope to recover its ServerGUID — simpler than tracking a reverse
-// locator.
+// deletePrefix removes every message under prefix and its GUID mirror, read from each envelope.
 func (s *MessageStore) deletePrefix(ctx context.Context, prefix, uuid string) error {
 	toDelete := make([]string, 0)
 	guids := make([]string, 0)

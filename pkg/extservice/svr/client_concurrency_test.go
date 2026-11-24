@@ -10,12 +10,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
-// TestClose_ConcurrentWithRequests overlaps in-flight admin calls with the
-// client's own Close, which wipes the shared secret. Under -race this fails if
-// the secret is touched unsynchronised.
-//
-// Every call must either authenticate with the real secret or fail closed —
-// no request may reach the server without a valid Authorization header.
+// TestClose_ConcurrentWithRequests checks every call racing Close authenticates with the real secret or fails closed.
 func TestClose_ConcurrentWithRequests(t *testing.T) {
 	const callers = 16
 

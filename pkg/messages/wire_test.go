@@ -125,9 +125,7 @@ func TestMarshalEnvelope_NonUrgentIsExplicit(t *testing.T) {
 	}
 }
 
-// A type the wire cannot represent must be refused, not downgraded. Encoding
-// it as UNKNOWN would deliver a semantically different envelope and report
-// success, so neither the sender nor the recipient could tell.
+// A type the wire cannot represent must be refused, not sent as UNKNOWN.
 func TestMarshalEnvelope_RejectsUnrepresentableTypes(t *testing.T) {
 	for _, envType := range []EnvelopeType{
 		0,                       // unset — the field was never populated

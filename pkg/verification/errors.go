@@ -92,13 +92,7 @@ func (e *SessionLimitExceededError) Error() string {
 	return "verification session limit exceeded: max " + strconv.Itoa(e.Limit)
 }
 
-// SessionAlreadyVerifiedError is returned by Manager.SendCode when the
-// session has already been verified. Requesting another code for a verified
-// session is the normal re-registration flow — the client reuses its stored
-// session — so it is a conflict, not abuse. Handlers return 409 with the
-// session, matching Java VerificationController, which makes the same check
-// ahead of the cooldown; reporting it as a rate limit instead tells the
-// client to back off from an operation that will never succeed by waiting.
+// SessionAlreadyVerifiedError is returned by SendCode for a verified session; handlers return 409 with the session.
 type SessionAlreadyVerifiedError struct {
 	SessionID string
 }
@@ -107,10 +101,7 @@ func (e *SessionAlreadyVerifiedError) Error() string {
 	return "verification session already verified: " + e.SessionID
 }
 
-// RequestCodeRateLimitedError is returned by Manager.SendCode when the
-// caller has already requested a code for this session and the per-session
-// cooldown has not yet elapsed. Handlers surface RetryAfter to the client
-// so it can render the "may_request_sms"/"next_sms_seconds" hint.
+// RequestCodeRateLimitedError is returned by SendCode within the session cooldown; RetryAfter is the remaining wait.
 type RequestCodeRateLimitedError struct {
 	SessionID  string
 	RetryAfter time.Duration
@@ -121,9 +112,7 @@ func (e *RequestCodeRateLimitedError) Error() string {
 		"; retry after " + e.RetryAfter.String()
 }
 
-// CaptchaRequiredError indicates the session must satisfy a captcha
-// challenge before the next SendCode will succeed. The REST handler
-// surfaces this as HTTP 409 with `requestedInformation: ["captcha"]`.
+// CaptchaRequiredError means a captcha must be solved first; REST returns 409 with requestedInformation ["captcha"].
 type CaptchaRequiredError struct {
 	SessionID string
 }
@@ -132,19 +121,14 @@ func (e *CaptchaRequiredError) Error() string {
 	return "captcha required for session " + e.SessionID
 }
 
-// CaptchaCheckUnavailableError indicates the deployment is not configured
-// with a CAPTCHA checker (no providers registered). Surfaced as HTTP 503
-// so clients can retry against a properly provisioned region.
+// CaptchaCheckUnavailableError means no captcha provider is configured; REST returns 503.
 type CaptchaCheckUnavailableError struct{}
 
 func (e *CaptchaCheckUnavailableError) Error() string {
 	return "captcha verification not available on this server"
 }
 
-// CaptchaRejectedError indicates the submitted captcha did not verify with
-// the upstream provider (or scored below the configured threshold). The
-// REST handler surfaces this as HTTP 422 so clients distinguish "we
-// couldn't reach the provider" from "you sent an invalid token".
+// CaptchaRejectedError means the captcha failed or scored too low; REST returns 422.
 type CaptchaRejectedError struct {
 	SessionID string
 	Reason    string

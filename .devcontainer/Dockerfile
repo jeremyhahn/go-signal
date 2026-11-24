@@ -1,30 +1,5 @@
-# Two stages over one toolchain, for two different consumers.
-#
-#   toolchain    the interactive devcontainer. Developers mount their checkout
-#                over /workspace and edit live, so it carries no source in the
-#                final filesystem. It does COPY the Makefile transiently to read
-#                the tool pins from it — deleted in the same layer, though still
-#                recoverable from image history, which is fine: the Makefile is
-#                public repository content, not a secret.
-#
-#   integration  the same toolchain with the source baked in, for the CI
-#                integration suite.
-#
-# The split exists because a bind mount cannot work from a Gitea Actions job.
-# compose reaches the HOST daemon through the mounted docker socket, so it
-# resolves `..:/workspace` against the HOST filesystem — and the job's checkout
-# lives at /workspace/<owner>/<repo> INSIDE the job container, a path the host
-# does not have. The daemon silently mounts an empty directory instead of
-# failing, and the suite reports `make: No rule to make target
-# 'integration-test'` with nothing to suggest the mount is the cause. That cost
-# run 340. Baking the source in is also the honest CI shape: a test image should
-# contain the code under test rather than borrow it from its surroundings.
-#
-# The test CA the image trusts is not in the repository. `make test-tls`
-# generates it under test/tls, and compose hands that directory to the build as
-# the named context `tls` (additional_contexts in docker-compose.yml). A plain
-# `docker build` supplies it the same way:
-#   docker build --build-context tls=test/tls -f .devcontainer/Dockerfile .
+# Stages: toolchain (the devcontainer, source mounted) and integration (source baked in, since a CI bind mount resolves on the host daemon).
+# The test CA comes from the named build context `tls`: docker build --build-context tls=test/tls -f .devcontainer/Dockerfile .
 
 FROM golang:1.27.3-bookworm AS toolchain
 
@@ -44,11 +19,7 @@ RUN wget -qO- https://packages.adoptium.net/artifactory/api/gpg/key/public | tee
     apt-get update && apt-get install -y --no-install-recommends temurin-21-jre && \
     rm -rf /var/lib/apt/lists/*
 
-# Import the generated test CA into the Java trust store for signal-cli.
-# Temurin's lib/security/cacerts is a symlink, so `find -L`: a plain
-# `-type f` matched nothing and the import was silently skipped. A missing
-# trust store now fails the build instead of producing an image that trusts
-# nothing.
+# Import the test CA into the Java trust store for signal-cli; cacerts is a symlink, hence find -L, and a missing store fails the build.
 COPY --from=tls ca-cert.pem /tmp/ca-cert.pem
 RUN CACERTS=$(find -L /usr/lib/jvm -name cacerts -type f 2>/dev/null | head -1) && \
     [ -n "$CACERTS" ] || { echo "no Java cacerts under /usr/lib/jvm" >&2; exit 1; }; \
@@ -59,33 +30,7 @@ RUN CACERTS=$(find -L /usr/lib/jvm -name cacerts -type f 2>/dev/null | head -1) 
         -storepass changeit && \
     rm /tmp/ca-cert.pem
 
-# Install Go tools, at the versions the MAKEFILE declares.
-#
-# Every version here used to be stated a second time, and the second statement
-# drifted: three of these were @latest — so an image rebuild silently changed
-# which scanner ran, and gosec@latest self-reports "Version: dev", which makes a
-# scan result unattributable to any version — while golangci-lint was pinned to
-# an abandoned v2.7.2 against the repo's documented v2.12.2. Two linters
-# disagreeing, and the undocumented one is the one that gets believed when it
-# happens to be quieter (#71).
-#
-# The Makefile is copied in FOR THIS, so the pins have exactly one definition
-# and cannot drift again. It parses standalone — every version here is a plain
-# := assignment — so no module or source tree is needed to read them.
-#
-# `make` comes from the apt layer above. To change a version, change the
-# Makefile; nothing here needs editing.
-#
-# An empty version fails the build rather than installing something unpinned.
-# `@v` with nothing after it is not obviously wrong at a glance, and the
-# grpc plugin's leading "v" sits OUTSIDE the substitution, so that is exactly
-# where an empty value would have looked plausible.
-#
-# ACCEPTED COST: copying the Makefile here means any Makefile edit invalidates
-# this layer and reinstalls all five tools over the network. That is the price
-# of one definition, and it is the right way round — a stale cached tool layer
-# is a wrong scanner that nobody notices, while a slow rebuild is visible. This
-# image is built on the integration path, not on every PR.
+# Install Go tools at the versions the Makefile pins; to change a version, change the Makefile. An empty version fails the build.
 COPY Makefile /tmp/pins/Makefile
 # The Makefile includes mk/release-alpha.mk, which includes mk/release-common.mk.
 COPY mk/ /tmp/pins/mk/
@@ -105,10 +50,7 @@ RUN set -eux; \
 
 WORKDIR /workspace
 
-# The integration image. Source is copied, not mounted — see the note above.
-# .dockerignore keeps this to the tree that matters: no .git, no build output,
-# no node_modules, and none of the stale host-built service binaries at the
-# repository root.
+# The integration image: source is copied, not mounted; .dockerignore limits the tree.
 FROM toolchain AS integration
 
 COPY . /workspace

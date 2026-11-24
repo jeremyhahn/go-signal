@@ -205,7 +205,7 @@ func runAccountStoreContract(t *testing.T, factory func(t *testing.T) accounts.A
 		require.NoError(t, err)
 		assert.Equal(t, a.UUID, got.UUID)
 
-		// Old number must no longer resolve.
+		// The old number does not resolve.
 		_, err = s.GetByNumber(ctx, a.Number)
 		require.Error(t, err)
 		var notFound *accounts.AccountNotFoundError

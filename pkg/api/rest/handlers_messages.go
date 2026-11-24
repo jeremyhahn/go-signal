@@ -26,16 +26,7 @@ const (
 	maxMessagesPerRequest = 1000
 )
 
-// validEnvelopeTypes is the set of client-submittable envelope types. It must
-// stay a subset of what textsecure.proto can represent: accepting a type the
-// wire cannot carry only defers the failure to delivery, where the recipient
-// is the one who suffers it.
-//
-// Excluded: 0 (UNKNOWN, not a real message), and 2 and 7, which the proto
-// reserves. Type 2 was accepted here until it was noticed that the envelope
-// encoder had no mapping for it and was silently delivering it as UNKNOWN.
-// EnvelopeTypePlaintextContent (8) is included because clients send
-// sender-key distribution messages with it.
+// validEnvelopeTypes are the client-submittable types textsecure.proto can carry: not 0, 2 or 7; 8 is for sender-key distribution.
 var validEnvelopeTypes = map[messages.EnvelopeType]struct{}{
 	messages.EnvelopeTypeCiphertext:         {},
 	messages.EnvelopeTypePrekeyBundle:       {},
@@ -44,21 +35,7 @@ var validEnvelopeTypes = map[messages.EnvelopeType]struct{}{
 	messages.EnvelopeTypePlaintextContent:   {},
 }
 
-// validateIncomingMessages checks structural constraints on the message list
-// submitted by a sender. It returns a non-empty error string on the first
-// violation; the caller should write a 400 response with that string.
-//
-// The timestamp is validated at the list level because that is the one the
-// envelope carries — see the note on IncomingMessageList.Timestamp. Checking a
-// per-message value would leave the value that actually reaches the client
-// unbounded.
-//
-// Constraints enforced:
-//  1. Request size: len(req.Messages) <= maxMessagesPerRequest.
-//  2. Content non-empty: each message entity must carry a non-empty content string.
-//  3. Timestamp range: 0 <= req.Timestamp <= maxMessageTimestamp.
-//  4. Envelope type valid: must be a client-submittable EnvelopeType.
-//  5. No duplicate destination device IDs within the batch.
+// validateIncomingMessages returns the first violation: too many messages, empty content, list timestamp out of range, bad envelope type, duplicate device.
 func validateIncomingMessages(req IncomingMessageListEntity) string {
 	msgs := req.Messages
 	if len(msgs) > maxMessagesPerRequest {
@@ -87,22 +64,7 @@ func validateIncomingMessages(req IncomingMessageListEntity) string {
 	return ""
 }
 
-// handleSendMessage processes PUT /v1/messages/{destination} and stores
-// message envelopes for delivery to the destination account's devices.
-// The device set addressed by the sender is validated against the recipient's
-// actual enabled devices before any envelopes are stored:
-//   - 401 Unauthorized: neither valid Basic auth nor a valid UAK was provided.
-//   - 403 Forbidden:    spam checker blocked the message, or the destination
-//     account does not allow unidentified access.
-//   - 428 Precondition Required: spam checker requires a challenge.
-//   - 409 Conflict:   mismatched devices (sender addressed wrong device set).
-//   - 410 Gone:       stale devices (sender holds outdated registration IDs).
-//
-// When the request is authenticated via the Unidentified-Access-Key header
-// (sealed sender), the envelope type is forced to
-// EnvelopeTypeUnidentifiedSender (6) and the source UUID is left empty to
-// preserve sender anonymity. The request must have been pre-authorised by
-// optionalAuthMiddleware.
+// handleSendMessage handles PUT /v1/messages/{destination}: 401, 403, 428, 409 mismatched or 410 stale devices; sealed sender forces type 6 and no source UUID.
 func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	unidentified := isUnidentifiedSender(ctx)
@@ -140,10 +102,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For sealed-sender requests, the destination account must allow
-	// unidentified access. An account with no UAK set or with
-	// UnrestrictedUnidentifiedAccess == false and an empty UAK rejects sealed
-	// sender delivery to protect user privacy.
+	// Sealed sender requires the destination to allow unidentified access.
 	if unidentified && len(destAcct.UnidentifiedAccessKey) == 0 {
 		writeError(w, http.StatusForbidden, "destination does not allow unidentified access")
 		return
@@ -258,9 +217,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 			envelopeType = messages.EnvelopeTypeUnidentifiedSender
 		}
 
-		// Pre-assign the ServerGUID so the loop detector can Check the same
-		// GUID it will later Record. The manager preserves caller-supplied
-		// GUIDs (it only mints a fresh one when ServerGUID is empty).
+		// Pre-assign ServerGUID so the loop detector checks and records the same GUID.
 		serverGUID := uuid.New().String()
 
 		envelope := &messages.Envelope{
@@ -269,22 +226,14 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 			SourceDevice:      sourceDevice,
 			DestinationUUID:   destAcct.UUID,
 			DestinationDevice: deviceID,
-			// The LIST timestamp, not a per-message one. libsignal
-			// cross-checks this against the timestamp sealed inside the
-			// content and rejects a mismatch with
-			// InvalidMessageStructureException, so sourcing it from a field
-			// clients do not populate delivers an envelope no client will
-			// accept. handlers_messages_multi.go does the same.
+			// The list timestamp: libsignal rejects an envelope whose timestamp differs from the sealed one.
 			Timestamp:  req.Timestamp,
 			Content:    content,
 			Urgent:     req.Urgent,
 			ServerGUID: serverGUID,
 		}
 
-		// Delivery loop detection: trips when the recipient already sent the
-		// current sender a message carrying the same ServerGUID inside the
-		// detector window. Only meaningful for authenticated senders since
-		// sealed-sender paths conceal the sender identity.
+		// Delivery loop detection, for authenticated senders only.
 		if s.loopDetector != nil && !unidentified && senderUUID != "" {
 			if err := s.loopDetector.Check(ctx, senderUUID, destAcct.UUID, serverGUID); err != nil {
 				var loopErr *messages.DeliveryLoopError

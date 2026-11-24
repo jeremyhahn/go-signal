@@ -12,18 +12,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/usernames"
 )
 
-// Key layout:
-//
-//	username:confirmed:{hex(hash)} → UUID (who owns this hash)
-//	username:byuuid:{uuid}         → hex(hash) (reverse)
-//	username:reservation:{uuid}    → JSON reservationEntry
-//	username-link:{handle}         → JSON UsernameLink
-//	username-link:byuuid:{uuid}    → handle (reverse)
-//
-// Reservation TTL (5 minutes) matches the memory-backed implementation.
-// Expired reservations are not proactively deleted; they are overwritten
-// on the next ReserveHash for the same UUID, or (in future work) cleaned
-// up by a background worker.
+// Keys: username:confirmed:{hex(hash)}, username:byuuid:{uuid}, username:reservation:{uuid}, username-link:{handle}, username-link:byuuid:{uuid}. Reservations last 5 minutes and are overwritten, not swept.
 
 const (
 	usernameConfirmedPfx  = "username:confirmed:"
@@ -57,10 +46,7 @@ func NewUsernameStore(kv KVStore) *UsernameStore {
 	return &UsernameStore{kv: kv, now: time.Now, random: rand.Read}
 }
 
-// ReserveHash attempts to reserve one of the provided hashes for the account
-// UUID. Semantics match MemoryUsernameStore: the first unclaimed candidate
-// wins, a reservation token is generated, and the entry expires after
-// reservationTTL.
+// ReserveHash reserves the first unclaimed hash for uuid with a token, expiring after reservationTTL.
 func (s *UsernameStore) ReserveHash(ctx context.Context, uuid string, hashes [][]byte) ([]byte, string, error) {
 	if uuid == "" {
 		return nil, "", &usernames.InvalidArgumentError{Field: "uuid", Message: "empty UUID"}

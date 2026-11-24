@@ -137,9 +137,7 @@ func TestSVRCredentials_UnmarshalJSON_FailedDecodeKeepsExistingPassword(t *testi
 	}
 }
 
-// The REST handlers marshal the credential and then wipe it. This pins that
-// order: the wire body carries the plaintext, and the protected copy is
-// unusable afterwards.
+// Marshal, then wipe: the body carries the plaintext and the protected copy is unusable afterwards.
 func TestSVRCredentials_MarshalThenDestroy(t *testing.T) {
 	password, err := secrets.NewSecureString("svr-password")
 	if err != nil {

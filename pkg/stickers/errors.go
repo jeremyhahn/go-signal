@@ -5,10 +5,7 @@ import (
 	"strconv"
 )
 
-// ErrInvalidEnvelope is returned by DecryptPackPayload when the
-// supplied envelope fails length, padding, or HMAC checks. Surface
-// as a 400-class error to the operator — the pack key or payload is
-// corrupted.
+// ErrInvalidEnvelope means the pack envelope failed length, padding or HMAC checks: the key or payload is corrupt.
 var ErrInvalidEnvelope = errors.New("stickers: invalid sticker pack envelope")
 
 // InvalidStickerCountError indicates that the requested sticker count is not

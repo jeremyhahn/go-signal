@@ -11,10 +11,7 @@ import (
 	"time"
 )
 
-// Manager evaluates per-account dynamic configuration. It holds a Store
-// for the source-of-truth rows and a periodic-refresh cache so the
-// hot path doesn't take a Store round-trip on every request — Java
-// Signal-Server uses the same pattern with a 10s refresh interval.
+// Manager evaluates per-account dynamic configuration from a Store through a periodically refreshed cache.
 type Manager struct {
 	store           Store
 	refreshInterval time.Duration
@@ -64,11 +61,7 @@ func NewManager(ctx context.Context, cfg ManagerConfig) (*Manager, error) {
 	return mgr, nil
 }
 
-// Refresh re-reads the store and replaces the in-memory cache. The
-// background refresh goroutine calls this every refreshInterval; the
-// check-dynamic-config worker calls it on-demand to validate that
-// the live store still parses + that every row passes the same
-// invariants Put enforces.
+// Refresh re-reads and validates the store and replaces the cache.
 func (m *Manager) Refresh(ctx context.Context) error {
 	return m.refresh(ctx)
 }
@@ -96,10 +89,7 @@ func (m *Manager) refresh(ctx context.Context) error {
 	return nil
 }
 
-// refreshLoop runs until cancelRefresh fires. Failures are swallowed —
-// the previous cache stays valid, mirroring Java's quiet-on-failure
-// dynamic-config refresh behavior. Operators monitor underlying store
-// health separately.
+// refreshLoop runs until cancelRefresh; a failed refresh keeps the previous cache.
 func (m *Manager) refreshLoop(ctx context.Context) {
 	t := time.NewTicker(m.refreshInterval)
 	defer t.Stop()
@@ -122,18 +112,7 @@ func (m *Manager) Stop() {
 	}
 }
 
-// Evaluate returns the rendered key→value map for accountUUID +
-// userAgent. Per Java:
-//   - Configs prefixed with a platform tag are filtered to that
-//     platform; non-platform-prefixed configs ship to every client.
-//   - For each delivered config, the account is hashed into a 0–99
-//     bucket; in-bucket accounts (or those explicitly listed in
-//     UUIDs) receive Value; everyone else receives DefaultValue.
-//   - Globals (cfg.Name starts with "global.") are passed through
-//     verbatim — bucketing still applies but most globals are 100%.
-//
-// The returned map is deterministic for a given (accountUUID, cache)
-// pair so callers can compute a stable ETag.
+// Evaluate returns the config map for an account and user agent: platform-prefixed configs only to that platform, Value for in-bucket or listed accounts, else DefaultValue; deterministic.
 func (m *Manager) Evaluate(accountUUID, userAgent string) map[string]string {
 	cache := m.cache
 	if cache == nil {
@@ -188,22 +167,11 @@ func hashKeyBytes(c Config) []byte {
 	return []byte(c.Name)
 }
 
-// bucketForAccount computes the 0–99 bucket number for an account UUID
-// against the provided hash key. The hash chain matches Java
-// RemoteConfigController.isInBucket exactly:
-//
-//	SHA-256( bigEndian(uuidMSB) || bigEndian(uuidLSB) || hashKeyBytes )
-//
-// The first 8 bytes of the digest are interpreted as a big-endian uint64,
-// masked positive, and modulo 100 to produce the bucket.
+// bucketForAccount returns SHA-256(uuidMSB || uuidLSB || hashKey)'s first 8 bytes, big-endian, masked positive, mod 100.
 func bucketForAccount(accountUUID string, hashKey []byte) int {
 	msb, lsb, ok := uuidToUint64Pair(accountUUID)
 	if !ok {
-		// Malformed UUID — return a bucket value (50) that lands roughly
-		// in the middle of the 0–99 range so a single bad caller does
-		// not bias the bucket population in either direction. The
-		// alternative — returning 0 — would over-include malformed
-		// inputs in every config bucket.
+		// A malformed UUID gets bucket 50, the middle of the range.
 		return 50
 	}
 	digest := sha256.New()
@@ -211,10 +179,7 @@ func bucketForAccount(accountUUID string, hashKey []byte) int {
 	binary.BigEndian.PutUint64(buf[0:8], msb)
 	binary.BigEndian.PutUint64(buf[8:16], lsb)
 	digest.Write(buf[:])
-	// Java's RemoteConfigController calls `digest.digest(hashKey)`,
-	// which is shorthand for `update(hashKey); digest()` — so the
-	// hashKey is hashed alongside the UUID, NOT just appended to the
-	// output. Writing it here matches Java byte-for-byte.
+	// hashKey is hashed with the UUID, not appended to the digest.
 	digest.Write(hashKey)
 	hash := digest.Sum(nil)
 	v := binary.BigEndian.Uint64(hash[0:8])
@@ -225,10 +190,7 @@ func bucketForAccount(accountUUID string, hashKey []byte) int {
 	return int(v % 100)
 }
 
-// uuidToUint64Pair parses a canonical 8-4-4-4-12 UUID into the
-// most-significant and least-significant 64-bit halves Java uses for
-// hashing. Returns ok=false when the input doesn't match the canonical
-// shape.
+// uuidToUint64Pair splits a canonical UUID into its two 64-bit halves; ok is false for any other shape.
 func uuidToUint64Pair(s string) (msb, lsb uint64, ok bool) {
 	// Canonical UUID length is 36 chars with dashes at positions 8, 13,
 	// 18, 23. Tolerate either case for hex.
@@ -251,11 +213,7 @@ func uuidToUint64Pair(s string) (msb, lsb uint64, ok bool) {
 	return msb, lsb, true
 }
 
-// PlatformFromUserAgent classifies a Signal client User-Agent string
-// into one of "ios", "android", "desktop", or "" (unrecognized). The
-// detection is conservative — matching Java's UserAgentUtil flow —
-// because misclassifying a client into the wrong bucket misroutes a
-// feature flag for that user.
+// PlatformFromUserAgent returns "ios", "android", "desktop" or "" for a Signal User-Agent.
 func PlatformFromUserAgent(ua string) string {
 	if ua == "" {
 		return ""

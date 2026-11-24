@@ -96,10 +96,7 @@ func TestDestroy_OnNeverConfiguredManagerIsTerminal(t *testing.T) {
 	if st := m.state.Load(); st == nil || !st.destroyed || st.secret != nil {
 		t.Errorf("state = %+v, want terminal with no secret", st)
 	}
-	// The documented judgement, pinned so it stays a decision: a manager that
-	// never held a key keeps serving the legacy stub after Destroy. There is
-	// nothing to protect, and failing closed here would turn shutdown into an
-	// outage for non-storage-service deployments in exchange for nothing.
+	// A manager that never held a key keeps serving the stub after Destroy.
 	creds, err := m.GetAuth(context.Background(), "user-uuid-1")
 	if err != nil {
 		t.Fatalf("GetAuth on a destroyed unconfigured manager = %v, want stub credentials", err)
@@ -107,15 +104,7 @@ func TestDestroy_OnNeverConfiguredManagerIsTerminal(t *testing.T) {
 	creds.Destroy()
 }
 
-// TestSetSharedSecret_RacingDestroyNeverLeavesALiveSecret is the regression
-// test for the interleaving itself.
-//
-// SetSharedSecret clones before it publishes. A Destroy that ran in that gap
-// used to wipe what was installed, return, and let the setter publish its
-// clone afterwards — a live protected allocation, installed after shutdown
-// completed, that nothing would ever wipe. The assertion is on the clones the
-// manager owned, not on timing: whichever way each round is scheduled, no copy
-// may be alive at the end.
+// TestSetSharedSecret_RacingDestroyNeverLeavesALiveSecret checks no clone the manager owned is alive after Destroy.
 func TestSetSharedSecret_RacingDestroyNeverLeavesALiveSecret(t *testing.T) {
 	clones := recordClones(t)
 

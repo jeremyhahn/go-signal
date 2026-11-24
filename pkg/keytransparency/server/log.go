@@ -1,12 +1,4 @@
-// Package server hosts the cmd/key-transparency-side state engine
-// for the KeyTransparencyQueryService gRPC contract: an append-only
-// log of (search key, value) pairs that the server signs and serves
-// via Search / Monitor / Distinguished RPCs.
-//
-// The Phase 4.5 MVP ships the wire surface end-to-end with an
-// in-memory log + ed25519-signed TreeHead. Real Merkle/VRF proof
-// generation matching go-libsignal/pkg/keytrans's verification path
-// is the focused follow-up.
+// Package server is the key-transparency engine: an append-only log of (search key, value) pairs with a signed TreeHead, served over Search, Monitor and Distinguished.
 package server
 
 import (
@@ -34,10 +26,7 @@ type Entry struct {
 
 // Log is the append-only KT log surface.
 type Log interface {
-	// Append writes (key, value) at the next log index and returns
-	// the appended Entry. Implementations replace any previous value
-	// under key with the new one — the previous-value record stays
-	// in the log so Monitor can return its proof.
+	// Append writes (key, value) at the next index; earlier values stay in the log for Monitor.
 	Append(key, value []byte) (*Entry, error)
 
 	// Latest returns the most recent Entry for key (the value
@@ -48,10 +37,7 @@ type Log interface {
 	// Size returns the current log size (count of appends).
 	Size() uint64
 
-	// RootHash returns a deterministic 32-byte commitment over the
-	// log contents. The Phase 4.5 MVP uses sha256 of a serialized
-	// snapshot; the focused proof-generation follow-up replaces
-	// this with the proper left-balanced Merkle tree root.
+	// RootHash returns a 32-byte commitment over the log.
 	RootHash() [32]byte
 }
 
@@ -108,15 +94,7 @@ func (l *MemoryLog) Size() uint64 {
 	return uint64(len(l.entries))
 }
 
-// RootHash implements Log. Hashes the entries as RFC-6962-style
-// Merkle-tree leaves (domain-separated by a 0x00 prefix) and returns
-// the left-balanced root. Inclusion proofs land via
-// MerkleInclusionProof so Search/Monitor responses can carry real
-// audit paths against this root.
-//
-// Each leaf's pre-image is:
-//
-//	uint64(index) BE || uint32(len(Key)) BE || Key || uint32(len(Value)) BE || Value
+// RootHash implements Log: the RFC 6962 left-balanced Merkle root over leaves uint64(index) || uint32(len(Key)) || Key || uint32(len(Value)) || Value, big-endian.
 func (l *MemoryLog) RootHash() [32]byte {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
@@ -170,11 +148,7 @@ func (l *MemoryLog) LatestIndex(key []byte) (int, [32]byte) {
 	return idx, merkleLeafForEntry(l.entries[idx])
 }
 
-// SignTreeHead returns an ed25519 signature over the serialized tree
-// head bytes (size || rootHash || timestampMillis). The verification
-// path in go-libsignal expects this layout; the dedicated
-// proof-generation follow-up extends the signed payload with the
-// auditor signatures + consistency-proof material.
+// SignTreeHead returns an ed25519 signature over size || rootHash || timestampMillis.
 func SignTreeHead(signer ed25519.PrivateKey, size uint64, rootHash [32]byte, ts time.Time) []byte {
 	payload := make([]byte, 0, 8+32+8)
 	var buf [8]byte

@@ -53,12 +53,7 @@ func (s *Server) handleChangeNumber(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Proof of ownership of the NEW number is mandatory before the change is
-	// applied: exactly one of a verified registration session or a recovery
-	// password, each validated against req.Number. Without this gate any
-	// authenticated account could seize (and thereby delete) an arbitrary
-	// victim's number. Mirrors Java ChangeNumberController, which requires a
-	// verified session for the target number.
+	// Ownership of the new number is required: exactly one of a verified session or a recovery password for req.Number.
 	switch {
 	case req.SessionID != "" && req.RecoveryPassword != "":
 		writeError(w, http.StatusBadRequest, "sessionId and recoveryPassword are mutually exclusive")
@@ -101,10 +96,7 @@ func (s *Server) handleChangeNumber(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Validate the per-device PNI pre-keys BEFORE mutating any state. The PNI
-	// is rotated by ChangeNumber, so these keys must be re-published into the
-	// new PNI namespace; validating first means a bad key aborts with nothing
-	// changed.
+	// Validate the per-device PNI pre-keys before changing any state.
 	if len(req.DevicePniSignedPrekeys) > 0 || len(req.DevicePniPqLastResortPrekeys) > 0 {
 		if len(pniIdentityKey) == 0 {
 			writeError(w, http.StatusBadRequest, "pniIdentityKey is required when PNI pre-keys are provided")
@@ -139,10 +131,7 @@ func (s *Server) handleChangeNumber(w http.ResponseWriter, r *http.Request) {
 			})
 	}
 
-	// Update the PNI registration ID on every device named in the request.
-	// Each key is a device ID; the value is that device's new PNI
-	// registration ID, applied to the device's PhoneNumberIdentityRegistrationID
-	// (not its ACI RegistrationID). Devices that don't exist are skipped.
+	// Set each named device's PNI registration ID; unknown devices are skipped.
 	for deviceIDStr, regID := range req.PniRegistrationIds {
 		deviceID, perr := strconv.ParseUint(deviceIDStr, 10, 64)
 		if perr != nil || deviceID == 0 {
@@ -196,10 +185,7 @@ func (s *Server) handleChangeNumber(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// validateChangeNumberPniKeys verifies the per-device PNI signed and PQ
-// last-resort pre-key signatures against the supplied PNI identity key. It
-// writes a 400/422 response and returns false on the first invalid key so the
-// caller aborts before mutating any state.
+// validateChangeNumberPniKeys verifies each device's PNI signed and last-resort pre-key; on the first bad key it writes 400/422 and returns false.
 func (s *Server) validateChangeNumberPniKeys(w http.ResponseWriter, req ChangeNumberRequest, pniIdentityKey []byte) bool {
 	for _, spk := range req.DevicePniSignedPrekeys {
 		pub, err := decodeBase64(spk.PublicKey)

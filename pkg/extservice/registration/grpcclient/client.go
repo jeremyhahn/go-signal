@@ -1,9 +1,4 @@
-// Package grpcclient implements registration.Client by talking to a
-// remote registration-service binary over gRPC. The wire surface is
-// regpb.RegistrationServiceClient; this adapter translates between the
-// proto types and the chat-server-side
-// *verification.VerificationSession + verification.* error contract so
-// callers can stay transport-agnostic.
+// Package grpcclient implements registration.Client over gRPC, mapping to verification sessions and errors.
 package grpcclient
 
 import (
@@ -21,11 +16,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/verification"
 )
 
-// Config configures the gRPC client. Either Conn or Endpoint must be
-// set: Conn lets callers wire their own dial options (mTLS,
-// interceptors); Endpoint opens a default insecure-credentials channel
-// using grpc.NewClient. The latter is intended for development and
-// integration tests only.
+// Config needs Conn (caller-dialled) or Endpoint (an insecure channel, for development and tests only).
 type Config struct {
 	// Conn is a pre-built grpc.ClientConn. When supplied, Endpoint and
 	// DialOptions are ignored. Ownership stays with the caller; Close
@@ -198,10 +189,7 @@ func decodeSessionMetadata(md *regpb.RegistrationSessionMetadata, fallbackNumber
 func decodeCreateError(e *regpb.CreateRegistrationSessionError, _ string) error {
 	switch e.GetErrorType() {
 	case regpb.CreateRegistrationSessionErrorType_CREATE_REGISTRATION_SESSION_ERROR_TYPE_RATE_LIMITED:
-		// Map to SessionLimitExceededError so the REST handler returns
-		// 429 — that is the closest match for the chat-server-facing
-		// contract; the underlying RPC error type is a server-wide
-		// throttle rather than a per-session one.
+		// A server-wide throttle maps to SessionLimitExceededError, which REST returns as 429.
 		return &verification.SessionLimitExceededError{}
 	case regpb.CreateRegistrationSessionErrorType_CREATE_REGISTRATION_SESSION_ERROR_TYPE_ILLEGAL_PHONE_NUMBER:
 		return errors.New("registration-service: illegal phone number")
@@ -235,10 +223,7 @@ func decodeSendError(e *regpb.SendVerificationCodeError, sessionID string) error
 			Cause:       errors.New("sender rejected"),
 		}
 	case regpb.SendVerificationCodeErrorType_SEND_VERIFICATION_CODE_ERROR_TYPE_SESSION_ALREADY_VERIFIED:
-		// Typed, not errors.New: the REST layer matches on this with
-		// errors.As to return 409. An untyped error reaches the default
-		// branch there and becomes a 500, so a split deployment would
-		// answer re-registration differently from an in-process one.
+		// Typed so the REST layer's errors.As returns 409.
 		return &verification.SessionAlreadyVerifiedError{SessionID: sessionID}
 	case regpb.SendVerificationCodeErrorType_SEND_VERIFICATION_CODE_ERROR_TYPE_TRANSPORT_NOT_ALLOWED:
 		return errors.New("registration-service: transport not allowed")
@@ -258,10 +243,7 @@ func decodeCheckError(e *regpb.CheckVerificationCodeError, sessionID string, md 
 	case regpb.CheckVerificationCodeErrorType_CHECK_VERIFICATION_CODE_ERROR_TYPE_ATTEMPT_EXPIRED:
 		return &verification.CodeExpiredError{SessionID: sessionID}
 	case regpb.CheckVerificationCodeErrorType_CHECK_VERIFICATION_CODE_ERROR_TYPE_RATE_LIMITED:
-		// Java collapses bad-guess and attempts-cap onto the same wire
-		// code. Distinguish by may_check_code in the metadata: when the
-		// server has clamped further checks the caller wants
-		// MaxAttemptsExceededError; otherwise it was a bad guess.
+		// Bad guess and attempts cap share a wire code; may_check_code false means MaxAttemptsExceededError.
 		if md != nil && !md.GetMayCheckCode() {
 			return &verification.MaxAttemptsExceededError{SessionID: sessionID}
 		}

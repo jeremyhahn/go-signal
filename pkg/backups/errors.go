@@ -118,10 +118,7 @@ func (e *BadReceiptError) Error() string {
 	return "bad backup receipt: " + e.Reason
 }
 
-// MissingIDCommitmentError is returned by [AuthManager.RedeemReceipt] when
-// the account has no committed media credential request — the receipt
-// cannot be redeemed because there is no media backup-id to apply it to.
-// Translates to HTTP 409.
+// MissingIDCommitmentError is returned by [AuthManager.RedeemReceipt] when no media backup-id is committed (HTTP 409).
 type MissingIDCommitmentError struct{}
 
 func (e *MissingIDCommitmentError) Error() string {

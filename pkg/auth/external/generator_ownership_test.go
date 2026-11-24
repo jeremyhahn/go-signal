@@ -13,18 +13,7 @@ import (
 // gives the test its power.
 const ownershipRaceRounds = 4000
 
-// TestNewGenerator_DestroyDuringOwnershipTransfer overlaps NewGenerator with
-// the caller destroying the key it passed in.
-//
-// The contract under test is the constructor's verdict: if NewGenerator
-// returns no error, the Generator it returned must be able to sign. Validating
-// cfg.Key and cloning it afterwards cannot honour that — the two steps are
-// separate reveals of a secret the caller still owns, so a Destroy landing
-// between them leaves the constructor reporting success over an unset clone.
-// Cloning first and validating the clone closes the window, because the value
-// checked is the value kept.
-//
-// Reverting NewGenerator to check-then-clone makes this fail.
+// TestNewGenerator_DestroyDuringOwnershipTransfer checks a Generator NewGenerator returns can sign even if the caller destroys the key concurrently.
 func TestNewGenerator_DestroyDuringOwnershipTransfer(t *testing.T) {
 	for round := range ownershipRaceRounds {
 		key := secrets.MustNewSecureString("shared-secret")

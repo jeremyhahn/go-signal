@@ -43,13 +43,7 @@ type Handler struct {
 	dummyHash *auth.SaltedTokenHash
 }
 
-// NewHandler creates a new WebSocket Handler. The httpHandler parameter is the
-// HTTP mux/handler chain used for REST API routing. WebSocket requests that are
-// not handled directly (keepalive, message ack) are forwarded through
-// httpHandler, mirroring the Java Signal-Server's WebSocketResourceProvider.
-// allowedOrigins is the list of Origin header values that are permitted for
-// WebSocket upgrades. When non-empty, only those origins are accepted. When
-// empty, the library default (same-origin) check applies.
+// NewHandler returns a WebSocket Handler that forwards requests it does not handle through httpHandler; empty allowedOrigins means same-origin only.
 func NewHandler(
 	accts *accounts.AccountsManager,
 	msgs *messages.MessagesManager,
@@ -138,16 +132,9 @@ func (h *Handler) HandleAuthenticated(w http.ResponseWriter, r *http.Request) {
 
 	deviceID := accounts.PrimaryDeviceID
 	session := signalws.NewSession(conn, acct.UUID, deviceID, sessionPassword, h.logger)
-	// Do NOT force a frame format here. ReadPump auto-detects the format from
-	// the first inbound frame type (binary → protobuf, text → JSON). Forcing
-	// protobuf here would lock the session before ReadPump can detect a JSON
-	// text frame, causing parse failures for JSON clients (integration tests,
-	// debugging tools). Signal app clients naturally send binary frames and
-	// ReadPump will detect protobuf correctly on their first message.
+	// Do not force a frame format: ReadPump detects protobuf or JSON from the first inbound frame.
 
-	// Start the write pump BEFORE registering the session so that any
-	// messages delivered via the DeliveryCallback are consumed immediately
-	// rather than sitting in the send channel with no reader.
+	// Start the write pump before registering the session so deliveries are consumed at once.
 	session.StartWritePump()
 
 	h.sessions.Register(session)
@@ -194,10 +181,7 @@ func (h *Handler) HandleUnauthenticated(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// HandleProvisioning upgrades the HTTP connection to a WebSocket for the
-// device provisioning flow. No authentication is required. The server assigns
-// a provisioning address and waits for the primary device to complete the
-// provisioning.
+// HandleProvisioning upgrades an unauthenticated connection for device provisioning and waits for the primary device.
 func (h *Handler) HandleProvisioning(w http.ResponseWriter, r *http.Request) {
 	conn, err := ws.Accept(w, r, h.acceptOptions())
 	if err != nil {
@@ -217,10 +201,7 @@ func (h *Handler) HandleProvisioning(w http.ResponseWriter, r *http.Request) {
 	// Create a temporary session for provisioning (device ID 0 indicates
 	// provisioning).
 	session := signalws.NewSession(conn, provisioningAddr, 0, nil, h.logger)
-	// Signal clients (libsignal-client, signal-cli) use binary protobuf
-	// framing for WebSocket messages. Force protobuf before sending the
-	// first message since format auto-detection only triggers on inbound
-	// messages and we send before the client does.
+	// Force protobuf: the server sends first, before any inbound frame could be detected.
 	session.SetFormat(signalws.FrameFormatProtobuf)
 
 	h.sessions.Register(session)
@@ -352,9 +333,7 @@ func (h *Handler) handleIncomingMessage(session *signalws.Session, msg *signalws
 		}
 
 	default:
-		// Route the request through the HTTP handler chain, mirroring the
-		// Java Signal-Server's WebSocketResourceProvider which forwards all
-		// WebSocket requests to the same REST handlers.
+		// Route the request through the HTTP handler chain.
 		h.routeToHTTP(session, msg)
 	}
 }
@@ -386,10 +365,7 @@ func (h *Handler) extractCredentials(r *http.Request) (string, string, bool) {
 	return "", "", false
 }
 
-// routeToHTTP forwards a WebSocket request through the HTTP handler chain,
-// mirroring the Java Signal-Server's WebSocketResourceProvider. This allows
-// WebSocket clients to invoke any REST endpoint (e.g. PUT /v1/messages/{dest}
-// for typing indicators) without duplicating handler logic.
+// routeToHTTP forwards a WebSocket request through the HTTP handler chain, so every REST endpoint is reachable.
 func (h *Handler) routeToHTTP(session *signalws.Session, msg *signalws.WebSocketMessage) {
 	if h.httpHandler == nil {
 		h.logger.Warn("no HTTP handler configured for WebSocket routing",
@@ -465,8 +441,7 @@ func (h *Handler) routeToHTTP(session *signalws.Session, msg *signalws.WebSocket
 		httpReq.Header.Set(k, v)
 	}
 
-	// Set Basic Auth using the session's credentials so that the REST auth
-	// middleware can authenticate the request.
+	// Basic Auth from the session's credentials for the REST auth middleware.
 	if session.AuthToken != nil && !session.AuthToken.IsDestroyed() {
 		httpReq.SetBasicAuth(session.UUID, session.AuthToken.Plaintext())
 	}
@@ -518,11 +493,7 @@ func (h *Handler) routeToHTTP(session *signalws.Session, msg *signalws.WebSocket
 	}
 }
 
-// buildEnvelopeRequest wraps an envelope in the PUT /api/v1/message request
-// every Signal client reads messages from. The body is the envelope's
-// protobuf wire form — clients parse it with the generated protobuf reader,
-// so it must not be JSON. Returns nil when the envelope cannot be marshalled;
-// the caller drops the delivery rather than sending a body no client can read.
+// buildEnvelopeRequest wraps an envelope's protobuf bytes in PUT /api/v1/message; nil when it cannot be marshalled.
 func buildEnvelopeRequest(id uint64, env *messages.Envelope) *signalws.WebSocketMessage {
 	body, err := messages.MarshalEnvelope(env)
 	if err != nil {

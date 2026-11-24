@@ -37,10 +37,7 @@ func (c *Client) FIDO2RenameCredential(ctx context.Context, credentialID, name s
 		map[string]string{"name": name}, nil)
 }
 
-// FIDO2RegisterKey starts a FIDO2 registration ceremony.
-// Note: WebAuthn ceremonies require a browser/GUI context. This method
-// handles the server-side flow; the actual key interaction needs a
-// WebAuthn client (available in the Wails GUI).
+// FIDO2RegisterKey starts the server side of a FIDO2 registration; the key interaction needs a WebAuthn client.
 func (c *Client) FIDO2RegisterKey(ctx context.Context, username string) (map[string]any, error) {
 	var result map[string]any
 	err := c.doRequest(ctx, "POST", "/v1/fido2/session",

@@ -1,13 +1,4 @@
-// Package s3 produces AWS S3 POST-policy upload forms and SigV4 signatures
-// over the policy bytes. Mirrors Java Signal-Server's
-// org.whispersystems.textsecuregcm.s3.PostPolicyGenerator + PolicySigner so
-// existing iOS/Android/Desktop clients can upload sticker packs and
-// attachment blobs directly to S3 without round-tripping through the
-// server.
-//
-// No third-party AWS SDK dep — the SigV4 key chain
-// (AWS4{secret} → date → region → service → "aws4_request") is the same
-// derivation we hand-rolled for SES; the service slot is "s3" here.
+// Package s3 generates S3 POST-policy upload forms and their SigV4 signatures, without an AWS SDK, so clients upload directly to S3.
 package s3
 
 import (
@@ -25,37 +16,21 @@ import (
 // dateFormat is the YYYYMMDD form used in SigV4 credential scopes.
 const dateFormat = "20060102"
 
-// dateTimeFormat is the YYYYMMDDTHHMMSSZ form used in x-amz-date headers
-// and the AWS_DATE_TIME constant on the Java side. The trailing 'Z' is the
-// literal Zulu marker emitted by Go's time formatting for UTC.
+// dateTimeFormat is the YYYYMMDDTHHMMSSZ form of x-amz-date.
 const dateTimeFormat = "20060102T150405Z"
 
 // expirationFormat matches Java DateTimeFormatter.ISO_INSTANT — used in the
 // "expiration" field of the POST policy JSON.
 const expirationFormat = time.RFC3339Nano
 
-// PolicyGenerator builds S3 POST-policy upload descriptors. One generator
-// instance wraps a bucket + region + access key ID combination; the secret
-// is held by the companion PolicySigner.
-//
-// Each Generate call produces a fresh policy that:
-//   - locks the upload to a specific object key
-//   - requires acl=private
-//   - caps the content length between 1 and the supplied maxSize
-//   - is valid for 30 minutes from the supplied wall clock
-//
-// The policy bytes are base64-encoded for transmission to the client; the
-// signer's HMAC of those base64 bytes goes in the form as `x-amz-signature`.
+// PolicyGenerator builds S3 POST policies for one bucket, region and access key: a fixed object key, acl=private, length 1..maxSize, valid 30 minutes.
 type PolicyGenerator struct {
 	Region      string
 	Bucket      string
 	AccessKeyID string
 }
 
-// PolicyForm is the structured output of Generate. Clients embed every
-// field in the multipart POST body except Policy (which is base64) and
-// Signature (which is hex). The names mirror the Java
-// StickerPackFormUploadItem fields so on-wire compatibility is one-for-one.
+// PolicyForm is Generate's output; clients put every field in the multipart POST body.
 type PolicyForm struct {
 	// Credential is `<accessKeyID>/<date>/<region>/s3/aws4_request`.
 	Credential string
@@ -96,10 +71,7 @@ func (g *PolicyGenerator) Generate(now time.Time, objectKey string, maxSizeBytes
 	requestDate := now.Format(dateTimeFormat)
 	credential = fmt.Sprintf("%s/%s/%s/s3/aws4_request", g.AccessKeyID, credentialDate, g.Region)
 
-	// Hand-build the JSON to match Java byte-for-byte (the client only
-	// needs valid JSON, but byte-identical output makes regression
-	// debugging easier). The conditions array order matches Java's
-	// PostPolicyGenerator.
+	// Hand-built JSON with conditions in a fixed order, for byte-stable output.
 	policyJSON = fmt.Sprintf(`{
   "expiration": "%s",
   "conditions": [
@@ -123,10 +95,7 @@ func EncodePolicy(policy string) string {
 	return base64.StdEncoding.EncodeToString([]byte(policy))
 }
 
-// PolicySigner produces the SigV4 HMAC of a base64-encoded policy. The
-// secret is held in protected memory for the life of the signer; it is
-// never logged or surfaced to clients, and is materialised only for the
-// duration of one signing-key derivation.
+// PolicySigner computes the SigV4 HMAC of a base64 policy; the secret stays in protected memory except during key derivation.
 type PolicySigner struct {
 	SecretAccessKey *secrets.SecureString
 	Region          string
@@ -151,15 +120,7 @@ func (s *PolicySigner) Sign(now time.Time, encodedPolicy string) (string, error)
 	return hex.EncodeToString(mac.Sum(nil)), nil
 }
 
-// deriveSigningKey implements the SigV4 key chain:
-//
-//	kSecret  = "AWS4" + secret
-//	kDate    = HMAC(kSecret, dateStamp)
-//	kRegion  = HMAC(kDate, region)
-//	kService = HMAC(kRegion, service)
-//	kSigning = HMAC(kService, "aws4_request")
-//
-// Identical to the SES sigv4.go implementation but service="s3".
+// deriveSigningKey is the SigV4 chain HMAC(HMAC(HMAC(HMAC("AWS4"+secret, dateStamp), region), service), "aws4_request").
 func deriveSigningKey(secret, date, region, service string) []byte {
 	k := hmacSHA256([]byte("AWS4"+secret), []byte(date))
 	k = hmacSHA256(k, []byte(region))

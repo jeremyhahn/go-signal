@@ -213,8 +213,7 @@ func (l *TokenBucketLimiter) rateLimitError(deficit int64) *signalerrors.RateLim
 	return signalerrors.NewRateLimitedError(retryAfterSec)
 }
 
-// cleanupLoop periodically removes stale buckets to prevent unbounded memory
-// growth from keys that are no longer active.
+// cleanupLoop periodically removes stale buckets.
 func (l *TokenBucketLimiter) cleanupLoop() {
 	defer close(l.cleanupDone)
 

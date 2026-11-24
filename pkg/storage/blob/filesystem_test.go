@@ -326,11 +326,7 @@ func TestFilesystemStore_Copy_RejectsPathTraversal(t *testing.T) {
 }
 
 func TestFilesystemStore_Delete_StatError(t *testing.T) {
-	// Delete returns (0, nil) for ENOENT, so the fault has to be a different
-	// errno. A regular file used as a directory component makes the stat fail
-	// with ENOTDIR, which holds for every uid — the permission bits this test
-	// used to strip are bypassed by root, and CI runs as root
-	// (testing-guidelines.md §Fault Injection).
+	// ENOTDIR from a file used as a directory component exercises the non-ENOENT stat branch, for every uid.
 	s := newFSStore(t)
 	if err := os.WriteFile(filepath.Join(s.root, "notadir"), []byte("regular file"), 0o600); err != nil {
 		t.Fatalf("write blocker: %v", err)
@@ -408,9 +404,7 @@ func TestFilesystemStore_Copy_MkdirDestParentFails(t *testing.T) {
 }
 
 func TestFilesystemStore_CalculateBytesUsed_WalkErrorBubblesUp(t *testing.T) {
-	// The walk callback swallows ENOENT and propagates everything else, so the
-	// fault must be a different errno. Walking beneath a regular file yields
-	// ENOTDIR on the very first lstat, which no uid can bypass.
+	// ENOTDIR from walking beneath a regular file exercises the non-ENOENT walk branch.
 	s := newFSStore(t)
 	if err := os.WriteFile(filepath.Join(s.root, "notadir"), []byte("regular file"), 0o600); err != nil {
 		t.Fatalf("write blocker: %v", err)

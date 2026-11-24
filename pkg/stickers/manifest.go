@@ -16,13 +16,7 @@ import (
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
-// maxStickersPerPack mirrors the cap signal-cli enforces in
-// org/asamk/signal/manager/util/StickerUtils.java and Signal-Android's
-// libsignal-service-java MAXIMUM_STICKERS_PER_PACK (200). Packs
-// uploaded beyond this size would be rejected by the existing
-// /v1/sticker/pack/form/{count} server endpoint anyway — the cap is
-// validated here so manifest authors get an actionable error before
-// any encryption work happens.
+// maxStickersPerPack is the client limit of 200 stickers per pack.
 const maxStickersPerPack = 200
 
 // JSONManifest is the on-disk manifest.json shape Signal's sticker
@@ -43,8 +37,7 @@ type JSONSticker struct {
 	File string `json:"file"`
 	// Emoji is the suggested emoji shortcut. Optional.
 	Emoji string `json:"emoji,omitempty"`
-	// ContentType is the MIME type of the sticker file. When empty
-	// the uploader sniffs it from the file's content / extension.
+	// ContentType is the sticker's MIME type; empty is sniffed.
 	ContentType string `json:"contentType,omitempty"`
 }
 
@@ -69,14 +62,7 @@ type StickerFile struct {
 	Emoji       string
 }
 
-// LoadPack reads manifest.json + every referenced image file from path.
-// path may be:
-//   - a directory containing manifest.json + sticker images
-//   - a .zip archive containing the same layout
-//   - a file ending in `manifest.json` (uses the parent directory as root)
-//
-// Returns *PackInvalidError when the manifest is missing, malformed,
-// or references files that aren't present.
+// LoadPack reads manifest.json and its images from a directory, a .zip, or a path ending in manifest.json; problems are *PackInvalidError.
 func LoadPack(path string) (*LoadedPack, error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -124,10 +110,7 @@ func loadPackFromZip(path string) (*LoadedPack, error) {
 
 	files := make(map[string]*zip.File, len(zr.File))
 	for _, f := range zr.File {
-		// Reject zip entries whose name escapes the pack root.
-		// This is the zip-slip guard: a malicious .zip cannot
-		// place an entry at "../etc/passwd" and have us read it
-		// later via a manifest.json reference.
+		// Zip-slip guard: reject entries whose name escapes the pack root.
 		clean, err := safeStickerPath(f.Name)
 		if err != nil {
 			return nil, &PackInvalidError{Reason: fmt.Sprintf("zip entry %q: %v", f.Name, err)}
@@ -171,15 +154,7 @@ func loadPackFromZip(path string) (*LoadedPack, error) {
 	return assemblePack(manifest, open)
 }
 
-// safeStickerPath validates and canonicalises a file path supplied
-// by manifest.json or carried as a zip entry name. Rejects:
-//   - empty names
-//   - absolute paths (POSIX `/foo` or Windows `C:\foo`)
-//   - any traversal — `..` segments or non-canonical forms
-//   - leading dot-dot after Clean
-//
-// Returns the cleaned path on success. Callers join it under their
-// trusted root (directory mode) or use it as a map key (zip mode).
+// safeStickerPath returns the cleaned path, rejecting empty, absolute and traversing names.
 func safeStickerPath(rel string) (string, error) {
 	if rel == "" {
 		return "", signalerrors.New(signalerrors.ErrInvalidArgument, "empty path")
@@ -207,10 +182,7 @@ func decodeManifest(data []byte) (JSONManifest, error) {
 	return m, nil
 }
 
-// assemblePack validates the manifest and loads every referenced file
-// via the supplied open function. Centralizes invariants (non-empty
-// stickers, file refs present, no duplicate IDs by position) so dir
-// and zip sources stay byte-for-byte identical.
+// assemblePack validates the manifest and loads its files through open, for directory and zip sources alike.
 func assemblePack(m JSONManifest, open func(string) ([]byte, error)) (*LoadedPack, error) {
 	if len(m.Stickers) == 0 {
 		return nil, &PackInvalidError{Reason: "manifest.stickers is empty"}

@@ -1,11 +1,5 @@
 #!/bin/bash
-# Helper script for running signal-cli commands in integration tests.
-# Usage: ./signal-cli-test-helper.sh <command> [args...]
-#
-# Environment variables:
-#   SIGNAL_CLI_BIN     - Path to signal-cli binary (default: signal-cli)
-#   SIGNAL_CLI_DATA    - Data directory (default: /var/lib/signal-cli)
-#   SIGNAL_CLI_ACCOUNT - Phone number to use (default: +15555550100)
+# Runs signal-cli for integration tests: ./signal-cli-test-helper.sh <command> [args...]; env SIGNAL_CLI_BIN, SIGNAL_CLI_DATA, SIGNAL_CLI_ACCOUNT.
 
 set -euo pipefail
 

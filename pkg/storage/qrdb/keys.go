@@ -12,17 +12,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/keys"
 )
 
-// Key layout:
-//
-//	prekeys:ec:{uuid}:{device}:{keyID}          → JSON PreKey (one-time, consumed on take)
-//	prekeys:kem:{uuid}:{device}:{keyID}         → JSON KEMSignedPreKey (one-time)
-//	prekeys:kem-lastresort:{uuid}:{device}      → JSON KEMSignedPreKey
-//	prekeys:signed:{uuid}:{device}              → JSON SignedPreKey (current)
-//
-// EC and KEM one-time keys are consumed by lexicographic scan + delete of
-// the lowest remaining keyID — this matches Signal's lowest-ID-first
-// semantics for one-time keys. A sync.Mutex is held per TakeEC/TakeKEM to
-// prevent two concurrent takes from consuming the same key.
+// Key layout: prekeys:{ec,kem}:{uuid}:{device}:{keyID} (one-time), prekeys:kem-lastresort:{uuid}:{device}, prekeys:signed:{uuid}:{device}; takes delete the lowest keyID under a mutex.
 
 const (
 	preKeyECPfx         = "prekeys:ec:"
@@ -81,10 +71,7 @@ func kemDevicePrefix(uuid string, device uint64) string {
 	return fmt.Sprintf("%s%s:%d:", preKeyKEMPfx, uuid, device)
 }
 
-// accountAllKeys scans every key-store prefix (ec, kem, kem-lastresort,
-// signed) for the given account UUID. Used by DeleteAllForAccount /
-// DeleteAllForDevice to clean up across kinds without needing a unified
-// namespace key.
+// accountAllKeys scans every key-store prefix for the account.
 func (s *PreKeyStore) accountAllKeys(ctx context.Context, accountUUID string, device uint64, deviceOnly bool) ([]string, error) {
 	prefixes := []string{preKeyECPfx, preKeyKEMPfx, preKeyKEMLastResort, preKeySignedPfx}
 	out := make([]string, 0)
@@ -332,10 +319,7 @@ func (s *PreKeyStore) DeleteAllForAccount(ctx context.Context, uuid string) erro
 	return nil
 }
 
-// ListAccountUUIDs returns every UUID that appears as the owner of
-// any pre-key row across the EC, KEM, KEM-last-resort, or signed
-// prefixes. Keys follow the layout `<prefix><uuid>:...`, so the UUID
-// is the second segment after the prefix.
+// ListAccountUUIDs returns every UUID that owns a pre-key row under any prefix.
 func (s *PreKeyStore) ListAccountUUIDs(ctx context.Context) ([]string, error) {
 	prefixes := []string{preKeyECPfx, preKeyKEMPfx, preKeyKEMLastResort, preKeySignedPfx}
 	seen := make(map[string]struct{})

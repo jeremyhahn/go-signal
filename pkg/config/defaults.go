@@ -43,10 +43,7 @@ const (
 	KeyAttachmentsTusURI AddressKey = "attachments.tusUri"
 )
 
-// The defaults layer for every bind address. These are the only places a
-// listen literal may appear in non-test code (handbook
-// software/conventions/configuration.md §3): each is the documented
-// default that the config file, environment and flag override.
+// Default bind addresses: the only listen literals allowed in non-test code; file, environment and flags override them.
 const (
 	DefaultHealthListen              = "0.0.0.0:8099"
 	DefaultVerificationGRPCListen    = "0.0.0.0:8090"
@@ -57,10 +54,7 @@ const (
 	DefaultKeyTransparencyGRPCListen = "0.0.0.0:8098"
 )
 
-// addressDefault binds one address key to its default value and to the
-// Config field that carries the resolved value. An optional address has an
-// empty default and may be left or set empty: empty disables the listener or
-// remote path it names (a gRPC listener, a dialer, an advertised URI).
+// addressDefault binds an address key to its default and Config field; an optional address may be empty, which disables what it names.
 type addressDefault struct {
 	key      AddressKey
 	value    string
@@ -100,11 +94,7 @@ func applyDefaults(c *Config) {
 	}
 }
 
-// resolveServerListeners folds the legacy server.host, server.httpPort and
-// server.grpcPort keys into the listen addresses when no layer set the
-// address itself. It runs after the file, environment and flag layers, so
-// an address set by any of them (flags > env > file) always wins over the
-// legacy keys, which are file-layer values. It is idempotent.
+// resolveServerListeners folds the legacy server.host/httpPort/grpcPort keys into listen addresses no layer set. Idempotent.
 func resolveServerListeners(c *Config) {
 	for _, l := range []struct {
 		listen *string

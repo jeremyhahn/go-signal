@@ -7,27 +7,7 @@ import (
 	"testing"
 )
 
-// The four sensitive REST handlers (DeleteAccount, ChangeNumber,
-// LinkDevice, SetRegistrationLock) emit audit events through
-// s.audit when it is non-nil. The emission happens at three
-// decision points each:
-//
-//   - DENIED: handler-level authorization rejection that runs AFTER
-//     the auth middleware (e.g. ChangeNumber's primary-device gate).
-//     Unauthenticated requests are short-circuited by the auth
-//     middleware itself; those 401s don't reach the handler and
-//     therefore aren't audited here — the chat-server access log
-//     captures them.
-//
-//   - FAILURE: handler-level operation error after authorization.
-//
-//   - SUCCESS: operation completed cleanly.
-//
-// Testing the success / failure / handler-denied paths requires a
-// fully authenticated request fixture. The structural correctness
-// (audit nil-safe, helper math) is exercised here; the per-action
-// integration assertions ride on top of newTestServerWithAccount in
-// the existing handler suites.
+// DeleteAccount, ChangeNumber, LinkDevice and SetRegistrationLock audit DENIED, FAILURE and SUCCESS; these tests cover the nil-safe helpers.
 
 func TestAudit_NilLoggerIsNilSafe(t *testing.T) {
 	// Server with audit=nil — all four handlers must serve their

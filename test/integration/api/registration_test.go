@@ -32,7 +32,7 @@ func TestRegistration_ReRegistrationReplacesAccount(t *testing.T) {
 	assert.NotEmpty(t, pni2)
 	assert.NotEqual(t, uuid1, uuid2, "re-registration should assign a new UUID")
 
-	// The old account should no longer be accessible with old credentials.
+	// The old credentials must no longer work.
 	resp := env.doAuthRequest(t, "GET", "/v1/accounts/whoami", nil, uuid1, "password1")
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	resp.Body.Close()

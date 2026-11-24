@@ -1,23 +1,5 @@
-// Package registration hosts the gRPC server-side implementation of
-// the RegistrationService.proto contract. It is the wire surface the
-// standalone cmd/registration-service binary exposes; it delegates to
-// the underlying *core.Service for all session lifecycle and transport
-// orchestration.
-//
-// Wire mapping notes:
-//
-//   - Proto session_id is `bytes`. Our session.ID is a UUID string. We
-//     marshal via uuid.Parse(...).MarshalBinary() and unmarshal via
-//     uuid.FromBytes — a 1:1 round-trip.
-//   - Proto e164 is uint64 — the E.164 number with the leading "+"
-//     stripped. We format back to "+%d" for the storage-side string.
-//   - The proto's `accept_language`, `client_type`, `sender_name`, and
-//     `mcc`/`mnc`/`rate_limit_collation_key` fields are accepted for
-//     wire-compatibility but currently ignored by the server: the
-//     underlying *core.Service does not yet plumb them through (Phase
-//     4.1 baseline). Production deployments using Twilio routing will
-//     want to surface these to the transport once a future revision
-//     extends the transport interface.
+// Package registration implements RegistrationService over gRPC for cmd/registration-service, delegating to *core.Service.
+// session_id is the UUID's 16 bytes and e164 is the number without "+"; locale, client type, sender name and carrier fields are accepted and ignored.
 package registration
 
 import (
@@ -150,11 +132,7 @@ func (s *Server) CheckVerificationCode(ctx context.Context, req *regpb.CheckVeri
 
 // --- Wire mapping helpers ------------------------------------------------
 
-// sessionMetadata projects a *verification.VerificationSession onto the
-// proto RegistrationSessionMetadata shape. CaptchaRequired is NOT
-// surfaced — captcha lives on the chat-server side. session.Attempts
-// is folded into may_check_code so callers can decide whether another
-// submit is allowed.
+// sessionMetadata projects a VerificationSession onto RegistrationSessionMetadata; captcha state lives on the chat server.
 func sessionMetadata(s *verification.VerificationSession) *regpb.RegistrationSessionMetadata {
 	now := time.Now()
 	idBytes, _ := encodeSessionID(s.ID)
@@ -182,10 +160,7 @@ func canRequestCode(s *verification.VerificationSession) bool {
 	return !time.Now().Before(s.NextCodeRequestAt)
 }
 
-// attemptCap is the per-session max-attempts ceiling. The server config
-// owns the real cap; for the metadata projection we use a generous
-// default that matches core.Config defaults (3). Callers can still
-// distinguish "cap reached" from the SubmitCode error returned later.
+// attemptCap is the max-attempts value used in the metadata projection, matching core.Config's default.
 func attemptCap(_ *verification.VerificationSession) int {
 	return 3
 }
@@ -251,10 +226,7 @@ func encodeE164(n uint64) string {
 	return "+" + strconv.FormatUint(n, 10)
 }
 
-// parseE164 converts a "+15551234567"-shaped string back to the
-// proto's uint64 form. Returns 0 on any parse failure — the proto's
-// metadata then surfaces 0 to the client which mirrors Java for
-// non-canonical numbers.
+// parseE164 converts "+15551234567" to the proto's uint64, or 0 on failure.
 func parseE164(s string) uint64 {
 	if !strings.HasPrefix(s, "+") {
 		return 0

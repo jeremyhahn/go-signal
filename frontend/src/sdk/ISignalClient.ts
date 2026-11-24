@@ -1,8 +1,4 @@
-// ISignalClient is the unified TypeScript interface for the Signal client.
-// React components use this interface exclusively -- never Wails bindings
-// or HTTP calls directly. Two implementations exist:
-//   - WailsAdapter: for the desktop app (calls Go bindings via Wails runtime)
-//   - WebAdapter: for the web UI (calls REST + WebSocket)
+// ISignalClient is the only client surface components use: WailsAdapter on desktop, WebAdapter (REST and WebSocket) on the web.
 
 export interface Account {
   number: string;

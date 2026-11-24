@@ -365,9 +365,7 @@ func TestVerificationStore_Get_CorruptedData_UnmarshalError(t *testing.T) {
 	id := uuid.NewString()
 	exp := time.Now().Add(time.Hour)
 
-	// Insert valid JSONB but with an unparseable time value for createdAt.
-	// Postgres accepts any valid JSON in the JSONB column; Go's json.Unmarshal
-	// will fail when it tries to parse "NOT-A-TIME" as time.Time.
+	// Valid JSONB with an unparsable createdAt.
 	_, err := c.Pool().Exec(ctx,
 		`INSERT INTO verification_sessions (id, data, expires_at, created_at)
 		 VALUES ($1, $2::jsonb, $3, NOW())`,

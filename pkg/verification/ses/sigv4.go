@@ -14,11 +14,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
-// sigV4 holds the credentials + region needed to sign AWS API requests.
-// Hand-rolled implementation of AWS Signature Version 4 — the only
-// SigV4 client we ship is the one that signs SES SendEmail calls, so we
-// keep the surface minimal (no streaming bodies, no anonymous requests,
-// no STS session tokens beyond a literal SessionToken header).
+// sigV4 signs SES requests with AWS Signature Version 4: buffered bodies only, optional SessionToken.
 type sigV4 struct {
 	accessKeyID     string
 	secretAccessKey *secrets.SecureString
@@ -28,12 +24,7 @@ type sigV4 struct {
 	now             func() time.Time
 }
 
-// Sign mutates req in place, adding the Authorization, X-Amz-Date, and
-// X-Amz-Security-Token (when set) headers required for SigV4 auth.
-//
-// The body bytes must be the exact bytes that will be transmitted; SES
-// computes the payload hash from them. This implementation handles only
-// non-streaming requests (Content-Length set, body buffered).
+// Sign adds the SigV4 Authorization, X-Amz-Date and optional X-Amz-Security-Token headers; body must be the exact bytes sent.
 func (s *sigV4) Sign(req *http.Request, body []byte) error {
 	if s.accessKeyID == "" || s.secretAccessKey.IsEmpty() {
 		return errors.New("ses sigv4: missing credentials")
@@ -113,13 +104,7 @@ func hmacSHA256(key, data []byte) []byte {
 	return mac.Sum(nil)
 }
 
-// deriveSigningKey produces the SigV4 signing key per AWS docs:
-//
-//	kSecret  = "AWS4" + secret
-//	kDate    = HMAC(kSecret, dateStamp)
-//	kRegion  = HMAC(kDate, region)
-//	kService = HMAC(kRegion, service)
-//	kSigning = HMAC(kService, "aws4_request")
+// deriveSigningKey is HMAC chained over "AWS4"+secret, date, region, service, "aws4_request".
 func deriveSigningKey(secret []byte, date, region, service string) []byte {
 	kSecret := append([]byte("AWS4"), secret...)
 	defer clear(kSecret)
@@ -202,10 +187,7 @@ func canonicalHeaders(req *http.Request) (string, string) {
 	return sb.String(), strings.Join(uniq, ";")
 }
 
-// awsURIEncode follows the AWS-specific encoding rules: every byte that
-// isn't unreserved is percent-encoded. The `encodeSlash` parameter
-// controls whether '/' is encoded — SigV4 keeps '/' unencoded inside
-// canonical URIs but encodes it inside query values.
+// awsURIEncode percent-encodes every non-unreserved byte; encodeSlash controls '/'.
 func awsURIEncode(s string, encodeSlash bool) string {
 	var sb strings.Builder
 	for _, b := range []byte(s) {

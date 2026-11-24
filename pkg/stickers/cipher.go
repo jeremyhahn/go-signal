@@ -19,10 +19,7 @@ import (
 // fixed 32-byte secret embedded in the share URL.
 const PackKeyLen = 32
 
-// stickerPackHKDFInfo is the HKDF info string Signal's clients use when
-// deriving per-pack AES/HMAC keys from the pack key. This is part of the
-// wire format — clients on every platform must use the exact same value
-// or decryption fails.
+// stickerPackHKDFInfo is the HKDF info clients use for per-pack keys; part of the wire format.
 const stickerPackHKDFInfo = "Sticker Pack"
 
 // envelopeIVLen is the AES-CBC IV length. Same as AES block size.
@@ -58,14 +55,7 @@ func derivePackKeys(packKey []byte) (aesKey, hmacKey []byte, err error) {
 	return out[:32], out[32:], nil
 }
 
-// EncryptPackPayload wraps plaintext (the manifest protobuf or a single
-// sticker image) in Signal's sticker-pack envelope:
-//
-//	output = IV(16) || AES-256-CBC(aesKey, IV, PKCS7(plaintext)) || HMAC-SHA256(hmacKey, IV||ciphertext)
-//
-// where (aesKey, hmacKey) are derived from packKey via HKDF as described
-// in derivePackKeys. The returned slice is suitable for upload to the
-// sticker CDN without further wrapping.
+// EncryptPackPayload returns IV(16) || AES-256-CBC(aesKey, IV, PKCS7(plaintext)) || HMAC-SHA256(hmacKey, IV||ciphertext), keys from derivePackKeys.
 func EncryptPackPayload(packKey, plaintext []byte) ([]byte, error) {
 	aesKey, hmacKey, err := derivePackKeys(packKey)
 	if err != nil {
@@ -95,10 +85,7 @@ func EncryptPackPayload(packKey, plaintext []byte) ([]byte, error) {
 	return out, nil
 }
 
-// DecryptPackPayload reverses EncryptPackPayload. Useful for round-trip
-// tests and for the get-sticker download path. Returns
-// (plaintext, error). The HMAC is verified in constant time; a tag
-// mismatch returns ErrInvalidEnvelope without leaking timing.
+// DecryptPackPayload reverses EncryptPackPayload; a bad tag (checked in constant time) is ErrInvalidEnvelope.
 func DecryptPackPayload(packKey, envelope []byte) ([]byte, error) {
 	if len(envelope) < envelopeIVLen+envelopeMACLen+aes.BlockSize {
 		return nil, ErrInvalidEnvelope

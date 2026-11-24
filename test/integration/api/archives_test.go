@@ -25,12 +25,7 @@ func TestArchives_GetAuth(t *testing.T) {
 func TestArchives_GetInfo(t *testing.T) {
 	env := setupTestEnv(t)
 
-	// GET /v1/archives uses ZK authentication (X-Signal-ZK-Auth +
-	// X-Signal-ZK-Auth-Signature headers), not Basic Auth. The handler checks
-	// for the ZK headers BEFORE checking whether the backup service is
-	// configured — missing headers yield 401. Supplying any non-empty (even
-	// syntactically valid base64) values causes the server to reach the
-	// "backup service not configured" check and return 501.
+	// GET /v1/archives returns 401 without ZK auth headers and 501 with any headers when backups are not configured.
 	fakePresentation := base64.StdEncoding.EncodeToString(make([]byte, 64))
 	fakeSignature := base64.StdEncoding.EncodeToString(make([]byte, 64))
 	headers := map[string]string{

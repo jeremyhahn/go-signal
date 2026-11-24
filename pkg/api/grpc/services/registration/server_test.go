@@ -540,13 +540,7 @@ func TestSendVerificationCodeErrorResponse_DirectCoverage(t *testing.T) {
 	}
 }
 
-// TestGRPCSendVerificationCode_AlreadyVerified drives the whole gRPC path: a
-// verified session must reach the client as SESSION_ALREADY_VERIFIED, not as
-// UNSPECIFIED. A split deployment routes REST through this boundary, so an
-// unmapped error here becomes a 500 where the in-process path returns 409.
-//
-// The cooldown is left armed deliberately: without the verified check
-// ordering, this session would be reported as RATE_LIMITED instead.
+// TestGRPCSendVerificationCode_AlreadyVerified checks a verified session maps to SESSION_ALREADY_VERIFIED, with the cooldown still armed.
 func TestGRPCSendVerificationCode_AlreadyVerified(t *testing.T) {
 	store := verification.NewMemoryVerificationSessionStore()
 	svc := core.NewService(store, &stubTransport{}, core.Config{

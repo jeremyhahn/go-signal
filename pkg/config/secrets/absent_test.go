@@ -141,14 +141,7 @@ func mustClone(t *testing.T, src *SecureString) *SecureString {
 // YAML decoding
 // --------------------------------------------------------------------------
 
-// TestUnmarshalYAML_CarriesConfigured is the regression test for the defect
-// Codex found on #33.
-//
-// UnmarshalYAML installed the decoded enclave but left `configured` false, so
-// EVERY secret loaded from a config file reported IsAbsent() == true. A call
-// site that selects a legacy or stub mode on absence would have taken that
-// branch for a fully configured deployment — the exact fail-open IsAbsent was
-// added to prevent, reintroduced through the loading path.
+// TestUnmarshalYAML_CarriesConfigured checks a decoded secret reports configured.
 func TestUnmarshalYAML_CarriesConfigured(t *testing.T) {
 	cases := map[string]struct {
 		yaml       string
@@ -178,9 +171,7 @@ func TestUnmarshalYAML_CarriesConfigured(t *testing.T) {
 	}
 }
 
-// Decoding an empty node over a previously configured value must leave the
-// SecureString genuinely unset: carrying `configured` forward would report a
-// key that is no longer there.
+// Decoding an empty node over a configured value leaves it unset.
 func TestUnmarshalYAML_EmptyValueClearsConfigured(t *testing.T) {
 	var doc struct {
 		Secret *SecureString `yaml:"secret"`
@@ -204,22 +195,7 @@ func TestUnmarshalYAML_EmptyValueClearsConfigured(t *testing.T) {
 // Atomic presence + clone
 // --------------------------------------------------------------------------
 
-// TestCloneWithPresence_IsASingleSnapshot stresses the race Codex found on
-// #33: asking IsAbsent() and then Clone() are two separate reveals, so a
-// secret installed between them yields absent=true beside a clone holding a
-// real value, and a caller choosing a stub on absence publishes stub mode
-// over a key that exists.
-//
-// Honest about what this is: a STRESS test, not a proof. The window between
-// two adjacent reads is small enough that a deliberately split implementation
-// still passed this in measurement, so a green run here is not evidence the
-// snapshot is atomic. The guarantee is structural — CloneWithPresence reads
-// the presence bit and performs the copy under one RLock, which is verifiable
-// by reading it — and this covers the case where that structure is broken
-// badly enough to widen the window.
-//
-// It also exercises CloneWithPresence under -race against a concurrent
-// writer, which is worth having on its own.
+// TestCloneWithPresence_IsASingleSnapshot stresses CloneWithPresence against a concurrent writer; a stress test, not a proof.
 func TestCloneWithPresence_IsASingleSnapshot(t *testing.T) {
 	const readers = 16
 
@@ -267,9 +243,7 @@ func TestCloneWithPresence_IsASingleSnapshot(t *testing.T) {
 	}
 }
 
-// The presence bit describes the SOURCE, not the clone. A configured secret
-// that cannot be revealed yields an empty clone AND configured=true, so the
-// caller can tell it apart from a genuinely unset one.
+// Presence describes the source: an unreadable configured secret gives an empty clone with configured=true.
 func TestCloneWithPresence_ConfiguredButUnreadable(t *testing.T) {
 	s := MustNewSecureString("x")
 	s.Destroy()

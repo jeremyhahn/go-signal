@@ -23,29 +23,16 @@ import (
 // Signal-Server uses this same media type.
 const mrmContentType = "application/vnd.signal-messenger.mrm"
 
-// maxMRMRequestBytes caps the size of a binary multi-recipient request body
-// so a single send cannot exhaust server memory. The figure mirrors Java's
-// `MaxRecipients * AverageRecipientSize` budget order-of-magnitude (~10 MiB
-// of ciphertext is enough for thousands of recipients with typical payloads).
+// maxMRMRequestBytes caps a binary multi-recipient request body.
 const maxMRMRequestBytes = 10 * 1024 * 1024
 
 // maxMultiRecipients is the maximum number of recipients allowed in a single
 // multi-recipient message request. Matches the Java Signal-Server limit.
 const maxMultiRecipients = 5000
 
-// handleSendMultiRecipientMessage processes PUT /v1/messages/multi_recipient
-// and delivers a sealed-sender message to multiple recipients. For each
-// recipient, individual message envelopes are created and stored after
-// device-set and stale-device validation:
-//   - Recipients whose accounts cannot be found are returned in uuids404.
-//   - 409 Conflict: a recipient's device set does not match the addressed IDs.
-//   - 410 Gone:     a recipient has stale registration IDs in the request.
+// handleSendMultiRecipientMessage serves PUT /v1/messages/multi_recipient: unknown recipients in uuids404, 409 on a device mismatch, 410 on stale registration IDs.
 func (s *Server) handleSendMultiRecipientMessage(w http.ResponseWriter, r *http.Request) {
-	// Java Signal-Server distinguishes legacy JSON multi-recipient sends
-	// from the optimized binary path by Content-Type. The binary path
-	// uploads the SealedSender v2 multi-recipient ciphertext once and the
-	// server fans out per-recipient envelopes referencing a shared MRM
-	// cache row; the JSON path delivers per-recipient pre-encrypted bodies.
+	// Content-Type selects the binary Sealed Sender v2 path (shared MRM payload) or the JSON per-recipient path.
 	if isMRMContentType(r.Header.Get("Content-Type")) {
 		s.handleSendMultiRecipientMessageBinary(w, r)
 		return
@@ -108,10 +95,7 @@ func (s *Server) handleSendMultiRecipientMessage(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// For sealed-sender (unidentified) requests the source UUID must be
-	// cleared on all envelopes to preserve sender anonymity. The multi-recipient
-	// endpoint is always treated as sealed-sender (UNIDENTIFIED_SENDER type 6),
-	// so we never propagate the authenticated sender's UUID to recipients.
+	// Multi-recipient sends are always sealed sender, so the source UUID is never set on envelopes.
 	var sourceUUID string
 	var sourceDevice uint32
 	if acct != nil {
@@ -137,10 +121,7 @@ func (s *Server) handleSendMultiRecipientMessage(w http.ResponseWriter, r *http.
 			continue
 		}
 
-		// Build DeviceMessage list pairing each device ID with its registration
-		// ID. The RegistrationIds slice is positionally aligned with DeviceIds
-		// per the Signal protocol; if the lists have different lengths we only
-		// pair entries that exist in both.
+		// Pair device IDs with registration IDs by position, only where both exist.
 		deviceMsgs := buildDeviceMessages(recipient.DeviceIds, recipient.RegistrationIds)
 
 		// Device-set validation (HTTP 409).
@@ -204,10 +185,7 @@ func (s *Server) handleSendMultiRecipientMessage(w http.ResponseWriter, r *http.
 	})
 }
 
-// handleReportSpam processes POST /v1/messages/report/{source}/{messageGuid}
-// and records a spam report for the specified message. The report is logged and,
-// when a ReportStore is configured, persisted for downstream abuse-detection
-// processing.
+// handleReportSpam serves POST /v1/messages/report/{source}/{messageGuid}, logging the report and storing it when a ReportStore is set.
 func (s *Server) handleReportSpam(w http.ResponseWriter, r *http.Request) {
 	acct := accountFromContext(r.Context())
 	if acct == nil {
@@ -283,13 +261,7 @@ func isMRMContentType(ct string) bool {
 	return strings.EqualFold(strings.TrimSpace(ct), mrmContentType)
 }
 
-// handleSendMultiRecipientMessageBinary processes a binary SealedSender v2
-// multi-recipient send. The request body is the raw SSv2 multi-recipient
-// ciphertext; the server parses it, stores the shared payload in the MRM
-// cache once, and enqueues a per-recipient envelope referencing the cached
-// payload via MessagesManager.SendMRMBinary. Always treated as sealed-sender
-// (UNIDENTIFIED_SENDER), so the route is anonymous. Mirrors Java Signal-
-// Server's binary multi-recipient endpoint.
+// handleSendMultiRecipientMessageBinary stores the Sealed Sender v2 payload once in the MRM cache and enqueues per-recipient envelopes; the route is anonymous.
 func (s *Server) handleSendMultiRecipientMessageBinary(w http.ResponseWriter, r *http.Request) {
 	if s.mrmCache == nil {
 		writeError(w, http.StatusServiceUnavailable, "mrm cache not configured")
@@ -364,10 +336,7 @@ type invalidTimestampError struct{ reason string }
 
 func (e *invalidTimestampError) Error() string { return "invalid timestamp: " + e.reason }
 
-// parseUnsignedTimestamp parses a positive integer timestamp from a string.
-// It rejects empty input, signs, non-digit characters, and — unlike a manual
-// digit accumulator — values that overflow uint64 (strconv reports ErrRange),
-// so an all-digit header cannot silently wrap to a small in-range value.
+// parseUnsignedTimestamp parses a positive integer, rejecting signs, non-digits and uint64 overflow.
 func parseUnsignedTimestamp(s string) (uint64, error) {
 	if s == "" {
 		return 0, &invalidTimestampError{reason: "empty"}
