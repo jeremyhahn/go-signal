@@ -2,13 +2,20 @@ package captcha
 
 import "context"
 
-// CaptchaVerifier verifies a client token, remote IP and site key against an external CAPTCHA service.
+// CaptchaVerifier is the interface implemented by all CAPTCHA verification
+// backends. Callers submit the client-supplied token, the remote IP address of
+// the submitting client, and the site key that was used to render the widget.
+// The backend contacts the external verification service and returns a
+// VerifyResult describing the outcome.
 type CaptchaVerifier interface {
-	// Verify returns the service's result; an error is a transport or configuration problem, a failed check is Success == false.
+	// Verify contacts the upstream CAPTCHA service and returns the result.
+	// A non-nil error indicates a transport or configuration problem; a
+	// failed verification is represented by VerifyResult.Success == false.
 	Verify(ctx context.Context, token string, remoteIP string, siteKey string) (*VerifyResult, error)
 }
 
-// VerifyResult is a CAPTCHA service's parsed response.
+// VerifyResult holds the parsed response returned by a CAPTCHA verification
+// service.
 type VerifyResult struct {
 	// Success is true when the upstream service accepted the token.
 	Success bool

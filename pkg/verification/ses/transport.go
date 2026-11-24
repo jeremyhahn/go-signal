@@ -1,4 +1,13 @@
-// Package ses implements verification.VerificationTransport with SES v2 SendEmail and hand-rolled SigV4: one plaintext email per code.
+// Package ses implements verification.VerificationTransport backed by the
+// AWS SES v2 SendEmail API. The transport hand-rolls AWS Signature V4 so
+// the binary does not pull in the full aws-sdk-go-v2 transitive footprint.
+//
+// One outbound email per code; SES handles deliverability. The body is a
+// minimal plaintext template; deployments that need branded HTML mail
+// should fork this transport and supply their own template.
+//
+// Mirrors Java's SES sender path used by Signal-Server's email-based
+// verification flow.
 package ses
 
 import (

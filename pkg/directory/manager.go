@@ -13,7 +13,12 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
-// DirectoryManager issues CDSI credentials: hex HMAC-SHA256(sharedSecret, accountUUID), the secret revealed only per computation.
+// DirectoryManager manages contact discovery (CDSI) credentials. The
+// credential format is HMAC-SHA256(sharedSecret, accountUUID) hex —
+// the same scheme svr2 and registration-service use. cmd/cdsi
+// validates inbound credentials against the same shared secret.
+// The secret lives in protected memory for the process lifetime and is
+// revealed only for the length of a single HMAC computation.
 type DirectoryManager struct {
 	logger *slog.Logger
 	// state is mode and key published as one immutable value, so readers never see them out of step.
@@ -35,13 +40,27 @@ type secretState struct {
 	destroyed bool
 }
 
-// NewDirectoryManager returns a DirectoryManager that issues random-UUID stub credentials until a secret is set.
+// NewDirectoryManager creates a new DirectoryManager. When secret is
+// empty the manager falls back to random UUIDs so non-CDSI deployments
+// can keep using the legacy /v2/directory/auth stub.
 func NewDirectoryManager(logger *slog.Logger) *DirectoryManager {
 	return &DirectoryManager{logger: logger}
 }
 
-// SetSharedSecret installs a clone of secret, wiping any previous one; an absent secret selects the stub.
-// It errors, leaving the manager unchanged, when the secret exists but cannot be protected; callers treat that as fatal.
+// SetSharedSecret installs the HMAC secret used to mint credentials.
+// Called by cmd/signald at startup with cfg.CDSI.SharedSecret. The secret
+// is cloned into an enclave the manager owns; the caller keeps ownership of
+// what it passed in.
+//
+// Any secret already installed is wiped before being replaced, so a rotation
+// leaves no copy of the superseded key resident.
+//
+// Returns an error only when the secret exists but could not be placed in
+// protected memory. That case leaves the manager untouched — the previously
+// installed configuration, key included, survives — and callers must treat it
+// as fatal rather than proceeding: continuing would run with GetAuthToken's legacy
+// stub, issuing random credentials the peer rejects. An absent secret is not
+// an error; it selects the stub deliberately.
 func (m *DirectoryManager) SetSharedSecret(secret *secrets.SecureString) error {
 	// Never configured selects the stub; configured and usable selects HMAC; anything else errors. Presence and copy come from one snapshot.
 	clone, configured, err := cloneSecret(secret)
@@ -79,7 +98,24 @@ func (m *DirectoryManager) SetSharedSecret(secret *secrets.SecureString) error {
 	}
 }
 
-// Destroy wipes the secret and makes the manager terminal; idempotent. A configured manager then fails closed, an unconfigured one keeps the stub.
+// Destroy wipes the manager's copy of the shared secret and makes the manager
+// terminal: no later SetSharedSecret can install another one. Called from the
+// daemon's shutdown path. Safe to call more than once, and on a manager that
+// was never configured.
+//
+// Terminal is the point. Wiping what is installed at the instant Destroy runs
+// says nothing about a SetSharedSecret already in flight, which cloned its
+// secret before Destroy started and would publish it after Destroy returned —
+// a live protected allocation, installed after shutdown, that nothing would
+// ever wipe. The marker is what that setter checks.
+//
+// A manager that was minting HMAC credentials does not revert to the legacy
+// stub afterwards: GetAuthToken fails closed with a
+// SharedSecretUnavailableError, so a wipe can never be mistaken for a
+// successful credential grant. A manager that was never configured keeps
+// serving the random-UUID stub after Destroy, deliberately: there is no key to
+// protect, and failing closed there would turn shutdown into an outage for
+// non-CDSI deployments in exchange for nothing.
 func (m *DirectoryManager) Destroy() {
 	if m == nil {
 		return
@@ -103,7 +139,14 @@ func (m *DirectoryManager) Destroy() {
 	}
 }
 
-// GetAuthToken returns CDSI credentials: HMAC of the account UUID when configured, else a random UUID; a failed reveal is SharedSecretUnavailableError.
+// GetAuthToken returns CDSI credentials for the given account. With a
+// configured shared secret, the password is the HMAC-SHA256 of the
+// account UUID under that secret. Without one, a random UUID is returned
+// (the legacy stub behavior for non-CDSI deployments).
+//
+// Once a secret has been configured, a reveal that fails — the secret was
+// destroyed, or the enclave would not open — is a
+// SharedSecretUnavailableError, never a fallback to the stub.
 func (m *DirectoryManager) GetAuthToken(_ context.Context, accountUUID string) (*DirectoryCredentials, error) {
 	// One Load: mode and key from the same state.
 	st := m.state.Load()

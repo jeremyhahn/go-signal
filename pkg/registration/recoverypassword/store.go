@@ -5,7 +5,14 @@ import (
 	"time"
 )
 
-// Store keeps SaltedTokenHash entries by lowercase PNI UUID; expired entries must read as NotFoundError.
+// Store persists SaltedTokenHash entries keyed by phone number identifier
+// (PNI). Implementations are expected to honor a per-entry expiration so that
+// stale recovery passwords self-evict; entries past their expiration MUST be
+// reported as NotFoundError on Get.
+//
+// PNI is encoded as a canonical lowercase UUID string (matching Java's
+// `UUID.toString()`). Manager validates the input before reaching the Store,
+// so backends may treat the value as opaque.
 type Store interface {
 	// Get returns the salted hash currently stored for pni, or NotFoundError
 	// if none exists or the entry has expired.

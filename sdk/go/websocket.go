@@ -15,7 +15,16 @@ import (
 	"github.com/coder/websocket"
 )
 
-// ConnectWebSocketSession dials the WebSocket and reads on a goroutine; it returns after the handshake with a channel closed when the session ends.
+// ConnectWebSocket establishes a persistent WebSocket connection for
+// real-time message delivery. Messages received are passed to the handler.
+// ConnectWebSocketSession dials the authenticated WebSocket and reads messages
+// on a background goroutine. It returns as soon as the handshake completes,
+// NOT when the connection ends.
+//
+// The returned channel is closed when the session's read loop exits — server
+// close, network drop, or ctx cancellation. Callers that maintain a
+// persistent connection must wait on it: without it there is no way to notice
+// a dropped socket, so a reconnecting client silently stops receiving.
 func (c *Client) ConnectWebSocketSession(ctx context.Context, handler func(msg ReceivedMessage)) (<-chan struct{}, error) {
 	creds, err := c.store.GetCredentials()
 	if err != nil || creds == nil {
@@ -92,7 +101,12 @@ func (c *Client) ConnectWebSocketSession(ctx context.Context, handler func(msg R
 	return done, nil
 }
 
-// ConnectWebSocket is ConnectWebSocketSession without the end-of-session signal; prefer ConnectWebSocketSession.
+// ConnectWebSocket dials the authenticated WebSocket and reads messages on a
+// background goroutine, discarding the session-termination signal.
+//
+// Prefer ConnectWebSocketSession for anything that must react to the
+// connection ending — a caller that only has this signature cannot tell a
+// live connection from one the server closed a moment later.
 func (c *Client) ConnectWebSocket(ctx context.Context, handler func(msg ReceivedMessage)) error {
 	_, err := c.ConnectWebSocketSession(ctx, handler)
 	return err

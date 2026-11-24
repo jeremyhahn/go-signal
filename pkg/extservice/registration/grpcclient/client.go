@@ -1,4 +1,9 @@
-// Package grpcclient implements registration.Client over gRPC, mapping to verification sessions and errors.
+// Package grpcclient implements registration.Client by talking to a
+// remote registration-service binary over gRPC. The wire surface is
+// regpb.RegistrationServiceClient; this adapter translates between the
+// proto types and the chat-server-side
+// *verification.VerificationSession + verification.* error contract so
+// callers can stay transport-agnostic.
 package grpcclient
 
 import (
@@ -16,7 +21,11 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/verification"
 )
 
-// Config needs Conn (caller-dialled) or Endpoint (an insecure channel, for development and tests only).
+// Config configures the gRPC client. Either Conn or Endpoint must be
+// set: Conn lets callers wire their own dial options (mTLS,
+// interceptors); Endpoint opens a default insecure-credentials channel
+// using grpc.NewClient. The latter is intended for development and
+// integration tests only.
 type Config struct {
 	// Conn is a pre-built grpc.ClientConn. When supplied, Endpoint and
 	// DialOptions are ignored. Ownership stays with the caller; Close

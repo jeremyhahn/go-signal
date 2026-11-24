@@ -12,7 +12,9 @@ import (
 // silently dropped to prevent unbounded memory growth under a sustained flood.
 const maxGUIDsPerEntry = 10_000
 
-// DeliveryLoopError means a message GUID travelled both ways between two accounts within the window.
+// DeliveryLoopError indicates that a delivery loop has been detected between
+// two accounts: the same message GUID has been observed travelling in both
+// directions within the configured time window.
 type DeliveryLoopError struct {
 	SenderUUID    string
 	RecipientUUID string
@@ -49,7 +51,12 @@ type loopBucket struct {
 	entries []*directedEntry
 }
 
-// DeliveryLoopDetector detects a GUID sent A->B and back within windowSize, with per-bucket locking; safe for concurrent use.
+// DeliveryLoopDetector tracks message-delivery paths using a bounded per-pair
+// entry set with TTL-based expiry. It detects loops where the same message
+// GUID is sent A->B and then B->A (or vice versa) within windowSize.
+//
+// All public methods are safe for concurrent use. Internal state is protected
+// by per-bucket mutexes to minimize lock contention across different pairs.
 type DeliveryLoopDetector struct {
 	windowSize     time.Duration
 	maxChainLength int
@@ -64,7 +71,13 @@ type DeliveryLoopDetector struct {
 	doneCh  chan struct{}
 }
 
-// NewDeliveryLoopDetector returns a detector with windowSize TTL and maxChainLength (at least 1); call Stop to end its cleanup goroutine.
+// NewDeliveryLoopDetector creates a DeliveryLoopDetector with the given window
+// size and maximum chain length. windowSize is the TTL for tracked message
+// paths; maxChainLength is the maximum number of back-and-forth hops that
+// triggers detection (must be >= 1; values < 1 are treated as 1).
+//
+// A background goroutine runs periodic cleanup to evict expired entries.
+// Call Stop to release resources.
 func NewDeliveryLoopDetector(windowSize time.Duration, maxChainLength int) *DeliveryLoopDetector {
 	if maxChainLength < 1 {
 		maxChainLength = 1
@@ -107,7 +120,13 @@ func (d *DeliveryLoopDetector) Stop() {
 	}
 }
 
-// Check returns *DeliveryLoopError if messageGUID was recorded in the opposite direction within the window; it does not record.
+// Check inspects whether recording senderUUID -> recipientUUID for messageGUID
+// would constitute a loop (i.e. the same GUID was already recorded travelling
+// in the opposite direction within the window). Returns *DeliveryLoopError
+// when a loop is detected; nil otherwise.
+//
+// Check does NOT record the path — callers should call Record separately after
+// a successful check to keep the two operations independently testable.
 func (d *DeliveryLoopDetector) Check(_ context.Context, senderUUID, recipientUUID, messageGUID string) error {
 	key := pairKey(senderUUID, recipientUUID)
 	now := d.nowFn()
@@ -143,7 +162,10 @@ func (d *DeliveryLoopDetector) Check(_ context.Context, senderUUID, recipientUUI
 	return nil
 }
 
-// Record adds messageGUID to the sender-to-recipient entry, pruning expired entries first.
+// Record registers that senderUUID sent a message identified by messageGUID to
+// recipientUUID. Existing entries for the same direction are merged (the GUID
+// is added to the current live window entry). Expired entries are pruned before
+// adding the new record to bound memory usage.
 func (d *DeliveryLoopDetector) Record(_ context.Context, senderUUID, recipientUUID, messageGUID string) {
 	key := pairKey(senderUUID, recipientUUID)
 	now := d.nowFn()

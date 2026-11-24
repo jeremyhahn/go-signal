@@ -1,4 +1,17 @@
-// Package external implements Signal's ExternalServiceCredentialsGenerator: HMAC-signed `[identity:]timestamp:signature` credentials for external services.
+// Package external implements Signal-Server's ExternalServiceCredentialsGenerator
+// pattern — an HMAC-signed credential that proves the bearer presented
+// `identity` to the Signal server within a short window. Mirrors Java's
+// org.whispersystems.textsecuregcm.auth.ExternalServiceCredentialsGenerator.
+//
+// The generated token shape is `timestamp:signature` (or
+// `identity:timestamp:signature` when prependUsername is true). The
+// external service (TUS, Storage, SVR, …) validates by re-running the
+// HMAC over `identity:timestamp` and comparing.
+//
+// We only implement the production-relevant configurations: full-length
+// signatures, no derived usernames, no timestamp-as-username. Java
+// supports those modes via builder flags; if a future endpoint needs them
+// they can be added without breaking the existing surface.
 package external
 
 import (
@@ -13,7 +26,15 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
-// Credentials is the username and password pair; Password stays in protected memory, read with Reveal() and destroyed after the response.
+// Credentials is the token pair returned by Generator.Generate. Username
+// and Password follow Java's two-tuple naming so HTTP basic-auth wiring is
+// 1:1.
+//
+// Password is a bearer credential for an external service, so it is held in
+// protected memory between issuance and the point where a handler puts it on
+// the wire. Callers read it with Password.Reveal() at that boundary — an
+// unavailable credential must fail the request rather than travel as an empty
+// password — and Destroy the credential once the response is written.
 type Credentials struct {
 	Username string
 	Password *secrets.SecureString
@@ -31,7 +52,10 @@ func (c *Credentials) Destroy() {
 // secret shared with the external service. Clock is the wall-clock
 // source; nil defaults to time.Now.
 type GeneratorConfig struct {
-	// Key is the required HMAC-SHA256 secret; NewGenerator clones it into protected memory.
+	// Key is the HMAC-SHA256 shared secret. Required. It is held in
+	// protected memory and revealed only for the length of a single HMAC.
+	// NewGenerator clones it, so the caller keeps ownership of the value it
+	// passes in and may destroy that copy independently of the Generator.
 	Key *secrets.SecureString
 	// PrependUsername controls whether the password includes the
 	// identity as the first field (`identity:ts:sig`) or just
@@ -48,7 +72,15 @@ type Generator struct {
 	cfg GeneratorConfig
 }
 
-// NewGenerator returns a Generator owning a clone of cfg.Key, and validates the clone.
+// NewGenerator returns a Generator with cfg. The key is cloned into an
+// allocation the Generator owns; cfg.Key is left untouched.
+//
+// The clone is taken first and the clone is what gets validated. Checking
+// cfg.Key and then cloning it would be two separate reveals of a secret the
+// caller still owns and may destroy in between, so a shutdown overlapping a
+// startup could return a Generator that reported success and can never sign.
+// Validating the key this Generator actually kept makes the constructor's
+// verdict true of that key.
 func NewGenerator(cfg GeneratorConfig) (*Generator, error) {
 	// Presence and copy come from one snapshot; an allocation failure is an error, not a missing key.
 	key, configured, err := cfg.Key.CloneWithPresence()
@@ -83,7 +115,14 @@ func (g *Generator) Destroy() {
 	g.cfg.Key.Destroy()
 }
 
-// Generate returns a credential for identity whose password embeds the Unix time, in Java's layout.
+// Generate returns a fresh credential for identity. The username matches
+// identity verbatim; the password embeds the current timestamp (Unix
+// seconds) so the external service can window the credential.
+//
+// Java parity: produces the same `username` / `password` layout as
+// ExternalServiceCredentialsGenerator.generate when configured with
+// prependUsername=cfg.PrependUsername, truncateSignature=false,
+// shouldDeriveUsername=false, usernameIsTimestamp=false.
 func (g *Generator) Generate(identity string) (*Credentials, error) {
 	if identity == "" {
 		return nil, errors.New("external: identity is required")
@@ -133,7 +172,10 @@ func wipe(b []byte) {
 	}
 }
 
-// Validate checks creds was issued here and is within maxAge, returning its timestamp; the HMAC comparison is constant-time.
+// Validate verifies that creds was issued by this Generator and is not
+// older than maxAge. Returns the embedded timestamp on success so the
+// caller can apply additional age policy. The HMAC comparison is constant-
+// time. Mirrors Java validateAndGetTimestamp + isCredentialExpired.
 func (g *Generator) Validate(creds *Credentials, maxAge time.Duration) (time.Time, error) {
 	if creds == nil {
 		return time.Time{}, errors.New("external: nil credentials")

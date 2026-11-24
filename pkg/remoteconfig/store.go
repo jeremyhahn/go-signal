@@ -6,11 +6,17 @@ import (
 	"sync"
 )
 
-// Store persists dynamic configuration for /v2/config and admin writes.
+// Store persists dynamic configuration. Implementations are pluggable
+// across the supported backends (memory / postgres). The interface is
+// intentionally minimal — admin write operations live alongside reads so
+// the same store can back both the public /v2/config endpoint and the
+// internal admin tooling.
 type Store interface {
 	// GetAll returns every config row in deterministic order (by Name).
 	GetAll(ctx context.Context) ([]Config, error)
-	// Put inserts or replaces the row for cfg.Name; callers validate, the store only requires a name.
+	// Put inserts or replaces a row keyed by cfg.Name. Validation happens
+	// at the caller (REST admin handler); the store enforces only the
+	// non-empty-name invariant.
 	Put(ctx context.Context, cfg Config) error
 	// Delete removes a row by name. Idempotent.
 	Delete(ctx context.Context, name string) error
@@ -75,7 +81,9 @@ func cloneConfig(c Config) Config {
 	return c
 }
 
-// InvalidConfigError is a Config that fails validation; the admin handler returns 400.
+// InvalidConfigError indicates the caller supplied a Config that fails
+// validation (empty Name, out-of-range Percentage). Stores return it from
+// Put; the admin REST handler maps it to HTTP 400.
 type InvalidConfigError struct {
 	Reason string
 }

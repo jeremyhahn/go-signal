@@ -6,7 +6,9 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/calling"
 )
 
-// CallingService provides TURN relay and call-link credentials; CallSignalingService relays WebRTC signaling.
+// CallingService defines the TURN relay and call-link credential operations
+// exposed to protocol handlers. It is distinct from CallSignalingService,
+// which handles peer-to-peer WebRTC signaling relay.
 type CallingService interface {
 	// GetCallingRelays retrieves TURN credentials for call setup.
 	GetCallingRelays(ctx context.Context) (*calling.GetCallingRelaysResponse, error)

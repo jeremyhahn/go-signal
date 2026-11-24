@@ -37,7 +37,8 @@ type JSONSticker struct {
 	File string `json:"file"`
 	// Emoji is the suggested emoji shortcut. Optional.
 	Emoji string `json:"emoji,omitempty"`
-	// ContentType is the sticker's MIME type; empty is sniffed.
+	// ContentType is the MIME type of the sticker file. When empty
+	// the uploader sniffs it from the file's content / extension.
 	ContentType string `json:"contentType,omitempty"`
 }
 
@@ -62,7 +63,14 @@ type StickerFile struct {
 	Emoji       string
 }
 
-// LoadPack reads manifest.json and its images from a directory, a .zip, or a path ending in manifest.json; problems are *PackInvalidError.
+// LoadPack reads manifest.json + every referenced image file from path.
+// path may be:
+//   - a directory containing manifest.json + sticker images
+//   - a .zip archive containing the same layout
+//   - a file ending in `manifest.json` (uses the parent directory as root)
+//
+// Returns *PackInvalidError when the manifest is missing, malformed,
+// or references files that aren't present.
 func LoadPack(path string) (*LoadedPack, error) {
 	info, err := os.Stat(path)
 	if err != nil {

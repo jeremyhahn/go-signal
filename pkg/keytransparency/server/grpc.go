@@ -31,7 +31,11 @@ func NewGRPCServer(log Log, signer ed25519.PrivateKey) *GRPCServer {
 	return &GRPCServer{log: log, signer: signer}
 }
 
-// Distinguished returns the current TreeHead and, when present, the entry for the well-known distinguished key.
+// Distinguished implements the Distinguished RPC. The "distinguished"
+// key in KT is a well-known account (operator-chosen, or zero-bytes
+// for the MVP) clients use as a consistency anchor; we return the
+// current TreeHead and the entry for the distinguished key when
+// present.
 func (s *GRPCServer) Distinguished(_ context.Context, _ *ktpb.DistinguishedRequest) (*ktpb.DistinguishedResponse, error) {
 	head, err := s.currentTreeHead()
 	if err != nil {

@@ -42,7 +42,10 @@ func (b *DeviceBindings) AddDevice(uri string) error {
 	return b.client.AddDevice(ctx, uri)
 }
 
-// GenerateProvisioningURI returns a device-linking URI for a QR code, using an ephemeral key pair.
+// GenerateProvisioningURI generates a QR code URI for device linking.
+// The returned string can be encoded as a QR code for scanning by
+// the new device. The provisioning protocol uses an ephemeral key pair
+// for secure device linking.
 func (b *DeviceBindings) GenerateProvisioningURI() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

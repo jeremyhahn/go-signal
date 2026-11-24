@@ -12,7 +12,11 @@ import (
 	signal "github.com/jeremyhahn/go-signal/sdk/go"
 )
 
-// WebUIHandler serves the web UI's REST endpoints, doing Signal Protocol encryption server-side through the SDK.
+// WebUIHandler provides client-facing REST endpoints for the web UI.
+// These wrap the SDK client to provide high-level operations (send message,
+// list conversations, etc.) that the React WebAdapter calls. The browser
+// cannot perform Signal Protocol encryption directly, so these endpoints
+// handle encryption/decryption server-side via the SDK.
 type WebUIHandler struct {
 	client        *signal.Client
 	callSignaling service.CallSignalingService

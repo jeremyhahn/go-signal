@@ -87,7 +87,12 @@ func NewPushManager(cfg PushManagerConfig) *PushManager {
 	}
 }
 
-// Send routes by DeviceType, retrying *SendError transport failures with backoff up to RetryAttempts; rejections return immediately.
+// Send delivers a push notification by routing to the correct provider
+// based on the notification's DeviceType. Transient transport errors
+// (anything wrapped in *SendError where ctx is still valid) are retried
+// with exponential backoff up to RetryAttempts. Application-level
+// rejections (Accepted=false with an Unregistered/permanent reason) are
+// returned immediately — retrying them would just hammer the upstream.
 func (m *PushManager) Send(ctx context.Context, notification *PushNotification) (SendPushNotificationResult, error) {
 	if notification == nil {
 		return SendPushNotificationResult{}, nil

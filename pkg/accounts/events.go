@@ -6,7 +6,10 @@ import (
 	"sync/atomic"
 )
 
-// DirectoryEventKind classifies an account mutation; Created and Updated both mean upsert on the wire.
+// DirectoryEventKind classifies an account mutation for downstream
+// directory consumers. Created and Updated both map to "upsert this
+// row" on the wire; the distinction is kept here so future consumers
+// (e.g. push-notification fan-out) can differentiate.
 type DirectoryEventKind int
 
 const (
@@ -35,7 +38,20 @@ type DirectoryEvent struct {
 	Account *Account
 }
 
-// DirectoryEventBus is a concurrent in-process pub-sub for account mutations; it keeps no history, and Seq is monotonic so consumers can detect gaps.
+// DirectoryEventBus is an in-process publish-subscribe channel for
+// account mutations. It is safe for concurrent use by an unbounded
+// number of publishers and subscribers.
+//
+// The bus does NOT retain history. Subscribers are delivered every
+// event published after Subscribe returned; events published before
+// are not replayed. This is intentional — the directory protocol's
+// production pattern is "snapshot via ListAll, then live-tail" and
+// retention on the publisher would duplicate state that already
+// exists in the underlying store.
+//
+// Resume tokens carried in DirectoryEvent.Seq are still monotonic so
+// downstream consumers can detect gaps and either resync from the
+// snapshot or surface the inconsistency.
 type DirectoryEventBus struct {
 	nextSeq atomic.Uint64
 
@@ -67,7 +83,10 @@ type Subscription struct {
 // both. Buffered to the size passed to Subscribe.
 func (s *Subscription) Events() <-chan DirectoryEvent { return s.events }
 
-// Done closes when the subscription ends; check Overflowed to tell a slow-consumer detach from a clean close.
+// Done closes when the subscription terminates (Close called, the
+// bus detached the subscriber due to overflow, or the subscribing
+// context was canceled). Always check Overflowed afterwards to
+// distinguish slow-consumer overflow from clean shutdown.
 func (s *Subscription) Done() <-chan struct{} { return s.done }
 
 // Overflowed reports whether the subscription terminated because the
@@ -81,7 +100,17 @@ func (s *Subscription) Close() {
 	s.bus.detach(s)
 }
 
-// Subscribe registers a subscriber with bufSize > 0 and returns the bus sequence as the snapshot cursor; ctx cancellation closes it.
+// Subscribe registers a new subscriber with the given buffer size.
+// Returns the subscription and the bus's current sequence number at
+// registration time — callers should treat that value as the
+// "snapshot as-of" cursor when reconciling against a parallel
+// ListAll snapshot.
+//
+// bufSize must be > 0. A larger buffer tolerates slower consumers
+// at the cost of memory; a smaller buffer detaches faster under
+// load. Production deployments typically use 1024.
+//
+// The subscription is automatically closed when ctx is canceled.
 func (b *DirectoryEventBus) Subscribe(ctx context.Context, bufSize int) (*Subscription, uint64) {
 	if bufSize <= 0 {
 		bufSize = 1
@@ -126,7 +155,16 @@ func (b *DirectoryEventBus) detach(sub *Subscription) {
 // callers that want to capture "as-of" cursors without subscribing.
 func (b *DirectoryEventBus) LatestSeq() uint64 { return b.nextSeq.Load() }
 
-// Publish assigns the next sequence and fans out a shallow copy; subscribers with a full buffer are detached as Overflowed. account may be nil only for Deleted.
+// Publish assigns a fresh sequence number to event and fans it out
+// to every live subscriber. Subscribers whose buffer is full at
+// publish time are detached and marked Overflowed; this prevents one
+// slow consumer from blocking publishers.
+//
+// kind must be one of DirectoryEventCreated, DirectoryEventUpdated,
+// DirectoryEventDeleted. account may be nil for Deleted events; it
+// must be non-nil for the other two kinds and is shallow-copied
+// before fan-out so subsequent mutations on the caller's copy do
+// not race with subscribers.
 func (b *DirectoryEventBus) Publish(kind DirectoryEventKind, uuid string, account *Account) {
 	if uuid == "" {
 		return

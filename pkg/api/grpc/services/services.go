@@ -1,4 +1,14 @@
-// Package services implements the Signal gRPC services, each delegating to the pkg/service aggregate passed to its constructor.
+// Package services hosts the gRPC server-side implementations of every
+// Signal service.
+//
+// In Phase 1 each type embeds the generated Unimplemented<Name>Server, so
+// every RPC returns codes.Unimplemented cleanly. Phase 2 replaces method
+// bodies with real delegation to pkg/service interfaces, one service at
+// a time.
+//
+// Every service takes the pkg/service.Service aggregate (or an explicit
+// subset) in its constructor. This keeps wiring explicit — we never reach
+// into global state.
 package services
 
 import (
@@ -25,7 +35,10 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/service"
 )
 
-// Authenticated services: interceptors.AuthenticatedUnary puts the account on the context.
+// --- Authenticated services -----------------------------------------
+//
+// These services require a valid account on the request context, placed
+// there by interceptors.AuthenticatedUnary.
 
 // AccountService implements AccountsServer.
 type AccountService struct {
@@ -138,7 +151,12 @@ func NewPaymentsService() *PaymentsService {
 	return &PaymentsService{}
 }
 
-// Anonymous services: interceptors.AnonymousUnary rejects requests carrying credentials.
+// --- Anonymous services ---------------------------------------------
+//
+// These services accept requests without Basic credentials; the
+// interceptors.AnonymousUnary interceptor enforces the absence of
+// credentials so an attacker cannot slip an authenticated-only RPC into
+// an anonymous connection.
 
 // AccountsAnonymousService implements AccountsAnonymousServer.
 type AccountsAnonymousService struct {
@@ -162,7 +180,13 @@ func NewMessagesAnonymousService(svc *service.SignalService) *MessagesAnonymousS
 	return &MessagesAnonymousService{svc: svc}
 }
 
-// SendMultiRecipientMessage stores a Sealed Sender v2 payload once for all recipients, like PUT /v1/messages/multi_recipient; ephemeral is ignored.
+// SendMultiRecipientMessage delegates a SealedSender v2 multi-recipient
+// payload to the messages service. Mirrors the REST `PUT /v1/messages/
+// multi_recipient` endpoint with `Content-Type: application/vnd.signal-
+// messenger.mrm`. The shared payload is stored once in the MRM cache; per-
+// recipient envelopes reference it. The `urgent` flag is honored; the
+// `ephemeral` flag is currently ignored (parity gap with Java that requires
+// a separate ephemeral message path; tracked for a follow-up).
 func (s *MessagesAnonymousService) SendMultiRecipientMessage(
 	ctx context.Context,
 	req *messagespb.SendMultiRecipientMessageRequest,
@@ -254,7 +278,12 @@ func NewExternalServiceCredentialsAnonymousService(svc *service.SignalService) *
 	return &ExternalServiceCredentialsAnonymousService{svc: svc}
 }
 
-// External-infrastructure services: KeyTransparencyQueryService is a stub inside signald.
+// --- External-infrastructure services -------------------------------
+//
+// KeyTransparencyQueryService doesn't use the authenticated/anonymous
+// split. It is eventually extracted into its own binary in Phase 4.5;
+// here it lives inside signald as a stub. RegistrationService was
+// extracted to cmd/registration-service in Phase 4.1.
 
 // KeyTransparencyServiceImpl implements KeyTransparencyQueryServiceServer.
 type KeyTransparencyServiceImpl struct {

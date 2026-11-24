@@ -6,7 +6,16 @@ import (
 	"time"
 )
 
-// CachingResolver caches another resolver's results for a TTL, so kms:// rotations take effect without a restart; the wrapped resolver must be concurrency-safe.
+// CachingResolver wraps another SecretResolver and caches its
+// resolutions for a fixed TTL. After TTL expiry the next Resolve call
+// re-fetches from the underlying resolver — this is how
+// kms:// secrets pick up rotations: ops rotates the KMS-side key, the
+// cache TTL elapses, the chat-server re-fetches and the new material
+// goes live without a restart.
+//
+// One CachingResolver instance is shared across all callers; the
+// underlying resolver MUST be safe for concurrent use (every shipping
+// resolver is).
 type CachingResolver struct {
 	underlying SecretResolver
 	ttl        time.Duration
@@ -42,7 +51,17 @@ func NewCachingResolver(r SecretResolver, ttl time.Duration) *CachingResolver {
 // Scheme proxies to the underlying resolver.
 func (c *CachingResolver) Scheme() string { return c.underlying.Scheme() }
 
-// Resolve returns a fresh copy of the cached secret, re-fetching after the TTL; the caller destroys its copy, the cache owns the master.
+// Resolve returns a cached value when the TTL has not elapsed and
+// otherwise delegates to the underlying resolver. The freshly fetched
+// secret replaces the cached one; the previous SecureString is
+// destroyed so its bytes don't sit in memory past the rotation point.
+//
+// Each call returns a fresh, independent copy of the cached secret. The cache
+// retains sole ownership of the master entry (destroyed only on eviction,
+// replacement, or Invalidate); callers own and must Destroy the copy they
+// receive. Returning the shared instance would let the first caller's
+// Destroy() poison the cache, after which later resolutions of the same URI
+// would silently yield an empty secret.
 func (c *CachingResolver) Resolve(ctx context.Context, uri string) (*SecureString, error) {
 	c.mu.Lock()
 	if entry, ok := c.entries[uri]; ok && c.clock().Before(entry.expiresAt) {
@@ -78,7 +97,10 @@ func (c *CachingResolver) Resolve(ctx context.Context, uri string) (*SecureStrin
 	return dup, nil
 }
 
-// Invalidate forces the next Resolve to re-fetch.
+// Invalidate forces the next Resolve to re-fetch. Production
+// deployments tie this to an out-of-band signal (signal HUP, admin
+// endpoint, etc.) so an emergency rotation doesn't need to wait for
+// the TTL.
 func (c *CachingResolver) Invalidate(uri string) {
 	c.mu.Lock()
 	if entry, ok := c.entries[uri]; ok {

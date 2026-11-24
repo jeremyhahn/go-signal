@@ -13,7 +13,10 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// TLSConfig is the inter-service TLS policy: cert paths for mTLS, or Insecure for development.
+// TLSConfig captures the inter-service TLS policy. Production
+// deployments populate the cert paths so mTLS is enforced; dev /
+// docker-compose deployments flip Insecure to true. Pure pass-through
+// helpers below return *tls.Config or grpc.DialOption ready to use.
 type TLSConfig struct {
 	// CAFile is the PEM-encoded root CA to validate the server with.
 	// When empty the system root store is used.

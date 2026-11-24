@@ -13,7 +13,8 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
-// TurnCredentialProvider retrieves TURN relay credentials.
+// TurnCredentialProvider abstracts retrieval of TURN relay credentials. This
+// interface enables testability by allowing mock implementations.
 type TurnCredentialProvider interface {
 	RetrieveCredentials(ctx context.Context) (*TurnToken, error)
 }
@@ -92,7 +93,8 @@ func NewCloudflareTurnProvider(cfg CloudflareTurnProviderConfig) (*CloudflareTur
 	}, nil
 }
 
-// Destroy wipes the API token from protected memory.
+// Destroy wipes the API token from protected memory. It should be called when
+// the provider is no longer needed.
 func (p *CloudflareTurnProvider) Destroy() {
 	if p.apiToken != nil {
 		p.apiToken.Destroy()
@@ -100,7 +102,10 @@ func (p *CloudflareTurnProvider) Destroy() {
 	}
 }
 
-// RetrieveCredentials fetches TURN credentials from Cloudflare behind a circuit breaker and resolves the hostname into urlsWithIps.
+// RetrieveCredentials fetches TURN credentials from the Cloudflare API, resolves
+// the configured hostname to IP addresses, and formats urlsWithIps patterns.
+// The Cloudflare HTTP call is wrapped in a CircuitBreaker so a downstream
+// outage short-circuits subsequent calls instead of saturating goroutines.
 func (p *CloudflareTurnProvider) RetrieveCredentials(ctx context.Context) (*TurnToken, error) {
 	// Resolve hostname to IP addresses for urlsWithIps.
 	composedURLs, err := p.resolveHostnameURLs(ctx)
@@ -193,7 +198,8 @@ func (p *CloudflareTurnProvider) resolveHostnameURLs(ctx context.Context) ([]str
 	return composed, nil
 }
 
-// StaticTurnProvider returns static development TURN credentials.
+// StaticTurnProvider returns static TURN credentials for development use.
+// It does not contact any external service.
 type StaticTurnProvider struct {
 	URLs     []string
 	Hostname string

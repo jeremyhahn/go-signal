@@ -7,7 +7,10 @@ import (
 	qrdbkv "github.com/jeremyhahn/go-qrdb/pkg/kvstore"
 )
 
-// KVStore is the subset of qrdb's kvstore.KVStore the domain stores use.
+// KVStore is the subset of qrdb's kvstore.KVStore that go-signal's domain
+// stores rely on. Narrowing the dependency to these methods keeps the API
+// surface testable and avoids coupling to qrdb's index-registration APIs that
+// are not needed for current lookup patterns.
 type KVStore interface {
 	Put(ctx context.Context, key string, value []byte) error
 	Get(ctx context.Context, key string) ([]byte, error)

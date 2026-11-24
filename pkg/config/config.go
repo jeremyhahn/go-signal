@@ -1,6 +1,29 @@
-// Package config loads and validates the server configuration: flag > environment > file > defaults.
-// Environment names are SIGNAL_ plus the upper-cased key path with "." as "_" (keyTransparency.grpcListen is SIGNAL_KEYTRANSPARENCY_GRPCLISTEN); empty is unset.
-// Flag names are the key path in kebab case (--key-transparency-grpc-listen).
+// Package config provides configuration loading and validation for the Signal server.
+//
+// # Precedence
+//
+// Every bind address resolves through four layers, highest first:
+//
+//	flag > environment > config file > defaults
+//
+// LoadWithFlags fills the defaults layer (defaults.go), decodes the YAML
+// file over it, overlays the environment through viper, and finally
+// applies each flag the operator actually set (pflag's Changed), so a
+// flag's zero value never masks a lower layer.
+//
+// # Environment variable names
+//
+// Env names are derived mechanically from the YAML key path: the prefix
+// SIGNAL_, then the key upper-cased with each "." replaced by "_". The
+// camelCase of a key is not split, so keyTransparency.grpcListen is
+// SIGNAL_KEYTRANSPARENCY_GRPCLISTEN and health.listen is
+// SIGNAL_HEALTH_LISTEN. An empty variable is treated as unset.
+//
+// # Flag names
+//
+// Flag names are the key path in kebab case, with "." and each camelCase
+// boundary becoming "-": keyTransparency.grpcListen is
+// --key-transparency-grpc-listen.
 package config
 
 import (
@@ -20,7 +43,12 @@ import (
 
 // Config is the top-level server configuration.
 type Config struct {
-	// Mode "production" refuses to boot with development settings (see validateProduction); anything else is development.
+	// Mode selects the deployment profile. "production" activates a
+	// fail-closed security gate (see validateProduction) that refuses to
+	// boot with development/test settings (stub verification, fixedCode,
+	// test captcha, stub ZK credentials, non-durable storage, plaintext
+	// transports, wildcard CORS, fail-open abuse checks). Any other value
+	// (including the empty default) is treated as development.
 	Mode              string                  `yaml:"mode"`
 	Server            ServerConfig            `yaml:"server"`
 	Storage           StorageConfig           `yaml:"storage"`
@@ -49,7 +77,10 @@ type Config struct {
 	Health            HealthConfig            `yaml:"health"`
 }
 
-// KeyTransparencyConfig configures the key-transparency binary and signald's gRPC client to it.
+// KeyTransparencyConfig configures the standalone key-transparency
+// binary and signald's chat-server-to-KT gRPC client. signald never
+// reads/writes the log directly; mobile clients hit signald's REST
+// endpoints which proxy to the remote KT service.
 type KeyTransparencyConfig struct {
 	// GRPCListen is the host:port the binary binds the
 	// KeyTransparencyQueryService gRPC listener to. Defaults to
@@ -67,7 +98,11 @@ type KeyTransparencyConfig struct {
 	RemoteInsecure bool `yaml:"remoteInsecure"`
 }
 
-// StorageServiceConfig configures the storage-service binary and signald's admin DELETE client.
+// StorageServiceConfig configures the standalone storage-service binary
+// and signald-side wiring. Mirrors svr2 / cdsi: HMAC credentials are
+// the shared-secret hinge, mobile clients connect directly to storage-
+// service, and signald only calls the admin DELETE endpoint on
+// account deletion.
 type StorageServiceConfig struct {
 	// HTTPListen is the host:port the binary binds to. Defaults to
 	// DefaultStorageServiceHTTPListen.
@@ -78,7 +113,10 @@ type StorageServiceConfig struct {
 	// memory and wiped by Config.Destroy.
 	SharedSecret *secrets.SecureString `yaml:"sharedSecret"`
 
-	// RemoteURL is the storage-service admin endpoint for account deletion; empty disables it.
+	// RemoteURL is the storage-service admin endpoint signald calls
+	// for DELETE-on-account-deletion (matches Java's
+	// SecureStorageClient deleteStoredData path). Empty disables the
+	// client (monolithic deployments).
 	RemoteURL string `yaml:"remoteUrl"`
 
 	// RemoteInsecure permits a plaintext HTTP channel from signald
@@ -87,7 +125,11 @@ type StorageServiceConfig struct {
 	RemoteInsecure bool `yaml:"remoteInsecure"`
 }
 
-// CDSIConfig configures the cdsi binary; signald only serves the DirectoryService stream and /v2/directory/auth.
+// CDSIConfig configures the standalone cdsi binary and (when needed)
+// signald-side wiring. The chat-server doesn't have a CDSI HTTP
+// client (mobile clients connect to cdsi directly); the chat-server
+// only exposes the DirectoryService gRPC stream cdsi consumes plus
+// /v2/directory/auth HMAC credential issuance.
 type CDSIConfig struct {
 	// WSListen is the host:port the cdsi binary binds the client-
 	// facing WebSocket listener to. Defaults to DefaultCDSIWSListen.
@@ -98,7 +140,11 @@ type CDSIConfig struct {
 	// "software" (default) or "tpm".
 	Attestation string `yaml:"attestation"`
 
-	// SharedSecret is the HMAC secret shared with cdsi; clients present HMAC(sharedSecret, accountUUID). Required; wiped by Config.Destroy.
+	// SharedSecret is the HMAC secret signald shares with cdsi for
+	// credential derivation. Mobile clients present
+	// HMAC(sharedSecret, accountUUID) as the Basic auth password on
+	// WebSocket upgrade. Required. Held in protected memory and wiped
+	// by Config.Destroy.
 	SharedSecret *secrets.SecureString `yaml:"sharedSecret"`
 
 	// SignaldDirectoryAddr is the gRPC endpoint cdsi calls at startup
@@ -106,11 +152,17 @@ type CDSIConfig struct {
 	// DirectoryService. Required.
 	SignaldDirectoryAddr string `yaml:"signaldDirectoryAddr"`
 
-	// SignaldDirectoryInsecure allows plaintext gRPC to signald, for development only; production uses mTLS.
+	// SignaldDirectoryInsecure permits a plaintext gRPC channel to
+	// the signald DirectoryService. Required for development /
+	// docker-compose; production deployments must leave this false
+	// and supply mTLS.
 	SignaldDirectoryInsecure bool `yaml:"signaldDirectoryInsecure"`
 }
 
-// SVR2Config configures the svr2 binary and signald's svr2 admin client.
+// SVR2Config configures the standalone svr2 binary and signald's
+// chat-server-to-svr2 admin client. The binary reads HTTPListen +
+// WSListen + Attestation + SharedSecret; signald only reads RemoteURL
+// + SharedSecret to wire its HTTP DELETE admin client.
 type SVR2Config struct {
 	// HTTPListen is the host:port the binary binds the admin HTTP
 	// listener to (handles DELETE /v1/delete). Defaults to
@@ -122,17 +174,34 @@ type SVR2Config struct {
 	// WebSocket). Defaults to DefaultSVR2WSListen.
 	WSListen string `yaml:"wsListen"`
 
-	// Attestation is "software" (default, ed25519) or "tpm", which needs an injected TPM; standalone binaries use "software".
+	// Attestation selects the attestation flavour:
+	//   - "software" (default): ed25519 deployment-cert signing
+	//   - "tpm": TPM 2.0 (requires the binary to be embedded in a
+	//     host application that injects a TPM via attestation.NewTPM —
+	//     go-signal does not bind a TPM transport itself; standalone
+	//     cmd/svr2 + cmd/cdsi runs must use "software")
 	Attestation string `yaml:"attestation"`
 
-	// SharedSecret is the HMAC secret for SVR2 client credentials; required when Attestation is set; wiped by Config.Destroy.
+	// SharedSecret is the HMAC secret the chat-server uses to sign
+	// SVR2 client credentials. svr2 validates inbound credentials
+	// against the same secret. Required when Attestation != "" so
+	// the binary knows which keyspace to trust. Held in protected
+	// memory and wiped by Config.Destroy.
 	SharedSecret *secrets.SecureString `yaml:"sharedSecret"`
 
-	// RemoteURL is the svr2 admin endpoint for account deletion; empty disables it.
+	// RemoteURL is the chat-server-side admin endpoint used by
+	// signald's SecureValueRecoveryClient for DELETE-on-account
+	// -deletion. Empty disables the call entirely (development
+	// monolith builds with no separate svr2 binary).
 	RemoteURL string `yaml:"remoteUrl"`
 }
 
-// RemoteConfigBlock configures feature flags; Defaults are upserted on boot into the store of cfg.Storage.Backend, which admin writes also use.
+// RemoteConfigBlock configures the dynamic feature-flag subsystem. The
+// Defaults list is upserted into the configured remote-config store at
+// boot. The store backend follows cfg.Storage.Backend — postgres uses
+// the remote_config table, file/qrdb use a KV-backed store, memory
+// mode stays in-process. Admin REST writes go through the same store,
+// so live edits persist without a restart.
 type RemoteConfigBlock struct {
 	// Defaults is the list of feature flags loaded into the store at
 	// startup.
@@ -154,7 +223,11 @@ type RemoteConfigEntry struct {
 	UUIDs        []string `yaml:"uuids"`
 }
 
-// BackupsConfig controls the backup subsystem, off by default; metadata uses Storage.Backend and blobs their own store.
+// BackupsConfig controls the message-archive (backup) subsystem. Disabled
+// by default; signald only constructs the backups stack when Enabled is
+// true. The metadata store reuses Storage.Backend (memory/qrdb/postgres);
+// the blob store is configured separately because production blob storage
+// is typically S3 / GCS, not the same engine that holds the metadata.
 type BackupsConfig struct {
 	// Enabled gates construction of the entire backups subsystem.
 	Enabled bool `yaml:"enabled"`
@@ -181,7 +254,10 @@ type BackupsBlobConfig struct {
 	CDNNumber int `yaml:"cdnNumber"`
 }
 
-// FrontendConfig serves the embedded SPA at / with client-side routing fallback when Enabled.
+// FrontendConfig controls whether the embedded React SPA is served by the
+// HTTP server. When Enabled is true, the server registers a catch-all handler
+// that serves the compiled Vite output at the root path (/), with SPA
+// fallback routing so that the web client's client-side router works correctly.
 type FrontendConfig struct {
 	// Enabled controls whether the embedded web UI is served. Defaults to
 	// false so that existing deployments that run the server as a pure API
@@ -191,7 +267,11 @@ type FrontendConfig struct {
 
 // ServerConfig holds HTTP/gRPC server settings.
 type ServerConfig struct {
-	// HTTPListen and GRPCListen are signald's listen addresses; empty disables a listener. Legacy Host/HTTPPort/GRPCPort fill them when unset.
+	// HTTPListen and GRPCListen are the host:port signald binds its REST and
+	// gRPC listeners to. Empty disables the listener. When empty after the
+	// file, environment and flag layers, the legacy Host/HTTPPort/GRPCPort
+	// keys are folded in (see resolveServerListeners), so Load always
+	// returns the resolved address here.
 	HTTPListen string `yaml:"httpListen"`
 	GRPCListen string `yaml:"grpcListen"`
 
@@ -236,7 +316,10 @@ type AttachmentConfig struct {
 	// (dev mode).
 	TusURI string `yaml:"tusUri"`
 
-	// TusSharedSecret is the HMAC key behind the Authorization: Basic <key>:<ts>:<hmac> header the TUS server checks.
+	// TusSharedSecret is the HMAC key the external TUS server validates
+	// against. The server emits an `Authorization: Basic <key>:<ts>:<hmac>`
+	// header; the TUS server replays the HMAC and rejects mismatches.
+	// Mirrors Java TusConfiguration.userAuthenticationTokenSharedSecret.
 	TusSharedSecret *secrets.SecureString `yaml:"tusSharedSecret"`
 }
 
@@ -271,7 +354,10 @@ type PostgresConfig struct {
 	ConnectTimeout  time.Duration `yaml:"connectTimeout"`
 }
 
-// DSN returns a libpq connection string: URL if set, else the fields; sslmode defaults to disable only when unset.
+// DSN builds a libpq-style connection string. URL wins if set; otherwise
+// the structured fields are assembled. SSLMode defaults to "disable" only
+// when both URL and SSLMode are unset — production deployments must set
+// it explicitly via either the URL query parameter or sslMode field.
 func (p PostgresConfig) DSN() string {
 	if p.URL != nil {
 		if u := p.URL.Plaintext(); u != "" {
@@ -348,7 +434,10 @@ type CDNConfig struct {
 	SecretKey *secrets.SecureString `yaml:"secretKey"`
 }
 
-// LimitsConfig holds one token bucket per endpoint category; zero fields use limits.DefaultConfig.
+// LimitsConfig holds rate limiting settings for all Signal endpoint
+// categories. Each field maps to a distinct token-bucket limiter in the
+// limits.Registry. Zero-valued fields cause the corresponding limiter to fall
+// back to the Signal-Server production defaults defined in limits.DefaultConfig.
 type LimitsConfig struct {
 	// Registration: rate limit for account registration endpoints (key: remote IP).
 	Registration RateLimitConfig `yaml:"registration"`
@@ -384,7 +473,10 @@ type LimitsConfig struct {
 	InboundMessageBytes RateLimitConfig `yaml:"inboundMessageBytes"`
 }
 
-// RateLimitConfig is a token bucket: BucketSize tokens refilled at LeakRatePerMin.
+// RateLimitConfig holds a single token-bucket rate limit configuration.
+// BucketSize is the maximum number of tokens. LeakRatePerMin is the number
+// of tokens refilled per minute; it is converted to a per-second RefillRate
+// when building the limits.Registry.
 type RateLimitConfig struct {
 	BucketSize     int `yaml:"bucketSize"`
 	LeakRatePerMin int `yaml:"leakRatePerMin"`
@@ -467,12 +559,23 @@ type DirectoryConfig struct {
 // destroyConfig is Config.Destroy, a variable so tests can observe the failed-load cleanup.
 var destroyConfig = (*Config).Destroy
 
-// Load reads and parses a YAML configuration file; a failed load wipes the secrets it already sealed.
+// Load reads and parses a YAML configuration file.
+//
+// A load that fails wipes whatever it had already sealed. yaml.v3 populates
+// field by field and reports type errors only at the end, so a Config that
+// failed to decode — or that decoded and then failed Validate — can already
+// own protected allocations. Those never reach the caller, so the caller can
+// never wipe them; without this they would stay resident for the life of the
+// process. That matters most where a failed load is not immediately followed
+// by exit: an in-process reload, or a supervisor retrying a bad file.
 func Load(path string) (*Config, error) {
 	return LoadWithFlags(path, nil)
 }
 
-// LoadWithFlags is Load with the address flags the operator set applied last; nil flags applies none.
+// LoadWithFlags is Load with the flag layer on top: after defaults, file
+// and environment are resolved, each address flag registered on flags (see
+// AddAddressFlags) that the operator set overrides its key. A nil flags
+// applies no flag layer.
 func LoadWithFlags(path string, flags *pflag.FlagSet) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -582,7 +685,9 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// IsProduction reports whether Mode is "production", case-insensitively.
+// IsProduction reports whether the deployment profile is "production".
+// The comparison is case-insensitive so "Production"/"PRODUCTION" also
+// activate the gate.
 func (c *Config) IsProduction() bool {
 	return strings.EqualFold(strings.TrimSpace(c.Mode), "production")
 }

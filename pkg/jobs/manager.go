@@ -11,7 +11,13 @@ import (
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
-// Handler runs a job's payload; an error triggers the Store's retry and dead-letter handling. Delivery is at least once, so handlers must be idempotent.
+// Handler executes the payload of a scheduled job. Returning a
+// non-nil error triggers the Store's MarkFailed retry/dead-letter
+// machinery. nil returns trigger MarkDone.
+//
+// Handlers must be safe to re-run because the at-least-once delivery
+// model means a crash between handler return and Store mutation
+// re-delivers the job on the next tick.
 type Handler func(ctx context.Context, job *Job) error
 
 // DefaultStaleClaimTimeout is the threshold past which a Running
@@ -19,7 +25,12 @@ type Handler func(ctx context.Context, job *Job) error
 // comfortably longer than any legitimate handler runtime.
 const DefaultStaleClaimTimeout = 5 * time.Minute
 
-// Manager dispatches due jobs by Type to registered handlers, e.g. mgr.Register("send-wakeup-push", h); mgr.RunOnce(ctx, time.Now(), 100).
+// Manager dispatches scheduled jobs by Type to registered handlers.
+// Typical lifecycle:
+//
+//	mgr := jobs.NewManager(store, slog.Default())
+//	mgr.Register("send-wakeup-push", sendWakeupHandler)
+//	mgr.RunOnce(ctx, time.Now(), 100) // worker calls this on a cron
 type Manager struct {
 	store        Store
 	logger       *slog.Logger
@@ -58,7 +69,10 @@ func (m *Manager) SetBackoff(d time.Duration) { m.backoff = d }
 // SetBatchSize overrides the per-tick claim limit. Default is 100.
 func (m *Manager) SetBatchSize(n int) { m.maxBatch = n }
 
-// SetStaleClaimTimeout sets how long a Running job may run before RunOnce requeues it (default DefaultStaleClaimTimeout).
+// SetStaleClaimTimeout overrides the threshold used by RunOnce's
+// recovery sweep. Default is DefaultStaleClaimTimeout (5 minutes).
+// Operators with handlers that legitimately exceed 5m must raise
+// this so live work isn't double-dispatched.
 func (m *Manager) SetStaleClaimTimeout(d time.Duration) {
 	if d > 0 {
 		m.staleTimeout = d
@@ -93,7 +107,15 @@ func (m *Manager) Enqueue(ctx context.Context, job *Job) error {
 	return m.store.Enqueue(ctx, job)
 }
 
-// RunOnce requeues stale Running jobs, then claims and dispatches up to BatchSize due jobs; it returns the number dispatched.
+// RunOnce sweeps stale Running rows back to Pending, claims up to
+// BatchSize due jobs, and dispatches each. The scheduled-jobs
+// worker calls this on every continuous tick. Returns (processed,
+// error). processed counts both successful and failed dispatches.
+//
+// The recovery sweep at the head of each tick is what makes
+// at-least-once delivery survive process crashes: any row stranded
+// in Running because its worker died (or was SIGKILLed) gets
+// re-queued for the next claim.
 func (m *Manager) RunOnce(ctx context.Context, now time.Time) (int, error) {
 	if recovered, err := m.store.RecoverStale(ctx, now.Add(-m.staleTimeout)); err != nil {
 		m.logger.WarnContext(ctx, "scheduled jobs: stale recovery failed",

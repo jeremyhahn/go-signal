@@ -83,7 +83,10 @@ func (s *KVPreKeyStore) StoreSignedPreKey(ctx context.Context, uuid string, devi
 	return s.kv.Put(ctx, key, data)
 }
 
-// TakeEC removes and returns one EC pre-key with DeleteIfPresent, so no key goes to two callers.
+// TakeEC removes and returns one EC pre-key for a device. The pre-key is
+// claimed via an atomic DeleteIfPresent so a one-time pre-key is never handed
+// to two concurrent callers (a forward-secrecy break). If another caller wins
+// the race for a candidate key, the next candidate is tried.
 func (s *KVPreKeyStore) TakeEC(ctx context.Context, uuid string, deviceID uint64) (*PreKey, error) {
 	did := strconv.FormatUint(deviceID, 10)
 	prefix := kvECPrefix + uuid + "/" + did + "/"

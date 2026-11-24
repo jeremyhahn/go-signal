@@ -39,13 +39,23 @@ type Config struct {
 // Enabled reports whether the gRPC listener should be started.
 func (c Config) Enabled() bool { return c.Listen != "" }
 
-// Server is the gRPC server: one *grpc.Server with authenticated and anonymous interceptors and every service registered.
+// Server is the go-signal gRPC server. It owns a *grpc.Server configured
+// with two interceptor flavours (authenticated + anonymous) and all 16
+// service registrations.
+//
+// Today most service methods return codes.Unimplemented; as Phase 2 lands
+// each service's methods are implemented by replacing the Unimplemented
+// embed in pkg/api/grpc/services with real logic.
 type Server struct {
 	cfg Config
 	s   *grpc.Server
 }
 
-// New constructs a Server; accounts resolves Basic credentials and directoryOpts go to dirsvc.NewServer (WithEventSource enables live Subscribe).
+// New constructs a Server. accounts is used by the authenticated
+// interceptor to resolve Basic credentials. svc is passed to every
+// service registration so handlers can reach storage once implemented.
+// directoryOpts are forwarded to dirsvc.NewServer — pass
+// dirsvc.WithEventSource(...) to activate live Subscribe replication.
 func New(cfg Config, am *accounts.AccountsManager, svc *service.SignalService, directorySource dirsvc.AccountSource, directoryOpts ...dirsvc.ServerOption) *Server {
 	authInterceptor := interceptors.AuthenticatedUnary(am)
 	anonInterceptor := interceptors.AnonymousUnary()

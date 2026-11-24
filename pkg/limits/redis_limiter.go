@@ -11,7 +11,19 @@ import (
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
-// RedisTokenBucketLimiter keeps token buckets in a cache.Client shared by all replicas, updated atomically by a Lua script.
+// RedisTokenBucketLimiter is a token-bucket limiter whose state lives
+// in Redis (or any pkg/cache.Client backend). Unlike
+// TokenBucketLimiter — which holds buckets in a process-local sync.Map
+// — this implementation shares the bucket across every signald
+// replica so a request bouncing across instances still consumes from
+// the same allowance. Java's reference rate-limiter uses the same
+// Lua-script atomic-decrement pattern.
+//
+// The Lua script is the only place the state machine runs: it reads
+// the (tokens, lastRefill) tuple, advances tokens by elapsed-time *
+// refill-rate (clamped to BucketSize), decrements by n, and writes
+// back. The entire sequence is atomic on the Redis side; concurrent
+// callers from different replicas can't race.
 type RedisTokenBucketLimiter struct {
 	cfg    BucketConfig
 	cache  cache.Client

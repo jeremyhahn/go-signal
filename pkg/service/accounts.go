@@ -1,4 +1,7 @@
-// Package service is the layer between the protocol handlers (REST, gRPC) and the domain managers.
+// Package service provides the service layer abstraction that sits between
+// the protocol handlers (REST, gRPC) and the domain managers. Each service
+// interface expresses the operations a transport handler needs; concrete
+// implementations delegate to the underlying managers.
 package service
 
 import (
@@ -29,7 +32,9 @@ type AccountService interface {
 	// Delete removes an account and all associated data.
 	Delete(ctx context.Context, uuid string) error
 
-	// RecreatePreserving restores a deleted account exactly, to roll back a failed re-registration.
+	// RecreatePreserving re-creates a previously-deleted account exactly as
+	// it was, preserving CreatedAt, Version, and hashed device tokens. Used
+	// to roll back a failed re-registration.
 	RecreatePreserving(ctx context.Context, account *accounts.Account) error
 
 	// SetRegistrationLock hashes pin and stores it on the account.
@@ -63,7 +68,10 @@ type AccountService interface {
 	// GetDataReport returns a regulatory data summary for an account.
 	GetDataReport(ctx context.Context, uuid string) (*accounts.DataReport, error)
 
-	// ListAll streams every account to fn; an error from fn aborts.
+	// ListAll streams every account to fn. Workers (account-expiry,
+	// orphan-prekey GC, idle-device sweeps) consume this surface to
+	// implement bulk scans without leaking the underlying store
+	// interface. fn returning an error aborts iteration.
 	ListAll(ctx context.Context, fn func(*accounts.Account) error) error
 }
 

@@ -22,7 +22,11 @@ type parsedToken struct {
 	Provider string // "recaptcha" / "hcaptcha" / etc.
 	SiteKey  string // lower-cased
 	Action   Action // parsed enum
-	// Token is the single-use provider solution, held in protected memory and wiped by Destroy after the provider call.
+	// Token is the raw provider-issued solution — a single-use bearer
+	// value. The server's copy is held in protected memory and wiped by
+	// Destroy once the provider call returns; the caller's original input
+	// string is a Go string and cannot be wiped, so this bounds the
+	// server-side residency rather than eliminating it.
 	Token     *secrets.SecureString
 	IsShort   bool   // true when input used the "-short" provider suffix
 	RawAction string // original action slot (for metrics / error messages)
@@ -80,7 +84,13 @@ type ShortCodeExpander interface {
 	Expand(ctx context.Context, code string) (string, error)
 }
 
-// Checker parses a captcha submission, dispatches it to its provider and enforces the site-key and action allowlist; unknown providers are *UnknownProviderError.
+// Checker parses an incoming captcha submission, dispatches to the right
+// provider, and validates the site-key + action allowlist. It is the Go
+// analogue of Java CaptchaChecker.
+//
+// Providers is the lookup table from the leading `provider` slot to the
+// CaptchaVerifier responsible for that scheme. Unknown providers produce
+// *UnknownProviderError so the REST layer can return HTTP 400.
 type Checker struct {
 	Providers  map[string]CaptchaVerifier
 	ShortCodes ShortCodeExpander
@@ -101,7 +111,14 @@ func (a *Assessment) Accepted() bool {
 	return a != nil && a.Result != nil && a.Result.Success
 }
 
-// Verify checks a captcha for expectedAction (a different embedded action is rejected) and passes remoteIP to the provider.
+// Verify parses input, looks up the provider, runs site-key + action
+// validation, and delegates the cryptographic check to the provider's
+// CaptchaVerifier. Mirrors Java CaptchaChecker.verify.
+//
+//   - expectedAction is the action this call site requires. A token whose
+//     embedded action differs is rejected even when the provider would have
+//     accepted the underlying solution; this prevents replay across flows.
+//   - remoteIP is forwarded to the provider for fraud signals.
 func (c *Checker) Verify(ctx context.Context, expectedAction Action, input, remoteIP string) (*Assessment, error) {
 	parsed, err := parseToken(input)
 	if err != nil {

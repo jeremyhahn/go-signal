@@ -18,8 +18,39 @@ const redacted = "[REDACTED]"
 // sealSecret is the protected-memory allocator, a variable for fault injection; seals pass context.Background().
 var sealSecret = secure.NewSecret
 
-// SecureString holds a secret in the secure package's protected memory, with redacting String/MarshalJSON and YAML binding; call Destroy to wipe it.
-// Reveals may run concurrently; Destroy waits for them and later reveals fail. Pass by pointer, never copy.
+// SecureString holds sensitive string data in the shared protected-memory
+// abstraction (go-qrdb's secure package, re-exported by the go-xkms SDK as
+// github.com/jeremyhahn/go-xkms/sdk/go/secure). The value is sealed in an
+// enclave that is guarded against swapping and cross-process reads, and is
+// only materialized transiently by Plaintext/Bytes. Call Destroy when the
+// value is no longer needed to wipe and free the allocation.
+//
+// This type owns no protected-memory mechanics of its own: allocation,
+// locking, sealing and wiping all live in the upstream secure package. What
+// SecureString adds is the go-signal-specific surface — redaction on
+// String/MarshalJSON and YAML config binding — so it integrates transparently
+// with logging, JSON serialization, and YAML config loading.
+//
+// The String() method intentionally returns "[REDACTED]" to prevent
+// accidental exposure in structured log output. Use Plaintext() or
+// Bytes() to access the actual value.
+//
+// A SecureString is safe for concurrent use, and specifically for the pairing
+// that matters: reveals (Reveal, Plaintext, Bytes, WithBytes, IsDestroyed,
+// Clone) may overlap each other freely, while Destroy waits out the reveals
+// already in flight and every reveal after it fails closed. A long-lived HMAC
+// key can therefore be revealed on many request goroutines at once while a
+// shutdown path wipes it exactly once.
+//
+// The mutex guards this type's own pointer to the secret, which is what a
+// wipe mutates. The upstream secure.Secret documents Open-vs-Open and
+// Destroy-vs-Destroy but not Open-vs-Destroy, so an atomic on the handle
+// alone would stop future loads without bounding the lifetime of material a
+// reader has already obtained (security-review.md §7). Holding the read lock
+// across the whole reveal is what makes Destroy mean "no reader is looking".
+//
+// Because it carries a lock, a SecureString must be passed as a pointer and
+// never copied by value; go vet's copylocks check enforces this.
 type SecureString struct {
 	mu  sync.RWMutex
 	sec *secure.Secret
@@ -28,7 +59,16 @@ type SecureString struct {
 	configured bool
 }
 
-// NewSecureString seals a credential: empty is *EmptySecretError and allocation failure *SealError; optional values use NewOptionalSecureString.
+// NewSecureString seals value in protected memory. It is the constructor for
+// credential material: an empty value is rejected with *EmptySecretError and a
+// failure to obtain a protected allocation is reported as *SealError, so a
+// caller that cannot place a secret in protected memory fails closed instead
+// of continuing with an unset value. Configuration values whose absence is
+// legitimate use NewOptionalSecureString instead.
+//
+// The intermediate byte slice is consumed by the secure package, which wipes
+// it before returning, so plaintext lives in unprotected memory only for the
+// duration of the copy.
 func NewSecureString(value string) (*SecureString, error) {
 	if value == "" {
 		return nil, &EmptySecretError{}
@@ -46,7 +86,15 @@ func NewSecureString(value string) (*SecureString, error) {
 	return &SecureString{sec: sec, configured: true}, nil
 }
 
-// NewOptionalSecureString is NewSecureString where empty is legitimate and yields an unset SecureString; not for credentials.
+// NewOptionalSecureString is NewSecureString for values whose absence is
+// legitimate — an unset optional configuration field, an environment variable
+// deliberately exported empty. An empty value yields an unset SecureString
+// (Plaintext returns "", IsDestroyed reports true) rather than an error. Any
+// other failure is still reported, so this is never a fail-open path.
+//
+// Credential material must not use this constructor: an issued credential is
+// never legitimately empty, and NewSecureString's *EmptySecretError is what
+// keeps an empty password from reaching a client.
 func NewOptionalSecureString(value string) (*SecureString, error) {
 	if value == "" {
 		return &SecureString{}, nil
@@ -54,7 +102,10 @@ func NewOptionalSecureString(value string) (*SecureString, error) {
 	return NewSecureString(value)
 }
 
-// MustNewSecureString is NewOptionalSecureString that panics on failure, for tests and fixtures only.
+// MustNewSecureString is NewOptionalSecureString for call sites that cannot
+// act on a failure — tests and fixtures. It panics if the value cannot be
+// sealed. Production code paths must use NewSecureString or
+// NewOptionalSecureString and propagate the error.
 func MustNewSecureString(value string) *SecureString {
 	s, err := NewOptionalSecureString(value)
 	if err != nil {
@@ -63,12 +114,21 @@ func MustNewSecureString(value string) *SecureString {
 	return s
 }
 
-// String implements fmt.Stringer and always returns "[REDACTED]".
+// String implements fmt.Stringer and always returns "[REDACTED]" to prevent
+// accidental logging of sensitive values. Use Plaintext() to access the
+// underlying value.
 func (s *SecureString) String() string {
 	return redacted
 }
 
-// Reveal returns the value as a Go string, or *UnavailableSecretError when unset, destroyed or unopenable; use it wherever a secret goes on the wire.
+// Reveal opens the enclave, copies the bytes into a regular Go string, and
+// destroys the temporary protected buffer immediately. An unset, destroyed or
+// unopenable secret is reported as *UnavailableSecretError.
+//
+// Every boundary that puts a secret on the wire — a credential a client is
+// the bearer of, an upstream Authorization header — must use Reveal, so that
+// a secret which is not available fails the operation instead of being
+// serialized as an empty value the peer would treat as valid.
 func (s *SecureString) Reveal() (string, error) {
 	if s == nil {
 		return "", &UnavailableSecretError{}
@@ -93,7 +153,10 @@ func (s *SecureString) Reveal() (string, error) {
 	return value, nil
 }
 
-// Plaintext is Reveal returning "" instead of an error, for optional fields; credential boundaries use Reveal.
+// Plaintext is Reveal for call sites that already treat an absent secret as
+// "not configured" — an optional config field, a presence check. It returns
+// an empty string where Reveal returns an error. Credential boundaries must
+// use Reveal instead.
 func (s *SecureString) Plaintext() string {
 	value, err := s.Reveal()
 	if err != nil {
@@ -102,7 +165,10 @@ func (s *SecureString) Plaintext() string {
 	return value
 }
 
-// Bytes returns a heap copy the caller should zero, or nil when unset or destroyed.
+// Bytes opens the enclave and returns a copy of the raw bytes.
+// The returned slice is a plain heap allocation — callers should zero it
+// when done. Returns nil if the SecureString has been destroyed or was
+// never set.
 func (s *SecureString) Bytes() []byte {
 	if s == nil {
 		return nil
@@ -124,7 +190,18 @@ func (s *SecureString) Bytes() []byte {
 	return out
 }
 
-// IsAbsent reports whether no value was ever held; unlike IsDestroyed it is false for a configured secret that cannot be opened.
+// IsAbsent reports whether this SecureString never held a value — a nil
+// receiver, or one built by NewOptionalSecureString from an empty string.
+//
+// It is deliberately narrower than IsDestroyed, which conflates three states:
+// never set, destroyed, and configured-but-unopenable. Only the first of
+// those means "not configured", and only the first may select a legacy or
+// stub mode. Branching on IsDestroyed for that decision installs a stub when
+// a real, configured key merely failed to open, which is a fail-open.
+//
+// Presence checks that simply want "is there a usable value here" should keep
+// using IsDestroyed; this exists for the call sites where the wrong answer
+// silently weakens the deployment.
 func (s *SecureString) IsAbsent() bool {
 	if s == nil {
 		return true
@@ -173,7 +250,11 @@ func (s *SecureString) Destroy() {
 	s.sec = nil
 }
 
-// MarshalJSON always emits "[REDACTED]"; handlers that send the value read it explicitly.
+// MarshalJSON implements encoding/json.Marshaler and always serializes as
+// the JSON string "[REDACTED]" to prevent secret exposure in API responses
+// or debug output. Handlers that must put the value on the wire — the
+// external-service credentials clients are issued, for example — read it
+// explicitly with Plaintext() at the response boundary.
 func (s *SecureString) MarshalJSON() ([]byte, error) {
 	return json.Marshal(redacted)
 }

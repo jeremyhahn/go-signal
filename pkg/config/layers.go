@@ -62,7 +62,11 @@ func applyEnv(c *Config) {
 	}
 }
 
-// AddAddressFlags registers one flag per address key on fs; a non-address key panics.
+// AddAddressFlags registers one string flag per key on fs, named by
+// FlagName. Each flag's displayed default is the defaults-layer value; it
+// only takes effect when the operator sets it (see LoadWithFlags). Passing
+// a key that is not an address key panics, as registering a duplicate flag
+// does in pflag: both are programming errors caught at start-up.
 func AddAddressFlags(fs *pflag.FlagSet, keys ...AddressKey) {
 	for _, key := range keys {
 		d, ok := lookupAddress(key)

@@ -11,7 +11,14 @@ import (
 	libsignalkdf "github.com/jeremyhahn/go-libsignal/pkg/kdf"
 )
 
-// SaltedTokenHash is a V2 hash ("2." plus 64 hex characters) with a 32-hex-character salt; V1 handling is described on Verify.
+// SaltedTokenHash mirrors Java Signal-Server's
+// org.whispersystems.textsecuregcm.auth.SaltedTokenHash record. The Hash field
+// always carries the V2 prefix "2." followed by 64 lowercase hex characters
+// (32 derived bytes); the Salt is 32 lowercase hex characters (16 random bytes).
+//
+// V1 was a single SHA1 of (salt || token); we reject it on read for parity
+// with current Java which still verifies V1 but never produces it. See
+// `Verify` for the V1-acceptance behavior.
 type SaltedTokenHash struct {
 	Hash string
 	Salt string
@@ -36,7 +43,12 @@ const (
 	saltByteLen = 16
 )
 
-// GenerateSaltedTokenHash returns a V2 hash of token (see TokenFromBytes); it errors only if the random source fails.
+// GenerateSaltedTokenHash returns a fresh V2 SaltedTokenHash for the given
+// token. The token is supplied as a string mirroring Java's API (callers
+// typically pass `hex.EncodeToString(passwordBytes)`); use TokenFromBytes to
+// build that hex string with byte-equivalent semantics.
+//
+// Returns an error only if the system random source fails.
 func GenerateSaltedTokenHash(token string) (*SaltedTokenHash, error) {
 	saltBytes := make([]byte, saltByteLen)
 	if _, err := rand.Read(saltBytes); err != nil {
@@ -50,7 +62,10 @@ func GenerateSaltedTokenHash(token string) (*SaltedTokenHash, error) {
 	return &SaltedTokenHash{Hash: hash, Salt: salt}, nil
 }
 
-// TokenFromBytes returns the recovery password as lowercase hex.
+// TokenFromBytes converts a raw byte slice (the recovery password) into the
+// canonical Java token representation: lowercase hex, no separators. Mirrors
+// Java's `HexFormat.of().formatHex(bytes)` call inside
+// RegistrationRecoveryPasswordsManager.
 func TokenFromBytes(b []byte) string {
 	return hex.EncodeToString(b)
 }

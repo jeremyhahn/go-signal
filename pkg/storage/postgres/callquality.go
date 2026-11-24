@@ -13,7 +13,15 @@ import (
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
-// CallQualitySurveyPublisher implements calling.SurveyPublisher on the call_quality_surveys table; duplicate response_ids are ignored.
+// CallQualitySurveyPublisher persists call-quality survey rows to the
+// Postgres `call_quality_surveys` table. Mirrors Java Signal-Server's
+// behavior: call-quality is the one table that lives in Postgres even when
+// the rest of the deployment uses DynamoDB, because the analytics pipeline
+// reads it directly via SQL.
+//
+// Implements calling.SurveyPublisher. Duplicate response_ids (idempotent
+// retries from a misbehaving client) are silently absorbed via ON CONFLICT
+// DO NOTHING — the first submission wins.
 type CallQualitySurveyPublisher struct {
 	q Querier
 }
@@ -26,7 +34,11 @@ func NewCallQualitySurveyPublisher(c *Client) *CallQualitySurveyPublisher {
 	return &CallQualitySurveyPublisher{q: c.Pool()}
 }
 
-// Publish inserts survey, converting its Unix-millisecond timestamps; nil is an InvalidArgument error.
+// Publish inserts the supplied survey into call_quality_surveys. A nil
+// survey is rejected with an InvalidArgument error so a buggy caller is
+// surfaced rather than silently swallowed. The numeric timestamps on the
+// CallQualitySurveyMessage are interpreted as Unix milliseconds (Java
+// parity); we convert to TIMESTAMPTZ before insert.
 func (p *CallQualitySurveyPublisher) Publish(ctx context.Context, survey *calling.CallQualitySurveyMessage) error {
 	if survey == nil {
 		return errors.New("postgres: nil survey")

@@ -36,7 +36,11 @@ type jobRow struct {
 	Status    int       `json:"status"`
 	Attempts  int       `json:"attempts"`
 	CreatedAt time.Time `json:"createdAt"`
-	// ClaimedAt is when the job last became Running; zero on a Running job marks it for recovery.
+	// ClaimedAt is the wall-clock UTC at which the row was last
+	// transitioned to Running. RecoverStale uses it to detect rows
+	// whose worker died mid-execution. Zero when the row is not
+	// (and has never been) Running — also acts as the "needs
+	// recovery" signal on rows persisted before this field landed.
 	ClaimedAt time.Time `json:"claimedAt,omitempty"`
 }
 
@@ -200,7 +204,10 @@ func (s *JobsStore) ResetToPending(ctx context.Context, id string, fireAt time.T
 	return s.kv.Put(ctx, jobKeyPrefix+id, out)
 }
 
-// RecoverStale requeues Running jobs claimed before olderThan or with zero ClaimedAt.
+// RecoverStale re-queues Running rows whose ClaimedAt is before
+// olderThan. A Running row with zero ClaimedAt is treated as stale
+// — that state can only occur on rows persisted before the field
+// existed or after an unclean shutdown.
 func (s *JobsStore) RecoverStale(ctx context.Context, olderThan time.Time) (int, error) {
 	var stale []jobRow
 	err := s.kv.Scan(ctx, jobKeyPrefix, func(_ string, value []byte) error {

@@ -108,7 +108,10 @@ func (s *VerificationSessionStore) Count(ctx context.Context) (int, error) {
 	return len(keys), nil
 }
 
-// DeleteExpired scans the prefix and deletes every session expired before now.
+// DeleteExpired removes every session whose ExpiresAt is before now. It
+// scans the full prefix and issues one Delete per expired entry; for high
+// session counts a native-index approach would scale better, but at the
+// volumes verification sessions see (bounded by rate limits) this is fine.
 func (s *VerificationSessionStore) DeleteExpired(ctx context.Context) error {
 	now := timeNow()
 	keys, err := s.kv.List(ctx, verificationKeyPrefix)

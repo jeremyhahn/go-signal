@@ -24,7 +24,9 @@ func (e *MessageNotFoundError) Error() string {
 	return "message not found: " + e.ServerGUID
 }
 
-// QueueError wraps a CacheQueue error; Key is the optional GUID or lookup token.
+// QueueError wraps an error from a CacheQueue operation. Key is the optional
+// GUID or other lookup token associated with the failing operation; when
+// empty, the message format omits the key segment.
 type QueueError struct {
 	Op    string
 	Key   string
@@ -66,7 +68,10 @@ func (e *MRMUnexpectedResultTypeError) Error() string {
 	return fmt.Sprintf("mrm remove: unexpected result type %T", e.Result)
 }
 
-// MRMSendError wraps a SendMRMBinary error as "mrm: {Op}[ {UUID}[/{Device}]]: {cause}"; Device 0 means none.
+// MRMSendError wraps an error from SendMRMBinary. The message format is
+// "mrm: {Op}: {cause}" for simple cases, and
+// "mrm: {Op} {UUID}: {cause}" / "mrm: {Op} {UUID}/{Device}: {cause}" when
+// recipient context is available. Device==0 means no device is associated.
 type MRMSendError struct {
 	Op     string
 	UUID   string
@@ -118,7 +123,13 @@ func (e *NilEnvelopeError) Error() string {
 	return "cannot marshal a nil envelope"
 }
 
-// UnsupportedEnvelopeTypeError rejects an envelope type textsecure.proto cannot represent (2, 7, or outside the enum).
+// UnsupportedEnvelopeTypeError indicates an envelope carries a type with no
+// representation in textsecure.proto — values the wire reserves (2, 7), or a
+// value outside the enum entirely.
+//
+// It is deliberately an error rather than a coercion to UNKNOWN: delivering a
+// substituted type reports success while handing the client a semantically
+// different message, and nothing downstream can tell that happened.
 type UnsupportedEnvelopeTypeError struct {
 	Type EnvelopeType
 }

@@ -29,7 +29,11 @@ type RegistrationLockHash struct {
 	Hash string `json:"hash"`
 }
 
-// HashRegistrationLock derives an Argon2id hash of pin with a fresh salt; it errors only if the entropy source fails.
+// HashRegistrationLock derives an Argon2id hash from pin using a freshly
+// generated cryptographic salt. The returned RegistrationLockHash can be
+// stored persistently; the original PIN is not recoverable from it.
+//
+// An error is returned only if the OS entropy source fails.
 func HashRegistrationLock(pin string) (*RegistrationLockHash, error) {
 	salt := make([]byte, saltLen)
 	if _, err := rand.Read(salt); err != nil {
@@ -52,7 +56,12 @@ func HashRegistrationLock(pin string) (*RegistrationLockHash, error) {
 	return result, nil
 }
 
-// Verify re-derives the hash with the stored salt and compares in constant time; corrupt data returns false.
+// Verify re-derives the Argon2id key for pin using the stored salt and
+// performs a constant-time comparison against the stored hash. It returns
+// true only when the PIN matches exactly.
+//
+// Verify never returns an error; a mismatch (including corrupt stored data)
+// always returns false.
 func (h *RegistrationLockHash) Verify(pin string) bool {
 	salt, err := base64.StdEncoding.DecodeString(h.Salt)
 	if err != nil {

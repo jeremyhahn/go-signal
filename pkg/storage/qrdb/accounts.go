@@ -35,7 +35,12 @@ func accountKey(uuid string) string         { return accountPrimaryScan + uuid }
 func accountNumberKey(number string) string { return accountByNumberPfx + number }
 func accountPNIKey(pni string) string       { return accountByPNIPfx + pni }
 
-// Create stores a new account with unique UUID and number, writing the primary key before the mirror so a retry repairs a partial write.
+// Create persists a new account, enforcing unique UUID and (if set) unique
+// phone number. The operation is not atomic across the two keys — a failure
+// mid-write would leave a dangling mirror key. We mitigate by writing the
+// primary key first, then the mirror; a crash between them leaves a missing
+// mirror which a retry repairs. A dangling mirror would only happen if the
+// caller's UUID changed between retries, which never happens in practice.
 func (s *AccountStore) Create(ctx context.Context, account *accounts.Account) error {
 	if account == nil {
 		return &accounts.InvalidArgumentError{Field: "account", Message: "nil account"}
@@ -136,7 +141,10 @@ func (s *AccountStore) GetByPNI(ctx context.Context, pni string) (*accounts.Acco
 	return s.Get(ctx, uuid)
 }
 
-// Update stores account when its Version is exactly one above the stored one, maintaining the number mirror.
+// Update persists changes to an existing account. Optimistic locking is
+// enforced: the supplied account.Version must be exactly one greater than
+// the version currently stored. Mirror-key maintenance handles phone-number
+// changes.
 func (s *AccountStore) Update(ctx context.Context, account *accounts.Account) error {
 	if account == nil {
 		return &accounts.InvalidArgumentError{Field: "account", Message: "nil account"}

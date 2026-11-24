@@ -7,7 +7,8 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/daostore/entities"
 )
 
-// Factory holds every GenericDAO for the client, shared by the CLI and desktop.
+// Factory creates and holds all GenericDAO instances for the Signal client.
+// This factory is shared by both CLI and desktop GUI modes.
 type Factory struct {
 	Messages      dao.GenericDAO[*entities.MessageEntity]
 	Conversations dao.GenericDAO[*entities.ConversationEntity]

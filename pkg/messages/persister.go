@@ -6,7 +6,12 @@ import (
 	"log/slog"
 )
 
-// PersisterDeviceLister returns the (uuid, device) pairs with messages in the cache queue.
+// PersisterDeviceLister returns the (uuid, device) pairs that
+// currently have messages in the cache queue. The MessagePersister
+// iterates this list each tick to find work to do.
+//
+// In production this is backed by a Redis SCAN over a presence-tracking
+// set; for tests an in-memory implementation suffices.
 type PersisterDeviceLister interface {
 	ListPendingDevices(ctx context.Context) ([]DeviceRef, error)
 }
@@ -17,7 +22,15 @@ type DeviceRef struct {
 	DeviceID uint64
 }
 
-// MessagePersister moves envelopes from a CacheQueue to a durable MessageStore; replicas need leader election to avoid racing on a device.
+// MessagePersister moves envelopes from a CacheQueue into a durable
+// MessageStore. One Persister.RunOnce call drains every device with
+// pending messages once, batched by max-per-device. The continuous
+// worker in pkg/workers wraps RunOnce in its loop.
+//
+// The persister is goroutine-safe but does not guarantee single-flight:
+// if two replicas run RunOnce concurrently for the same device they
+// race. Leader election (via the worker scheduler's lease) prevents
+// that in production deployments.
 type MessagePersister struct {
 	queue        *CacheQueue
 	store        MessageStore
@@ -32,11 +45,16 @@ type PersisterConfig struct {
 	Queue *CacheQueue
 	// Store is the durable destination.
 	Store MessageStore
-	// Devices reports which (uuid, device) pairs need draining.
+	// Devices reports which (uuid, device) pairs need draining. A
+	// production implementation is backed by Redis SCAN; tests can
+	// supply a fixed list.
 	Devices PersisterDeviceLister
 	// Logger receives per-tick diagnostics. Defaults to slog.Default.
 	Logger *slog.Logger
-	// MaxPerDevice caps envelopes drained per device per tick; zero means 100.
+	// MaxPerDevice caps the number of envelopes drained from one
+	// device per tick. Zero defaults to 100 — small enough to keep
+	// individual ticks short, large enough to make progress under
+	// load.
 	MaxPerDevice int64
 }
 
@@ -59,7 +77,10 @@ func NewMessagePersister(cfg PersisterConfig) *MessagePersister {
 	}
 }
 
-// RunOnce drains every pending device once.
+// RunOnce drains every pending device exactly once. The intended call
+// site is the continuous worker loop in pkg/workers — RunOnce returns
+// quickly when there's nothing to do, so the worker's idle yield is
+// what paces things in steady state.
 func (p *MessagePersister) RunOnce(ctx context.Context) error {
 	if p.queue == nil || p.store == nil || p.listDevices == nil {
 		return errors.New("messages/persister: queue, store, and devices are required")

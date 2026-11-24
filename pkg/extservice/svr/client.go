@@ -1,4 +1,13 @@
-// Package svr is signald's admin client for cmd/svr2: DELETE /v1/delete on account deletion, with Basic credentials username = identity, password = hex HMAC-SHA256(secret, username).
+// Package svr is the chat-server-side admin client for cmd/svr2.
+//
+// Java reference: SecureValueRecoveryClient.java — one operation
+// (DELETE /v1/delete) called when an account is deleted so the user's
+// secret-recovery record is purged from svr2's storage.
+//
+// Authentication uses the same HMAC-derived Basic credentials the
+// mobile client receives from /v2/svr/auth. signald creates a username
+// = the account identity, password = HMAC-SHA256(svrSharedSecret,
+// username) hex-encoded.
 package svr
 
 import (
@@ -58,7 +67,12 @@ type HTTPClient struct {
 	http    *http.Client
 }
 
-// NewHTTP constructs an HTTPClient, cloning the shared secret first and validating the clone.
+// NewHTTP constructs an HTTPClient.
+//
+// The shared secret is cloned first and the clone is what gets validated —
+// checking cfg.SharedSecret and cloning it afterwards leaves a window in which
+// the caller destroys its own copy between the two, and the constructor
+// reports success holding a secret that can never sign a request.
 func NewHTTP(cfg HTTPConfig) (*HTTPClient, error) {
 	if cfg.BaseURL == "" {
 		return nil, signalerrors.New(signalerrors.ErrInvalidArgument, "svr: BaseURL is required")

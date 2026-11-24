@@ -23,6 +23,10 @@ type AccountStore interface {
 	// Delete removes an account by UUID.
 	Delete(ctx context.Context, uuid string) error
 
-	// ListAll streams every account to fn; an error from fn aborts. Order is not guaranteed.
+	// ListAll streams every stored account to fn. Used by services
+	// that need a full snapshot — notably cdsi's directory bootstrap
+	// (see Phase 4.3). fn returning an error aborts iteration.
+	// Implementations need not guarantee ordering and may re-emit an
+	// entry if the underlying snapshot races with concurrent writes.
 	ListAll(ctx context.Context, fn func(*Account) error) error
 }

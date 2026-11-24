@@ -2,7 +2,18 @@ package spam
 
 import "context"
 
-// CompositeChecker runs checkers in order: any Block wins and stops evaluation, else any Challenge, else Allow. Safe for concurrent use.
+// CompositeChecker chains multiple SpamCheckers together using a precedence
+// rule that mirrors the Java Signal-Server SpamChecker composition:
+//
+//   - If any checker returns SpamCheckBlock, the composite result is Block
+//     regardless of other results.
+//   - If no checker returns Block but at least one returns Challenge, the
+//     composite result is Challenge.
+//   - If all checkers return Allow (or the slice is empty), the result is Allow.
+//
+// Checkers are evaluated in order. Evaluation stops immediately upon the first
+// Block result so that later checkers are not consulted unnecessarily.
+// CompositeChecker is safe for concurrent use.
 type CompositeChecker struct {
 	checkers []SpamChecker
 }

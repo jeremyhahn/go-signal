@@ -10,7 +10,9 @@ import (
 	"github.com/jeremyhahn/go-libsignal/pkg/zkgroup"
 )
 
-// CallingManager issues TURN relay and call-link credentials and publishes call-quality surveys through pluggable providers.
+// CallingManager manages TURN relay credentials, call link credential issuance,
+// and call quality survey submission. It delegates to pluggable providers for
+// TURN credentials and survey publishing.
 type CallingManager struct {
 	turnProvider        TurnCredentialProvider
 	genericServerSecret *zkgroup.GenericServerSecretParams
@@ -36,7 +38,10 @@ func NewCallingManager(cfg CallingConfig) *CallingManager {
 	}
 }
 
-// Destroy wipes the TURN provider's key material when it supports Destroy and drops the zkgroup secret.
+// Destroy releases resources held by the CallingManager. If the configured
+// TurnCredentialProvider implements a Destroy method, it is called to wipe
+// protected key material from memory. The genericServerSecret reference is
+// also cleared so the ZKGroup secret can be garbage collected.
 func (m *CallingManager) Destroy() {
 	type destroyer interface {
 		Destroy()
@@ -47,7 +52,8 @@ func (m *CallingManager) Destroy() {
 	m.genericServerSecret = nil
 }
 
-// GetCallingRelays returns TURN credentials from the provider.
+// GetCallingRelays retrieves TURN credentials from the configured provider and
+// returns them wrapped in a GetCallingRelaysResponse.
 func (m *CallingManager) GetCallingRelays(ctx context.Context) (*GetCallingRelaysResponse, error) {
 	token, err := m.turnProvider.RetrieveCredentials(ctx)
 	if err != nil {
@@ -57,7 +63,10 @@ func (m *CallingManager) GetCallingRelays(ctx context.Context) (*GetCallingRelay
 	return &GetCallingRelaysResponse{Relays: []TurnToken{*token}}, nil
 }
 
-// CreateCallLinkAuth issues a blinded CreateCallLink credential for the client's request via zkgroup.
+// CreateCallLinkAuth issues a CreateCallLink credential using zkgroup,
+// matching Java's CallLinkController.getCreateAuth(). The client sends a
+// serialized CreateCallLinkCredentialRequest which contains a blinded room ID
+// and blinding public key. The server issues a blinded credential response.
 func (m *CallingManager) CreateCallLinkAuth(
 	ctx context.Context,
 	accountUUID string,

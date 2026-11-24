@@ -17,7 +17,10 @@ type RateLimitConfig struct {
 	// Window before being blocked. Zero uses DefaultRateLimitThreshold.
 	Threshold int64
 
-	// ChallengeRatio is the fraction of Threshold at which Check starts returning SpamCheckChallenge; zero uses DefaultChallengeRatio.
+	// ChallengeRatio is the fraction of Threshold at which the checker begins
+	// returning SpamCheckChallenge instead of SpamCheckAllow. For example,
+	// 0.8 means challenge starts at 80 % of Threshold. Zero uses
+	// DefaultChallengeRatio.
 	ChallengeRatio float64
 }
 
@@ -49,7 +52,18 @@ type senderCounter struct {
 	windowEnd atomic.Int64
 }
 
-// RateLimitChecker counts messages per sender in a fixed window with atomic counters: challenge above ChallengeRatio*Threshold, block above Threshold. Stop ends its eviction goroutine.
+// RateLimitChecker is a SpamChecker that tracks per-sender message rates using
+// a fixed time window. It uses lock-free atomic counters for the hot increment
+// path; a single RWMutex protects the sender map only for entry creation and
+// eviction, not for per-message updates.
+//
+// When a sender's message count within the window exceeds ChallengeRatio *
+// Threshold, SpamCheckChallenge is returned. When it exceeds Threshold,
+// SpamCheckBlock is returned.
+//
+// A background goroutine periodically evicts entries whose windows have
+// expired, bounding the memory consumed by the sender map. Call Stop() to
+// shut it down cleanly.
 type RateLimitChecker struct {
 	window      time.Duration
 	threshold   int64
@@ -63,7 +77,10 @@ type RateLimitChecker struct {
 	stopOnce    sync.Once
 }
 
-// NewRateLimitChecker returns a checker with defaults for zero fields and starts its cleanup goroutine; call Stop when done.
+// NewRateLimitChecker constructs a RateLimitChecker with the provided config.
+// Zero-value fields in cfg are replaced with their defaults. The returned
+// checker starts a background cleanup goroutine; call Stop() when the checker
+// is no longer needed to release its resources.
 func NewRateLimitChecker(cfg RateLimitConfig) *RateLimitChecker {
 	if cfg.Window <= 0 {
 		cfg.Window = DefaultRateLimitWindow
@@ -101,7 +118,10 @@ func (r *RateLimitChecker) Stop() {
 	})
 }
 
-// Check counts the message: SpamCheckBlock above Threshold, SpamCheckChallenge above challengeAt, else SpamCheckAllow.
+// Check increments the per-sender message counter and returns:
+//   - SpamCheckBlock     when count > Threshold
+//   - SpamCheckChallenge when count > challengeAt (80% of Threshold by default)
+//   - SpamCheckAllow     otherwise
 func (r *RateLimitChecker) Check(_ context.Context, checkCtx *CheckContext) (SpamCheckResult, error) {
 	now := r.nowFn()
 	counter := r.getOrCreate(checkCtx.SenderUUID)

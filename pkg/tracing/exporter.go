@@ -10,7 +10,15 @@ import (
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
-// Span is one OpenTelemetry-shaped trace event over [Start, End).
+// Span is one trace event spanning [Start, End). The fields match
+// the OpenTelemetry span shape — trace_id, span_id, parent_span_id,
+// name, attributes — so a future migration to the full OTel SDK is a
+// drop-in replacement: an OTLP exporter consumes these same fields.
+//
+// Until then, StdoutExporter serializes spans as one JSON object per
+// line to any io.Writer (default: stderr). Production deployments
+// either keep this for low-volume tracing or swap in the OTel SDK
+// once go.mod adds the exporter packages.
 type Span struct {
 	TraceID    string            `json:"trace_id"`
 	SpanID     string            `json:"span_id"`
@@ -23,7 +31,11 @@ type Span struct {
 	StatusCode string            `json:"status,omitempty"`
 }
 
-// Exporter writes Spans; StdoutExporter writes one JSON line per span synchronously on End and is safe for concurrent use.
+// Exporter sinks Spans. StdoutExporter is the in-process
+// implementation that writes one JSON line per span to a configurable
+// io.Writer. Concurrent-safe via an internal mutex; spans are flushed
+// synchronously on End() so callers can rely on the line landing
+// before they return.
 type Exporter interface {
 	Export(span Span) error
 	Close() error
@@ -36,7 +48,10 @@ type StdoutExporter struct {
 	out io.Writer
 }
 
-// NewStdoutExporter returns a StdoutExporter writing to w, or os.Stderr when nil.
+// NewStdoutExporter constructs a StdoutExporter. Pass nil to use
+// os.Stderr; production runs typically point this at the same sink
+// the audit logger uses so traces and audit records correlate by
+// request_id.
 func NewStdoutExporter(out io.Writer) *StdoutExporter {
 	if out == nil {
 		// caller is responsible for choosing the right destination;

@@ -2,7 +2,10 @@ package push
 
 import "context"
 
-// NoOpProvider discards notifications and reports each as accepted; for development and tests.
+// NoOpProvider is a push provider that discards all notifications.
+// It is used in development and testing when push delivery is not required.
+// Every Send is treated as an accepted delivery so callers can exercise
+// the provider boundary without a live transport.
 type NoOpProvider struct{}
 
 // Send discards the notification and reports it as accepted.

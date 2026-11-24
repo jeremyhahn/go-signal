@@ -14,7 +14,10 @@ import (
 // Compile-time interface satisfaction check.
 var _ recoverypassword.Store = (*RecoveryPasswordStore)(nil)
 
-// RecoveryPasswordStore implements recoverypassword.Store on Postgres with single statements.
+// RecoveryPasswordStore is a Postgres-backed implementation of
+// recoverypassword.Store. Reads are direct against the pool; writes use the
+// pool too — every operation is a single statement so transactions add no
+// value here.
 type RecoveryPasswordStore struct {
 	q   Querier
 	now func() time.Time
@@ -65,7 +68,8 @@ func (s *RecoveryPasswordStore) Get(ctx context.Context, pni string) (*recoveryp
 	return &recoverypassword.SaltedTokenHash{Hash: hash, Salt: salt}, nil
 }
 
-// Put inserts or replaces the entry for pni.
+// Put inserts or replaces the entry for pni. Uses ON CONFLICT (pni) so a
+// concurrent re-register flow simply overwrites the previous row in place.
 func (s *RecoveryPasswordStore) Put(ctx context.Context, pni string, hash *recoverypassword.SaltedTokenHash, expiresAt time.Time) error {
 	if hash == nil {
 		return &recoverypassword.InvalidArgumentError{Field: "hash", Message: "must not be nil"}

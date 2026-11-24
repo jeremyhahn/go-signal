@@ -5,7 +5,15 @@ import (
 	"github.com/jeremyhahn/go-libsignal/pkg/sealed"
 )
 
-// SignalSenderCertificateInput holds the Curve25519 keys and fields for a libsignal-compatible SenderCertificate.
+// SignalSenderCertificateInput collects the fields needed to build a
+// byte-wire-compatible Signal SenderCertificate. The Identity, ServerCert
+// signing keypair, and TrustRoot are EC-on-Curve25519 keys produced by the
+// go-libsignal/pkg/ecc package; the certificate signature scheme is XEdDSA
+// over Curve25519 to match Rust libsignal::SenderCertificate exactly.
+//
+// Mirrors the inputs Rust libsignal_protocol::SenderCertificate::new
+// expects — see rust/protocol/src/sealed_sender.rs in the upstream tree
+// at the commit pinned by the go-libsignal RUST_REV file.
 type SignalSenderCertificateInput struct {
 	// SenderUUID is the sender's account UUID (ACI), as a string.
 	SenderUUID string
@@ -45,7 +53,23 @@ type SignalSenderCertificateInput struct {
 	TrustRoot ecc.ECPrivateKeyable
 }
 
-// BuildSignalSenderCertificate returns a protobuf, XEdDSA-signed SenderCertificate built by go-libsignal/pkg/sealed.
+// BuildSignalSenderCertificate assembles a byte-wire-compatible
+// libsignal SenderCertificate (protobuf-encoded, XEdDSA-signed) by
+// delegating wholly to go-libsignal/pkg/sealed.
+//
+// This is the canonical, Rust-aligned construction path. The legacy
+// CertificatesManager.GetDeliveryCertificate produces a JSON-encoded
+// envelope that is NOT byte-wire compatible with Rust libsignal or the
+// Java Signal-Server reference; new code must call this helper instead.
+//
+// The returned bytes are exactly what
+// rust/protocol/src/sealed_sender.rs::SenderCertificate::serialize emits
+// for the same inputs, modulo random salt; clients verify via
+// SenderCertificate::deserialize + Validate(trustRoot, validationTime).
+//
+// Layering: this helper imports go-libsignal/pkg/sealed and delegates;
+// it adds no crypto in this repository. All signing happens inside
+// go-libsignal.
 func BuildSignalSenderCertificate(in SignalSenderCertificateInput) ([]byte, error) {
 	identity, err := ecc.DecodePoint(in.IdentityKeyBytes, 0)
 	if err != nil {

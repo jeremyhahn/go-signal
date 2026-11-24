@@ -26,7 +26,9 @@ var _ cache.Client = (*Client)(nil)
 type Config struct {
 	// URL is the Redis connection URL, e.g. "redis://localhost:6379/0".
 	URL string
-	// Password is the AUTH password, held in protected memory and revealed once to build the client options.
+	// Password is the AUTH password (may be nil or unset). It is held in
+	// protected memory and only materialized for the go-redis option
+	// struct, which is built once at construction time.
 	Password *secrets.SecureString
 	// DB is the database index to select after connecting.
 	DB int
@@ -131,7 +133,10 @@ func (c *Client) IncrBy(ctx context.Context, key string, delta int64) (int64, er
 
 // --- Distributed locks ------------------------------------------------
 
-// Lock acquires a lock with SET NX EX; redisv9.Nil maps to cache.ErrLockNotAcquired.
+// Lock acquires a distributed lock using SET NX EX semantics.
+// SetArgs with Mode "NX" is used in place of the deprecated SetNX method.
+// When the key already exists, Redis returns nil; go-redis surfaces this as
+// redisv9.Nil which we map to cache.ErrLockNotAcquired.
 func (c *Client) Lock(ctx context.Context, key, token string, ttl time.Duration) error {
 	_, err := c.rdb.SetArgs(ctx, key, token, redisv9.SetArgs{
 		Mode: "NX",

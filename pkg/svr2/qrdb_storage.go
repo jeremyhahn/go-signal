@@ -18,7 +18,19 @@ type qrdbKV interface {
 	Scan(ctx context.Context, prefix string, fn func(key string, value []byte) error) error
 }
 
-// QrdbStorage stores each SVR4 Record as JSON under svr2:record:<identity>; encryption at rest is the KV layer's job.
+// QrdbStorage is a qrdb-backed Storage implementation for cmd/svr2's
+// SVR4 record state. Each Record persists as a JSON blob under
+// `svr2:record:<identity>` — the per-identity granularity makes
+// account deletion (admin DELETE) a single Delete call. Java's
+// SVR2 reference stores records in the SGX enclave's per-account
+// sealed slots; the qrdb pattern is the non-enclave equivalent for
+// the software-attestation deployment profile.
+//
+// Storage is on-disk via the qrdb backend; production deployments
+// layer go-quicraft/seal envelope encryption on top of the KV
+// layer so the on-disk record stays sealed even if disk is
+// exfiltrated — that wrapper lives at the KV layer below this
+// Storage adapter.
 type QrdbStorage struct {
 	kv     qrdbKV
 	prefix string
@@ -158,7 +170,11 @@ func (s *QrdbStorage) Delete(ctx context.Context, identity string) error {
 	return nil
 }
 
-// Count implements Storage by scanning every record; keep it off hot paths.
+// Count implements Storage. Counts via Scan; the SVR2 record set
+// is one row per registered account so this scales with the user
+// base — production deployments tracking a metric instead should
+// wire a separate counter rather than calling Count on the hot
+// path.
 func (s *QrdbStorage) Count(ctx context.Context) (int, error) {
 	n := 0
 	err := s.kv.Scan(ctx, s.prefix, func(key string, _ []byte) error {

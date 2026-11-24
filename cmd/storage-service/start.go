@@ -116,7 +116,9 @@ func buildManifestStore(ctx context.Context, cfg config.StorageConfig, logger *s
 	}
 }
 
-// NewMux returns the http.Handler exposing the storage-service REST surface.
+// NewMux returns the http.Handler exposing the full storage-service
+// REST surface. Factored out of runStart so e2e tests can mount it
+// onto httptest.NewServer.
 func NewMux(store securestorage.ManifestStore, hmacSecret *secrets.SecureString, logger *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /v1/storage/manifest", basicAuth(hmacSecret, getManifest(store)))

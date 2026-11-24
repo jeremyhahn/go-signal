@@ -10,15 +10,29 @@ import (
 	"github.com/jeremyhahn/go-libsignal/pkg/sealed"
 )
 
-// MRMAccountLookup resolves a recipient UUID to its account; any error counts the recipient as missing (UUIDs404).
+// MRMAccountLookup resolves a destination account by its UUID string. Used by
+// SendMRMBinary to map each recipient ServiceId in the multi-recipient
+// ciphertext back to a full account record (so device-set/registration-id
+// validation can run, and the envelope can be addressed to the right ACI/PNI).
+//
+// Implementations should return a non-nil account on success and a typed
+// not-found error otherwise. The exact error type is not inspected: any
+// non-nil error is treated as "recipient missing" and added to UUIDs404.
 type MRMAccountLookup func(ctx context.Context, uuidStr string) (account *MRMRecipientAccount, err error)
 
-// MRMRecipientAccount is the UUID and device IDs needed to route a multi-recipient send.
+// MRMRecipientAccount is the minimal subset of an account record needed to
+// route a multi-recipient send: the canonical UUID and the list of valid
+// device IDs. Additional fields can be added later (e.g. for registration-id
+// validation parity with Java) without churning callers.
 type MRMRecipientAccount struct {
 	UUID string
 }
 
-// MRMSendRequest is a binary multi-recipient send: the Sealed Sender v2 body, a millisecond timestamp and the account lookup.
+// MRMSendRequest carries the inputs for a binary multi-recipient send.
+//
+// Body is the raw SealedSender v2 multi-recipient ciphertext as supplied by
+// the client. Timestamp is the per-message wallclock timestamp (milliseconds
+// since epoch). Lookup resolves each recipient's account.
 type MRMSendRequest struct {
 	Body      []byte
 	Timestamp uint64
@@ -42,7 +56,18 @@ var ErrMRMNoCache = errors.New("mrm: cache not configured")
 // as a 400-equivalent.
 var ErrMRMNoRecipients = errors.New("mrm: no recipients in ciphertext")
 
-// SendMRMBinary stores the Sealed Sender v2 payload once and enqueues sealed-sender envelopes for every resolved recipient device; unresolved UUIDs go to UUIDs404.
+// SendMRMBinary parses a SealedSender v2 multi-recipient ciphertext, stores
+// the shared payload in the MRM cache once, and enqueues a per-recipient
+// envelope referencing the cached payload for every (resolved) recipient
+// device. Mirrors Java Signal-Server's binary multi-recipient endpoint.
+//
+// Recipients whose UUID does not resolve to an account via the supplied
+// lookup are skipped and their UUIDs are returned in MRMSendResult.UUIDs404.
+// All other failures (parse error, cache insert error, envelope insert
+// error) are returned as errors.
+//
+// All envelopes are tagged as EnvelopeTypeUnidentifiedSender (sealed sender)
+// since the multi-recipient endpoint is anonymous.
 func (m *MessagesManager) SendMRMBinary(ctx context.Context, req MRMSendRequest) (*MRMSendResult, error) {
 	if req.Lookup == nil {
 		return nil, errors.New("mrm: account lookup is required")

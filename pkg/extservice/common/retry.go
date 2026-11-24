@@ -44,6 +44,9 @@ type Retryable interface {
 }
 
 // IsRetryable reports whether err implements Retryable and returns true.
+// errors that don't implement the interface are considered non-retryable
+// (the caller used WithRetry on operations whose error shape determines
+// retry semantics).
 func IsRetryable(err error) bool {
 	var r Retryable
 	if errors.As(err, &r) {
@@ -52,7 +55,13 @@ func IsRetryable(err error) bool {
 	return false
 }
 
-// WithRetry runs fn up to cfg.MaxAttempts times with exponential backoff; cancellation or a non-Retryable error stops it.
+// WithRetry runs fn up to cfg.MaxAttempts times with exponential
+// backoff, returning the last error on exhaustion or nil on first
+// success. ctx cancellation aborts immediately. Errors that are not
+// Retryable end the loop early.
+//
+// Generic over R so callers don't need a manual nil-zero juggle for
+// non-pointer returns.
 func WithRetry[R any](ctx context.Context, cfg RetryConfig, fn func(context.Context) (R, error)) (R, error) {
 	cfg = cfg.applied()
 	var (

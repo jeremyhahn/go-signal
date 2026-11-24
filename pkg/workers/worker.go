@@ -50,7 +50,12 @@ type Worker interface {
 	Run(ctx context.Context) error
 }
 
-// Leaser grants the per-worker lease across replicas; nil disables leader election.
+// Leaser is the minimal interface the worker scheduler uses to coordinate
+// execution across replicas. Implementations typically wrap a
+// distributed lock from pkg/cache (Redis) or a qrdb lease primitive.
+//
+// A nil Leaser disables leader election, which is correct for
+// single-instance deployments and tests.
 type Leaser interface {
 	// Acquire attempts to become leader for the given key for the given
 	// TTL. It returns nil when acquired and a non-nil error (typically
@@ -62,7 +67,10 @@ type Leaser interface {
 	Release(ctx context.Context, key string) error
 }
 
-// ErrLeaderElectionFailed means another replica holds the lease; skip this tick.
+// ErrLeaderElectionFailed is the canonical error a Leaser returns when
+// another replica holds the lease. It is not an error condition for the
+// caller — it simply means the current instance should not run the
+// worker this tick.
 var ErrLeaderElectionFailed = errors.New("workers: leader election failed")
 
 // Scheduler owns a cron engine and a set of registered workers.
@@ -144,7 +152,12 @@ func (s *Scheduler) List() []string {
 	return names
 }
 
-// RunOnce runs a worker now, the only way to run an on-demand one; returns ErrLeaderElectionFailed if another replica holds the lease.
+// RunOnce executes a worker immediately, regardless of its schedule. It
+// is used by admin CLIs (`signald workers run <name>`) and is the only
+// way to invoke an on-demand worker.
+//
+// Leader election applies identically: if a Leaser is configured and
+// another replica holds the lease, RunOnce returns ErrLeaderElectionFailed.
 func (s *Scheduler) RunOnce(ctx context.Context, name string) error {
 	s.mu.Lock()
 	w, ok := s.workers[name]

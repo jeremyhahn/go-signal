@@ -1,6 +1,16 @@
 //go:build integration
 
-// Package mocks provides permissive fake Twilio Verify, APNs and FCM servers for testing the clients.
+// Package mocks provides reusable fake servers for the upstream
+// services Phase 3 ships against: Twilio Verify (SMS verification),
+// APNs (Apple Push), and FCM (Firebase Cloud Messaging). Each mock is
+// a thin httptest.Server that replays just enough of the real protocol
+// for go-signal's clients to exercise their full code path.
+//
+// Mocks are intentionally permissive: they accept any auth credential
+// shape (no SigV4 / JWT validation) so tests can wire the providers
+// against arbitrary placeholder keys. The goal is to assert the
+// CLIENT-side behavior (headers, request bodies, status mapping), not
+// to certify the upstream services' own correctness.
 package mocks
 
 import (
@@ -12,7 +22,12 @@ import (
 	"sync"
 )
 
-// TwilioMock fakes Twilio Verify's Verifications and VerificationCheck endpoints and records the last (To, Channel, Code).
+// TwilioMock is a fake Twilio Verify REST API. It accepts
+//
+//	POST /Services/{sid}/Verifications      → "Send code"
+//	POST /Services/{sid}/VerificationCheck  → "Submit code"
+//
+// and records the last (To, Channel, Code) tuple each test can assert.
 type TwilioMock struct {
 	Server *httptest.Server
 

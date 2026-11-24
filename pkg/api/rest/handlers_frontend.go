@@ -22,7 +22,11 @@ func newFrontendHandler(files fs.FS) *frontendHandler {
 	}
 }
 
-// ServeHTTP rejects methods other than GET and HEAD with 405.
+// ServeHTTP implements http.Handler. Non-GET/HEAD requests are rejected with
+// 405 Method Not Allowed. Requests for paths that begin with an API prefix
+// should never reach this handler (API routes are registered first and take
+// priority), but as a safety net they are passed to the file server which will
+// return 404.
 func (h *frontendHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")

@@ -6,7 +6,14 @@ import (
 	"strings"
 )
 
-// RouterTransport sends '+' destinations to SMS and '@' destinations to Email; an unconfigured channel returns ErrChannelNotConfigured.
+// RouterTransport selects an underlying VerificationTransport based on the
+// destination format. Phone numbers (E.164 — starts with '+') route to the
+// SMS transport; everything containing '@' routes to the Email transport.
+// A nil leg means "this channel is not configured": destinations whose
+// channel is unconfigured produce ErrChannelNotConfigured.
+//
+// The router itself satisfies VerificationTransport, so Manager / handlers
+// don't need to learn about it — they keep talking to one transport.
 type RouterTransport struct {
 	SMS   VerificationTransport
 	Email VerificationTransport

@@ -13,7 +13,11 @@ import (
 // Compile-time interface satisfaction check.
 var _ messages.ReportStore = (*ReportStore)(nil)
 
-// ReportStore implements messages.ReportStore in Postgres; source_uuid and message_guid may be NULL.
+// ReportStore is a Postgres-backed implementation of messages.ReportStore.
+//
+// Schema: spam_reports(id UUID PK, reporter_uuid UUID, source_uuid UUID,
+// message_guid UUID, reported_at TIMESTAMPTZ). source_uuid and message_guid
+// are nullable in the schema (no FK constraint, reporters may omit them).
 type ReportStore struct {
 	q Querier
 }
@@ -57,7 +61,8 @@ func (s *ReportStore) Store(ctx context.Context, report *messages.SpamReport) er
 	return nil
 }
 
-// GetByReporter returns the account's reports newest first, or an empty slice.
+// GetByReporter returns all spam reports filed by the given account UUID,
+// ordered by reported_at DESC. Returns an empty slice (not nil) when none exist.
 func (s *ReportStore) GetByReporter(ctx context.Context, reporterUUID string) ([]*messages.SpamReport, error) {
 	rows, err := s.q.Query(ctx, `
 		SELECT id, reporter_uuid, source_uuid, message_guid, reported_at

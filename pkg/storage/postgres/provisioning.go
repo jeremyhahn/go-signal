@@ -13,7 +13,10 @@ import (
 // Compile-time interface satisfaction check.
 var _ devices.ProvisioningStore = (*ProvisioningStore)(nil)
 
-// ProvisioningStore implements devices.ProvisioningStore in Postgres, keyed by verification code.
+// ProvisioningStore is a Postgres-backed implementation of
+// devices.ProvisioningStore. Sessions are keyed by verification code,
+// matching the schema: provisioning_sessions(code TEXT PK, account_uuid UUID,
+// expires_at TIMESTAMPTZ).
 type ProvisioningStore struct {
 	q Querier
 }
@@ -24,7 +27,11 @@ func NewProvisioningStore(q Querier) *ProvisioningStore {
 	return &ProvisioningStore{q: q}
 }
 
-// StoreSession stores a provisioning session, replacing any under the same code.
+// StoreSession persists a provisioning session. It overwrites any existing
+// session stored under the same code (INSERT … ON CONFLICT DO UPDATE),
+// matching the qrdb implementation's "store replaces" semantics: the caller
+// that generated the code owns the namespace and re-issuing a code for the
+// same linking attempt is safe.
 func (s *ProvisioningStore) StoreSession(ctx context.Context, session *devices.ProvisioningSession) error {
 	if session == nil {
 		return signalerrors.New(signalerrors.ErrInvalidArgument, "postgres provisioning: nil session")

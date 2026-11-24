@@ -25,7 +25,9 @@ const (
 
 var _ fido2.FIDO2AccountsStore = (*FIDO2AccountsStore)(nil)
 
-// FIDO2AccountsStore implements fido2.FIDO2AccountsStore on qrdb; built only with the fido2 tag.
+// FIDO2AccountsStore is a qrdb-backed implementation of
+// fido2.FIDO2AccountsStore. The type is only compiled under the `fido2`
+// build tag so non-FIDO builds don't pull in the dependency.
 type FIDO2AccountsStore struct {
 	kv KVStore
 }

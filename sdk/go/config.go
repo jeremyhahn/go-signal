@@ -1,4 +1,13 @@
-// Package signal is the Go client SDK for a go-signal server, over REST and WebSocket with go-libsignal; secrets live in protected memory until Close.
+// Package signal provides the Go SDK for the Signal messaging protocol.
+// It is the public API for building Signal clients — CLI, GUI, or embedded.
+//
+// The SDK wraps go-libsignal for Signal Protocol cryptography and
+// communicates with a go-signal server via REST and WebSocket APIs.
+// All server URLs, certificates, and storage backends are configurable
+// for self-hosted LAN and WAN deployments.
+//
+// All sensitive material (passwords, keys, certificates) is held in
+// protected memory and zeroed on Close().
 package signal
 
 import (

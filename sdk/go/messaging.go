@@ -229,7 +229,10 @@ func (c *Client) sendSignalContent(ctx context.Context, recipient string, conten
 	return c.doRequest(ctx, "PUT", "/v1/messages/"+recipient, body, nil)
 }
 
-// SendContacts sends the stored contacts list as a sync message to the account's own linked devices; it errors without stored credentials.
+// SendContacts sends a contacts-sync message to all linked devices. The full
+// contacts list is read from the local store and sent as a sync payload to
+// the account's own UUID so the server can fan it out to every linked device.
+// An error is returned if credentials are not present in the local store.
 func (c *Client) SendContacts(ctx context.Context) error {
 	creds, err := c.store.GetCredentials()
 	if err != nil {

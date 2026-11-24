@@ -6,7 +6,8 @@ import (
 	"sync"
 )
 
-// ErrRecordNotFound means the identity has no record; the protocol reports MISSING.
+// ErrRecordNotFound is returned by Storage.Get when the identity has
+// no record. The protocol layer maps this onto Response4.Status MISSING.
 var ErrRecordNotFound = errors.New("svr2: record not found")
 
 // Storage persists Records keyed by an identity string (the

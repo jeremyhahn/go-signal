@@ -25,7 +25,10 @@ const (
 	maxStickerCount = 201
 )
 
-// S3Config holds the S3 credentials and bucket for signed pack upload forms; unset uses the embedded-CDN form.
+// S3Config bundles the S3 credentials + bucket needed to sign sticker
+// pack upload forms. When unset, the manager falls back to the legacy
+// embedded-CDN URL form (no signed POST policy) so dev deployments keep
+// working without S3 credentials.
 type S3Config struct {
 	Region      string
 	Bucket      string
@@ -40,7 +43,10 @@ func (c S3Config) configured() bool {
 	return c.Region != "" && c.Bucket != "" && c.AccessKeyID != "" && !c.SecretAccessKey.IsDestroyed()
 }
 
-// StickersManager issues sticker-pack upload forms: signed S3 POST policies, or embedded-CDN URLs without S3.
+// StickersManager issues sticker-pack upload forms. When wired with S3
+// credentials it produces real signed POST policies clients can upload
+// directly to S3; otherwise it produces a legacy URL-only form pointing
+// at the embedded CDN.
 type StickersManager struct {
 	logger    *slog.Logger
 	store     PackStore
@@ -99,7 +105,13 @@ func (m *StickersManager) SetClock(now func() time.Time) {
 	}
 }
 
-// GetUploadForm returns a pack ID and stickerCount (1 to 201) form entries and records the issuance for accountUUID.
+// GetUploadForm returns a pack ID + per-sticker S3 POST form entries for
+// stickerCount stickers. Records the issuance in the PackStore against
+// accountUUID so the server can attribute uploads later. Mirrors Java's
+// StickerController.getStickersForm.
+//
+// stickerCount must be in [1, 201]. accountUUID must be non-empty; the
+// REST handler enforces authentication before calling.
 func (m *StickersManager) GetUploadForm(ctx context.Context, accountUUID string, stickerCount int) (*StickerPackFormUpload, error) {
 	if stickerCount < minStickerCount || stickerCount > maxStickerCount {
 		return nil, &InvalidStickerCountError{Count: stickerCount}

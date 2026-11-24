@@ -22,7 +22,15 @@ var _ ReportStore = (*KVReportStore)(nil)
 // reportMarshal is a test seam for KVReportStore.Store's marshal-error branch.
 var reportMarshal func(v any) ([]byte, error) = json.Marshal
 
-// KVReportStore stores JSON reports at "signal/reports/{id}" and copies at "signal/reports-by-reporter/{reporterUUID}/{id}" for prefix scans; safe for concurrent use.
+// KVReportStore implements ReportStore using a pluggable KVClient backend.
+// Reports are stored as JSON-encoded values under primary keys of the form
+// "signal/reports/{id}". A secondary index keyed by
+// "signal/reports-by-reporter/{reporterUUID}/{id}" stores the full report
+// payload, enabling efficient prefix-scan lookup by reporter without an
+// additional Get round-trip per record.
+//
+// All methods are safe for concurrent use. ID generation uses a lock-free
+// monotonic counter via sync/atomic.
 type KVReportStore struct {
 	kv        store.KVClient
 	idCounter atomic.Uint64
@@ -35,7 +43,11 @@ func NewKVReportStore(kv store.KVClient) *KVReportStore {
 	return &KVReportStore{kv: kv}
 }
 
-// Store assigns the report ID (and timestamp when zero) and writes the primary and reporter-index keys; a failure is *ReportStoreError.
+// Store persists a spam report to the KV store. The report's ID field is
+// assigned by the store before writing. If report.Timestamp is zero the
+// current UTC time is used. The report is written to both the primary key
+// and a reporter secondary index in separate Put operations; if either fails
+// a typed *ReportStoreError is returned.
 func (s *KVReportStore) Store(ctx context.Context, report *SpamReport) error {
 	id := s.nextID()
 	report.ID = id
@@ -111,7 +123,10 @@ func uitoa(n uint64) string {
 	return string(buf[pos:])
 }
 
-// ReportStoreError is a report-store KV failure; Operation names the step and Cause unwraps.
+// ReportStoreError indicates a KV operation failure within the report store.
+// The Operation field names the failing step (e.g. "put", "put-index",
+// "unmarshal"). Cause holds the underlying error and is surfaced via Unwrap
+// for errors.Is / errors.As traversal.
 type ReportStoreError struct {
 	Operation string
 	Cause     error

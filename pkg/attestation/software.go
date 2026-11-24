@@ -11,8 +11,20 @@ import (
 	"golang.org/x/crypto/curve25519"
 )
 
-// SoftwareAttester signs staticPub || boundData with a deployment ed25519 key.
-// evidence = staticPub(32) ‖ boundDataLen(4 BE) ‖ boundData ‖ ed25519Sig(64); endorsement = signerPub(32), the pinned trust anchor.
+// SoftwareAttester signs (server_static_pub || boundData) with a
+// deployment-time ed25519 signing key. Clients validate the signature
+// against an operator-pinned ed25519 public key.
+//
+// The Evidence envelope:
+//
+//	evidence    = staticPub(32) ‖ boundDataLen(4 BE) ‖ boundData ‖ ed25519Sig(64)
+//	endorsement = signerPub(32)  // operator's ed25519 public key
+//
+// The signer's public key is the deployment trust anchor. In
+// production the operator distributes signerPub via the same channel
+// the client uses to pin SVR endpoints (Signal-Server config, app
+// bundle). Rotating the deployment trust anchor means re-publishing
+// the pin.
 type SoftwareAttester struct {
 	signerPriv ed25519.PrivateKey
 	signerPub  ed25519.PublicKey
@@ -27,7 +39,10 @@ type SoftwareConfig struct {
 	// nil, NewSoftware generates a fresh one — only do that in tests.
 	SignerPrivateKey ed25519.PrivateKey
 
-	// StaticPrivateKey is the server's X25519 Noise private key; nil generates a fresh pair.
+	// StaticPrivateKey is the server's static Noise X25519 private
+	// scalar (32 bytes). If nil, NewSoftware generates a fresh pair
+	// — most production deployments want a persistent pair so
+	// existing pinned-public-key clients keep working across restarts.
 	StaticPrivateKey []byte
 }
 
@@ -75,7 +90,12 @@ func NewSoftware(cfg SoftwareConfig) (*SoftwareAttester, error) {
 	}, nil
 }
 
-// Attest is deterministic for the same key and input, so replicas produce identical evidence.
+// Attest produces fresh evidence binding boundData. The envelope is
+// deterministic given the inputs because ed25519 signing is
+// deterministic; this is intentional so two attesters running side-by-
+// side with the same key material produce identical bytes (useful for
+// HA deployments behind a load balancer where any replica's evidence
+// is acceptable to clients).
 func (s *SoftwareAttester) Attest(_ context.Context, boundData []byte) (*Evidence, error) {
 	// Compose the signed payload: staticPub || sha256(boundData).
 	// We hash boundData so the signed message stays fixed-length
@@ -124,7 +144,14 @@ func (s *SoftwareAttester) SignerPublic() ed25519.PublicKey {
 // Type returns "software".
 func (s *SoftwareAttester) Type() string { return "software" }
 
-// VerifySoftwareEvidence checks an envelope against a trusted signer key and returns the static key and boundData.
+// VerifySoftwareEvidence validates a software-attestation envelope
+// against a trusted signer public key. Returns the attested static
+// public key and the boundData on success.
+//
+// This is the client-side validator. Tests and (eventually) the
+// mobile-client-side go-libsignal port consume it. Implementations of
+// the SVR2 Noise client elsewhere translate this into the
+// "evidence + endorsement" parse path.
 func VerifySoftwareEvidence(envelope, expectedSignerPub []byte) (staticPub, boundData []byte, err error) {
 	if len(envelope) < 32+4+ed25519.SignatureSize {
 		return nil, nil, errors.New("attestation: envelope too short")

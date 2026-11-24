@@ -44,7 +44,14 @@ const secondsPerDay int64 = 86400
 // ed25519PrivKeySize is the canonical byte length of an Ed25519 private key.
 const ed25519PrivKeySize = ed25519.PrivateKeySize
 
-// CertificatesManager issues sealed-sender delivery certificates (Ed25519, else HMAC-SHA256) and group credentials (zkgroup when authServerSecret is set, else HMAC), plus call-link credentials.
+// CertificatesManager generates delivery certificates and group credentials
+// for sealed-sender messaging. It uses an Ed25519 signing key (when
+// configured) to produce delivery certificate signatures, falling back to
+// HMAC-SHA256 for compatibility when no Ed25519 key is set. When
+// authServerSecret is set, group credentials are issued via the zkgroup
+// AuthCredentialWithPni protocol; otherwise HMAC-SHA256 is used.
+// When callingZKParams is set, it also issues CallLinkAuthCredentials
+// alongside group credentials.
 type CertificatesManager struct {
 	// signingKey is the legacy HMAC signing key, used for delivery cert
 	// fallback and HMAC group credentials when zkgroup is not configured.
@@ -72,7 +79,10 @@ type CertificatesManager struct {
 	logger *slog.Logger
 }
 
-// NewCertificatesManager returns a manager that owns signingKey (the HMAC fallback key) and destroys it in Destroy.
+// NewCertificatesManager creates a new CertificatesManager with the given
+// signing key and logger. The signing key is used for HMAC-SHA256 fallback
+// signing on generated certificates. The manager takes ownership of the
+// SecureString and will destroy it when Destroy is called.
 func NewCertificatesManager(signingKey *secrets.SecureString, logger *slog.Logger) *CertificatesManager {
 	return &CertificatesManager{
 		signingKey: signingKey,
@@ -117,7 +127,11 @@ func (m *CertificatesManager) SetAuthServerSecret(params *zkgroup.ServerSecretPa
 	m.authServerSecret = params
 }
 
-// SetEd25519SigningKey sets the delivery-certificate signing key (ed25519.PrivateKeySize bytes) and the key ID carried in certificates.
+// SetEd25519SigningKey configures the Ed25519 private key used to sign
+// delivery certificates. The privKey must be exactly ed25519.PrivateKeySize
+// bytes. The pubKeyID is an opaque identifier included in the certificate
+// so clients can select the correct verification key. When set, delivery
+// certificate signing uses Ed25519 instead of HMAC-SHA256.
 func (m *CertificatesManager) SetEd25519SigningKey(privKey ed25519.PrivateKey, pubKeyID uint32) error {
 	if len(privKey) != ed25519PrivKeySize {
 		return &Ed25519KeyError{Cause: &invalidKeyLengthError{
@@ -140,7 +154,10 @@ func (m *CertificatesManager) SetEd25519SigningKey(privKey ed25519.PrivateKey, p
 	return nil
 }
 
-// Ed25519PublicKey returns the configured key's public half, or nil.
+// Ed25519PublicKey returns the Ed25519 public key corresponding to the
+// configured private key, or nil if no Ed25519 key has been configured.
+// The private key is only briefly unlocked to derive the public key and is
+// re-sealed immediately after use.
 func (m *CertificatesManager) Ed25519PublicKey() ed25519.PublicKey {
 	var pub ed25519.PublicKey
 	// Derive the public key from the locked bytes via a temporary copy; the
@@ -197,9 +214,21 @@ func (m *CertificatesManager) hasEd25519Key() bool {
 	return m.ed25519Secret != nil
 }
 
-// GetDeliveryCertificate returns a JSON delivery certificate for sender, without the number when includeE164 is false.
+// GetDeliveryCertificate generates a delivery certificate for the specified
+// sender. The certificate encodes the sender's identity and is signed with the
+// server's signing key. When an Ed25519 key is configured, Ed25519 is used;
+// otherwise the method falls back to HMAC-SHA256. When includeE164 is false,
+// the phone number is omitted from the certificate to support anonymous
+// sealed-sender delivery.
 //
-// Deprecated: not wire compatible with libsignal; use BuildSignalSenderCertificate.
+// Deprecated: this method emits a JSON-encoded envelope with raw Ed25519
+// or HMAC over a JSON payload. That format is NOT byte-wire compatible
+// with Rust libsignal or the Java Signal-Server reference. New code MUST
+// use BuildSignalSenderCertificate (in signal_compat.go) which delegates
+// to go-libsignal/pkg/sealed and produces a protobuf-encoded,
+// XEdDSA-signed Signal SenderCertificate. This method is retained only
+// to keep existing API consumers compiling until they migrate; it will
+// be removed in a future release.
 func (m *CertificatesManager) GetDeliveryCertificate(
 	ctx context.Context,
 	uuid string,
@@ -249,7 +278,13 @@ func (m *CertificatesManager) GetDeliveryCertificate(
 	}, nil
 }
 
-// GetGroupCredentials issues one group credential per day from startSeconds to endSeconds (Unix, inclusive), via zkgroup when authServerSecret is set.
+// GetGroupCredentials generates daily group send credentials for the specified
+// account covering the time range from startSeconds to endSeconds (inclusive,
+// Unix timestamps). Each credential is keyed to a specific day and can be
+// redeemed during that day's window.
+//
+// When authServerSecret is configured, credentials are issued using the
+// zkgroup AuthCredentialWithPniZkc protocol; otherwise HMAC-SHA256 is used.
 func (m *CertificatesManager) GetGroupCredentials(
 	ctx context.Context,
 	uuid string,
@@ -321,7 +356,15 @@ func (m *CertificatesManager) GetGroupCredentials(
 	}, nil
 }
 
-// GetExpiringProfileKeyCredential issues a credential for the client's request and stored commitment; without authServerSecret it returns a stub with no proof.
+// GetExpiringProfileKeyCredential issues an ExpiringProfileKeyCredential for
+// the given account. The credentialRequest is the fully-constructed
+// ProfileKeyCredentialRequest from the client (obtained via
+// CreateProfileKeyCredentialRequestContext on the client side). The commitment
+// is the stored ProfileKeyCommitment for the requested profile version.
+//
+// When authServerSecret is not configured, a structured stub response is
+// returned with the correct wire shape but no cryptographic proof; callers
+// should check whether zkgroup is active before relying on the credential.
 func (m *CertificatesManager) GetExpiringProfileKeyCredential(
 	ctx context.Context,
 	aciUUID string,
@@ -377,7 +420,12 @@ func (m *CertificatesManager) GetExpiringProfileKeyCredential(
 	}, nil
 }
 
-// GetExpiringProfileKeyCredentialStub returns a well-formed stub response for aci, used when the request cannot be decoded or zkgroup is not configured.
+// GetExpiringProfileKeyCredentialStub returns a structured stub
+// ExpiringProfileKeyCredentialResponse for the given ACI. This is used
+// when the full zkgroup credential request cannot be deserialized (because
+// the wire format deserializer is not yet implemented in go-libsignal), or
+// when authServerSecret is not configured. The stub has the correct wire
+// shape so that the REST handler can return a well-formed response.
 func (m *CertificatesManager) GetExpiringProfileKeyCredentialStub(
 	ctx context.Context,
 	aciUUID string,

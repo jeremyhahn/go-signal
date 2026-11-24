@@ -13,7 +13,8 @@ type SecureStorageService interface {
 	// account UUID.
 	GetAuth(ctx context.Context, accountUUID string) (*securestorage.StorageCredentials, error)
 
-	// StorageEnabled reports whether a manifest store is configured.
+	// StorageEnabled reports whether a manifest store is configured. When
+	// false the REST layer serves the safe 204 stub.
 	StorageEnabled() bool
 
 	// GetManifest returns the account's current storage manifest, or nil when

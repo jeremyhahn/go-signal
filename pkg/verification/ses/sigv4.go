@@ -24,7 +24,12 @@ type sigV4 struct {
 	now             func() time.Time
 }
 
-// Sign adds the SigV4 Authorization, X-Amz-Date and optional X-Amz-Security-Token headers; body must be the exact bytes sent.
+// Sign mutates req in place, adding the Authorization, X-Amz-Date, and
+// X-Amz-Security-Token (when set) headers required for SigV4 auth.
+//
+// The body bytes must be the exact bytes that will be transmitted; SES
+// computes the payload hash from them. This implementation handles only
+// non-streaming requests (Content-Length set, body buffered).
 func (s *sigV4) Sign(req *http.Request, body []byte) error {
 	if s.accessKeyID == "" || s.secretAccessKey.IsEmpty() {
 		return errors.New("ses sigv4: missing credentials")

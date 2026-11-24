@@ -16,7 +16,13 @@ var ErrKeyNotFound = errors.New("cache: key not found")
 // already holds the lock; callers should not treat it as a failure.
 var ErrLockNotAcquired = errors.New("cache: lock not acquired")
 
-// Client is the Redis-shaped cache interface; safe for concurrent use, and a zero TTL means no expiration.
+// Client is the Redis-shaped cache interface the go-signal services
+// depend on. Implementations must be safe for concurrent use from many
+// goroutines.
+//
+// Methods take a [context.Context] for cancellation and deadline
+// propagation. TTL-bearing operations accept a duration; passing zero means
+// no expiration.
 type Client interface {
 	// --- Keyed values -----------------------------------------------------
 
@@ -45,7 +51,10 @@ type Client interface {
 
 	// --- Counters ---------------------------------------------------------
 
-	// Incr atomically increments key and returns the new value; a missing key becomes 1 with no TTL.
+	// Incr atomically increments the integer value stored at key by one
+	// and returns the new value. If the key does not exist it is set to
+	// 1 with no TTL; callers must Expire it explicitly for rate-limit
+	// semantics.
 	Incr(ctx context.Context, key string) (int64, error)
 
 	// IncrBy atomically increments the integer stored at key by delta and
@@ -59,7 +68,9 @@ type Client interface {
 	// Returns ErrLockNotAcquired when another holder owns it.
 	Lock(ctx context.Context, key, token string, ttl time.Duration) error
 
-	// Unlock releases a lock only if its value still matches token.
+	// Unlock releases a lock previously acquired by Lock, but only if the
+	// current value matches the given token. Releasing another holder's
+	// lock (which would indicate TTL expiration) is a no-op.
 	Unlock(ctx context.Context, key, token string) error
 
 	// --- Sorted sets (per-device message queues) --------------------------

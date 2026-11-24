@@ -106,7 +106,10 @@ func ParseFrame(b []byte) (Frame, error) {
 	return Frame{Kind: FrameKind(b[0]), Body: b[1:]}, nil
 }
 
-// MarshalAttestation packs evidence and endorsement as evLen(4 BE) || ev || endLen(4 BE) || end.
+// MarshalAttestation packs evidence + endorsement into a single
+// length-prefixed buffer suitable for FrameAttestation.Body.
+//
+// Wire shape: evLen(4 BE) || ev || endLen(4 BE) || end.
 func MarshalAttestation(evidence, endorsement []byte) []byte {
 	out := make([]byte, 0, 4+len(evidence)+4+len(endorsement))
 	out = appendUint32BE(out, uint32(len(evidence)))
