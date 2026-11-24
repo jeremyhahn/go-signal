@@ -56,18 +56,7 @@ func TestStorageCredentials_WireFormUnchanged(t *testing.T) {
 	}
 }
 
-// TestStorageCredentials_MarshalFailsClosedOnWipedPassword is the reason the
-// type carries an explicit marshaller instead of leaning on SecureString's
-// default.
-//
-// A credential whose password has been wiped must FAIL the response, not
-// serialise as an empty string: the client treats whatever arrives in that
-// field as its bearer token, so an empty password is a credential it would
-// present and be rejected for. writeJSON turns this error into a 500, which
-// is the fail-closed outcome end to end.
-//
-// Reverting MarshalJSON to Plaintext (which returns "" instead of erroring)
-// makes this fail.
+// TestStorageCredentials_MarshalFailsClosedOnWipedPassword: a wiped password must fail the response, not serialise as "".
 func TestStorageCredentials_MarshalFailsClosedOnWipedPassword(t *testing.T) {
 	creds := StorageCredentials{
 		Username: "acct-uuid",

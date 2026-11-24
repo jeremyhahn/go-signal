@@ -32,19 +32,7 @@ func shippedServerCert(t *testing.T) *x509.Certificate {
 	return cert
 }
 
-// TestRemoteTLSConfig_VerifiesTheDevcontainerCertificate proves the harness can
-// authenticate the server it talks to, rather than accepting whatever
-// certificate arrives.
-//
-// The remote path only runs when SIGNAL_SERVER_URL is set, so a wrong CA path
-// or an unusable pool would otherwise surface for the first time inside the
-// devcontainer — as a connection failure with no obvious cause. This runs
-// everywhere and needs no server.
-//
-// It is skipped when SIGNAL_CA_CERT is set. That override exists so the suite
-// can be pointed at another environment, whose CA has no reason to have issued
-// the certificate `make test-tls` generated; asserting the generated one
-// regardless would break the very path the override is for.
+// TestRemoteTLSConfig_VerifiesTheDevcontainerCertificate checks the harness verifies the generated server certificate; skipped when SIGNAL_CA_CERT is set.
 func TestRemoteTLSConfig_VerifiesTheDevcontainerCertificate(t *testing.T) {
 	if path := os.Getenv("SIGNAL_CA_CERT"); path != "" {
 		t.Skipf("SIGNAL_CA_CERT=%s selects another environment's CA; the shipped certificate is not expected to chain to it", path)
@@ -62,12 +50,7 @@ func TestRemoteTLSConfig_VerifiesTheDevcontainerCertificate(t *testing.T) {
 	}
 }
 
-// TestRemoteTLSConfig_HonoursTheCACertOverride covers the path the test above
-// steps out of the way for: an external environment supplying its own CA.
-//
-// A generated CA rather than a fixture, because the assertion is that the
-// configured pool trusts what SIGNAL_CA_CERT points at — which is only
-// meaningful if that CA has nothing to do with this repository.
+// TestRemoteTLSConfig_HonoursTheCACertOverride checks the pool trusts the CA SIGNAL_CA_CERT names.
 func TestRemoteTLSConfig_HonoursTheCACertOverride(t *testing.T) {
 	const host = "override.example"
 	caPEM, leaf := newTestCAAndLeaf(t, host)
@@ -82,9 +65,7 @@ func TestRemoteTLSConfig_HonoursTheCACertOverride(t *testing.T) {
 	_, err := leaf.Verify(x509.VerifyOptions{Roots: cfg.RootCAs, DNSName: host})
 	require.NoError(t, err, "SIGNAL_CA_CERT was ignored: the pool does not trust the supplied CA")
 
-	// The override must REPLACE the default, not sit alongside it. A pool that
-	// also trusted the shipped CA would pass the assertion above while quietly
-	// trusting more than the operator asked for.
+	// The override replaces the default pool rather than adding to it.
 	_, err = shippedServerCert(t).Verify(x509.VerifyOptions{Roots: cfg.RootCAs, DNSName: "signal-server"})
 	require.Error(t, err, "the pool still trusts the repository CA despite the override")
 }

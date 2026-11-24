@@ -380,7 +380,7 @@ func TestDelete_Success(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Profile should no longer be found.
+	// The profile is gone.
 	_, err = mgr.Get(context.Background(), "uuid-1", "v1")
 	if err == nil {
 		t.Fatal("expected error after delete")

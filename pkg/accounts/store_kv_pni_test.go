@@ -87,7 +87,7 @@ func TestKVAccountStore_Update_PNIChange(t *testing.T) {
 	acct.PNI = "new-pni"
 	require.NoError(t, s.Update(ctx, acct))
 
-	// Old PNI should no longer resolve.
+	// The old PNI must not resolve.
 	_, err := s.GetByPNI(ctx, "old-pni")
 	require.Error(t, err)
 	var notFound *AccountNotFoundError

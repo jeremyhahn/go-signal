@@ -1,20 +1,4 @@
-# Full Signal-server topology: signald + 5 external services.
-#
-# Each service runs as its own container. signald is the only one
-# clients (mobile apps, REST callers) talk to over the public ports
-# (8080 HTTPS, 8081 HTTP, 8443 gRPC). The four "back-end" services
-# (registration-service, svr2, cdsi, storage-service, key-transparency)
-# expose gRPC or HTTP only inside the compose network — signald is
-# the one that proxies for them or holds their HMAC credentials.
-#
-# Two of them (svr2, cdsi) also expose WebSocket listeners that
-# mobile clients connect to directly per Java's reference
-# architecture. Production deployments would publish those through a
-# separate ingress; here they sit on the compose network only.
-#
-# Shared infrastructure:
-#   - redis: WebSocket-session clustering + rate-limit token bucket.
-#   - postgres: production-grade durable storage backend.
+# signald plus its back-end services; only signald (8080 HTTPS, 8081 HTTP, 8443 gRPC) is public, the rest stay on the compose network with redis and postgres.
 
 version: "3.9"
 

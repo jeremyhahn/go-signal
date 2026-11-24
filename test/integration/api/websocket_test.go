@@ -353,12 +353,7 @@ func TestWebSocket_UnauthenticatedKeepalive(t *testing.T) {
 func TestWebSocket_ConnectWithoutAuth(t *testing.T) {
 	env := setupTestEnv(t)
 
-	// The /v1/websocket/ endpoint supports both authenticated and unauthenticated
-	// connections, mirroring the Java Signal-Server's OptionalAccess pattern.
-	// Requests without credentials are routed to HandleUnauthenticated and the
-	// upgrade succeeds — the same behavior verified by TestWebSocket_UnauthenticatedKeepalive.
-	// Unauthenticated clients use this path for pre-registration operations
-	// (e.g. fetching remote config via WebSocket transport).
+	// /v1/websocket/ accepts unauthenticated upgrades, routed to HandleUnauthenticated.
 	wsURL := toWSURL(env.baseURL) + "/v1/websocket/"
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

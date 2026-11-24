@@ -6,17 +6,7 @@ import (
 	"strings"
 )
 
-// frontendHandler serves the embedded React SPA. It delegates to an
-// http.FileServer for requests that correspond to real files, and falls back
-// to serving index.html for all other GET requests so that client-side routing
-// works correctly.
-//
-// Cache policy follows the Vite content-hash convention:
-//   - Files under /assets/ carry a content hash in the name and are served
-//     with Cache-Control: public, max-age=31536000, immutable.
-//   - index.html is served with Cache-Control: no-cache, no-store, must-revalidate
-//     so that browsers always revalidate and pick up new deployments.
-//   - All other static files receive Cache-Control: public, max-age=3600.
+// frontendHandler serves the embedded SPA with index.html fallback; /assets/ is immutable for a year, index.html no-cache, other files one hour.
 type frontendHandler struct {
 	fileServer http.Handler
 	files      fs.FS
@@ -32,11 +22,7 @@ func newFrontendHandler(files fs.FS) *frontendHandler {
 	}
 }
 
-// ServeHTTP implements http.Handler. Non-GET/HEAD requests are rejected with
-// 405 Method Not Allowed. Requests for paths that begin with an API prefix
-// should never reach this handler (API routes are registered first and take
-// priority), but as a safety net they are passed to the file server which will
-// return 404.
+// ServeHTTP rejects methods other than GET and HEAD with 405.
 func (h *frontendHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")

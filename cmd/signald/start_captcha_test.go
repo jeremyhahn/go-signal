@@ -54,8 +54,7 @@ func TestBuildCaptchaChecker_TestProviderRejectsUnknownToken(t *testing.T) {
 	}
 }
 
-// No provider named yields no Checker; the REST layer turns that into a 503
-// rather than accepting an unverifiable token.
+// No provider yields no Checker; the REST layer answers 503.
 func TestBuildCaptchaChecker_NoProviderYieldsNilChecker(t *testing.T) {
 	checker, err := buildCaptchaChecker(config.CaptchaConfig{})
 	if err != nil {
@@ -81,13 +80,7 @@ func TestBuildCaptchaChecker_UnknownProviderIsAStartupError(t *testing.T) {
 	}
 }
 
-// The test provider must never reach a production deployment. The gate lives
-// in validateProduction; this asserts it actually refuses the combination
-// buildCaptchaChecker would otherwise happily wire up.
-//
-// The port and storage backend are set so Validate reaches validateProduction
-// at all — without them it returns early on an unrelated field, and the
-// assertion below would pass without testing anything.
+// validateProduction must refuse the test provider; port and backend are set so Validate reaches it.
 func TestProductionConfigRejectsTestCaptchaProvider(t *testing.T) {
 	cfg := &config.Config{Mode: "production"}
 	cfg.Server.HTTPPort = 8080

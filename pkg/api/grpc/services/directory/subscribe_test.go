@@ -194,13 +194,7 @@ func TestServer_Subscribe_RetrogradeEventsDropped(t *testing.T) {
 	}
 }
 
-// recvChange returns the next real change event, skipping the token-only
-// keepalive frames the server emits on a ticker. Without this a test racing a
-// 50ms keepalive reads the keepalive instead of the event it just published
-// and fails only under load — the frame arrives, just not the one asserted on.
-// Bounded by the stream's context deadline rather than a sleep
-// (testing-guidelines.md §Fault Injection, on time as a synchronization
-// primitive).
+// recvChange returns the next change event, skipping keepalive frames, bounded by the stream deadline.
 func recvChange(t *testing.T, stream dirpb.DirectoryService_SubscribeClient) *dirpb.DirectoryChangeEvent {
 	t.Helper()
 	for {

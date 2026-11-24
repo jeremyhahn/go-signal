@@ -1,9 +1,4 @@
-// Package common holds client-side helpers shared by every
-// pkg/extservice/* binary client (registration-service, svr2, cdsi,
-// storage-service, key-transparency). Pulling these into one place
-// keeps the credential-derivation and transport-policy code
-// byte-identical across services — a divergence between them would
-// silently break the HMAC contract or the mTLS pinning.
+// Package common holds the credential and transport helpers every pkg/extservice client shares.
 package common
 
 import (
@@ -20,22 +15,9 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
-// BasicAuthHeader builds the HTTP Basic auth header value Signal's
-// external services expect. The password is the hex-encoded
-// HMAC-SHA256 of identity under sharedSecret. Mirrors Java's
-// ExternalServiceCredentialsGenerator.
-//
-// Use this on the chat-server side when constructing requests to
-// svr2 / storage-service. Use ValidateBasicAuth on the service-side
-// to verify inbound credentials.
+// BasicAuthHeader returns the Basic auth value with password hex(HMAC-SHA256(sharedSecret, identity)); services verify with ValidateBasicAuth.
 func BasicAuthHeader(identity string, sharedSecret []byte) string {
-	// Assembled in wipeable buffers. `identity + ":" + password` put the
-	// finished credential in a Go string that cannot be wiped and that the
-	// runtime is free to copy — and so did hex.EncodeToString before it.
-	//
-	// The returned header still contains the credential, unavoidably: it is
-	// the value the caller has to send. What this removes is the two extra
-	// copies that outlived the call with nothing able to clear them.
+	// Assembled in wipeable buffers; only the returned header holds the credential.
 	mac := hmac.New(sha256.New, sharedSecret)
 	mac.Write([]byte(identity))
 	sum := mac.Sum(nil)
@@ -53,17 +35,7 @@ func BasicAuthHeader(identity string, sharedSecret []byte) string {
 	return "Basic " + string(enc)
 }
 
-// BasicAuthHeaderCredential builds a Basic auth header value from a credential
-// that has ALREADY been issued, keeping the assembly in wipeable buffers.
-//
-// BasicAuthHeader derives the password from a shared secret by HMAC; this one
-// is for callers that hold a generated username/password pair instead and must
-// not re-derive it. The two are otherwise the same discipline, which is why
-// they live together rather than being open-coded at the call site.
-//
-// Returns "" when the password is unset or destroyed, so a wiped credential
-// fails closed instead of producing a header with an empty password that the
-// far side would simply reject.
+// BasicAuthHeaderCredential returns a Basic auth value for an issued credential, built in wipeable buffers; "" when the password is unset or destroyed.
 func BasicAuthHeaderCredential(identity string, password *secrets.SecureString) string {
 	var header string
 	password.WithBytes(func(pw []byte) {
@@ -87,11 +59,7 @@ func BasicAuthHeaderCredential(identity string, password *secrets.SecureString) 
 	return header
 }
 
-// ValidateBasicAuth parses a "Basic <base64>" Authorization header,
-// verifies the password matches HMAC-SHA256(sharedSecret, username)
-// hex-encoded, and returns the username on success.
-//
-// Comparison is constant-time. Returns ("", false) on any failure.
+// ValidateBasicAuth verifies a Basic header's password is hex HMAC-SHA256(sharedSecret, username) in constant time and returns the username.
 func ValidateBasicAuth(authHeader string, sharedSecret []byte) (string, bool) {
 	const prefix = "Basic "
 	if !strings.HasPrefix(authHeader, prefix) {
@@ -101,9 +69,7 @@ func ValidateBasicAuth(authHeader string, sharedSecret []byte) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	// The decoded buffer holds `username:password`; wipe it on every path.
-	// It used to be left resident, and `string(raw)` copied the credential
-	// into memory that cannot be wiped merely to find the separator.
+	// The decoded username:password buffer is wiped on every path.
 	defer secure.Wipe(raw)
 
 	sep := bytes.IndexByte(raw, ':')
@@ -113,9 +79,7 @@ func ValidateBasicAuth(authHeader string, sharedSecret []byte) (string, bool) {
 	username := raw[:sep]
 	password := raw[sep+1:]
 
-	// The EXPECTED credential is as sensitive as the presented one — it is
-	// the value an attacker needs — so it is derived into bytes and wiped
-	// too, where hex.EncodeToString left it in an unwipeable string.
+	// The expected credential is derived into bytes and wiped too.
 	mac := hmac.New(sha256.New, sharedSecret)
 	mac.Write(username)
 	sum := mac.Sum(nil)
@@ -127,20 +91,11 @@ func ValidateBasicAuth(authHeader string, sharedSecret []byte) (string, bool) {
 	if subtle.ConstantTimeCompare(password, want) != 1 {
 		return "", false
 	}
-	// The username is an account identity, not credential material, and is
-	// this function's whole return value. The caller's authHeader string still
-	// holds the encoded credential — it belongs to net/http and cannot be
-	// wiped from here, which is a limit of this fix rather than an oversight.
+	// The username is an identity, not credential material; the caller's header string is outside this function's reach.
 	return string(username), true
 }
 
-// BasicAuthHeaderSecret is BasicAuthHeader with the shared secret drawn from
-// protected memory. The key is revealed only for the length of the HMAC and
-// wiped again before this returns, so a long-lived credential-signing secret
-// never has to sit on the heap as a plain []byte.
-//
-// Returns "" when the secret is unset or destroyed — the caller must treat
-// that as a failure to authenticate rather than sending an unsigned header.
+// BasicAuthHeaderSecret is BasicAuthHeader with the secret revealed from protected memory only for the HMAC; "" when unset or destroyed.
 func BasicAuthHeaderSecret(identity string, sharedSecret *secrets.SecureString) string {
 	var header string
 	sharedSecret.WithBytes(func(key []byte) {
@@ -149,12 +104,7 @@ func BasicAuthHeaderSecret(identity string, sharedSecret *secrets.SecureString) 
 	return header
 }
 
-// ValidateBasicAuthSecret is ValidateBasicAuth with the shared secret drawn
-// from protected memory, with the same reveal-and-wipe discipline as
-// BasicAuthHeaderSecret.
-//
-// Returns ("", false) when the secret is unset or destroyed, so a wiped
-// secret fails closed instead of authenticating anything.
+// ValidateBasicAuthSecret is ValidateBasicAuth with the secret from protected memory; ("", false) when unset or destroyed.
 func ValidateBasicAuthSecret(authHeader string, sharedSecret *secrets.SecureString) (string, bool) {
 	var (
 		username string

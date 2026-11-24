@@ -413,7 +413,7 @@ func TestUpdateChangeNumber(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Old number should no longer work.
+	// The old number does not resolve.
 	_, err := store.GetByNumber(context.Background(), "+15556000000")
 	if err == nil {
 		t.Fatal("expected error for old number after update")
@@ -468,7 +468,7 @@ func TestUpdateClearNumber(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Old number should no longer work.
+	// The old number does not resolve.
 	_, err := store.GetByNumber(context.Background(), "+15550100000")
 	if err == nil {
 		t.Fatal("expected error for cleared number")

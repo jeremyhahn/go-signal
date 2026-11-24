@@ -1,9 +1,4 @@
-// Package directory implements signald's internal gRPC
-// DirectoryService that cdsi calls on startup to populate its local
-// lookup index. Per the Phase 4.3 plan, cdsi never reaches into
-// signald's account storage directly — every read goes through this
-// surface so production deployments can run the two binaries with
-// signald + cdsi on separate hosts joined by mTLS gRPC.
+// Package directory implements signald's internal gRPC DirectoryService, the only path cdsi reads accounts through.
 package directory
 
 import (
@@ -36,8 +31,7 @@ type DirectoryEntry struct {
 	AccessKey [16]byte
 }
 
-// ChangeEventKind classifies a live mutation. UPSERT means "store
-// this entry"; DELETE means "drop the row for this UUID".
+// ChangeEventKind classifies a live mutation: UPSERT stores an entry, DELETE drops the row for a UUID.
 type ChangeEventKind int
 
 const (
@@ -47,10 +41,7 @@ const (
 	ChangeEventDelete ChangeEventKind = 2
 )
 
-// ChangeEvent is one mutation delivered by an EventSource. UUID is
-// always populated; Entry is populated for Upsert and zero for
-// Delete. Seq is a monotonic cursor consumers can persist as a
-// resume token.
+// ChangeEvent is one mutation; Entry is zero for Delete and Seq is a monotonic resume cursor.
 type ChangeEvent struct {
 	Seq   uint64
 	Kind  ChangeEventKind
@@ -74,24 +65,13 @@ type EventSubscription interface {
 	Close()
 }
 
-// EventSource is the optional change-event surface that drives the
-// Subscribe RPC. signald implements it on top of the accounts event
-// bus. When NewServer is constructed without an EventSource,
-// Subscribe returns codes.Unimplemented — consumers fall back to
-// periodic ListEntries polling.
+// EventSource drives Subscribe; without one Subscribe returns Unimplemented and consumers poll ListEntries.
 type EventSource interface {
-	// Subscribe returns a live subscription and the "as-of"
-	// sequence number captured at subscription time. Events
-	// published after that point arrive on the returned channel.
-	// The buffer parameter bounds the per-subscriber in-flight
-	// event queue; production callers use 1024+.
+	// Subscribe returns a live subscription and the sequence it was taken at; buffer bounds the per-subscriber queue.
 	Subscribe(ctx context.Context, buffer int) (EventSubscription, uint64)
 }
 
-// defaultSubscribeBuffer is the per-subscriber event-channel
-// capacity used when no override is supplied via
-// WithSubscribeBuffer. 1024 absorbs typical traffic bursts without
-// pinning excessive heap per active stream.
+// defaultSubscribeBuffer is the per-subscriber event-channel capacity.
 const defaultSubscribeBuffer = 1024
 
 // Server implements dirpb.DirectoryServiceServer.
@@ -129,10 +109,7 @@ func WithEventSource(es EventSource) ServerOption {
 	return func(s *Server) { s.events = es }
 }
 
-// WithSubscribeBuffer overrides the per-subscriber event-channel
-// capacity used inside the Subscribe RPC. Increase for bursty
-// deployments or slow consumers; decrease to bound per-stream
-// memory. Values <= 0 leave the default in place.
+// WithSubscribeBuffer overrides the per-subscriber event-channel capacity; values <= 0 keep the default.
 func WithSubscribeBuffer(n int) ServerOption {
 	return func(s *Server) {
 		if n > 0 {
@@ -141,10 +118,7 @@ func WithSubscribeBuffer(n int) ServerOption {
 	}
 }
 
-// WithSubscribeKeepAlive overrides the cadence at which Subscribe
-// emits a resume-token-only frame during idle live phases. Clients
-// rely on these frames to persist a fresh cursor without waiting
-// for the next mutation. Values <= 0 leave the default in place.
+// WithSubscribeKeepAlive overrides the idle resume-token frame interval; values <= 0 keep the default.
 func WithSubscribeKeepAlive(d time.Duration) ServerOption {
 	return func(s *Server) {
 		if d > 0 {
@@ -165,27 +139,7 @@ func (s *Server) ListEntries(_ *dirpb.ListEntriesRequest, stream dirpb.Directory
 	})
 }
 
-// Subscribe drives the live change-event stream.
-//
-// Protocol:
-//
-//  1. Capture the bus's current sequence under the subscription
-//     atom — events with Seq > asOf arrive on the live channel.
-//  2. Stream a full ListAll snapshot as UPSERT events, tagging each
-//     with the captured asOf so cdsi treats them as a coherent
-//     point-in-time view.
-//  3. Drain live events from the subscription channel, forwarding
-//     each to the gRPC stream. Periodically emit a resume token
-//     (every Nth event, plus on stream end) so reconnecting
-//     consumers can resume without re-snapshotting if their cursor
-//     is recent enough.
-//
-// resume_token in the request is the big-endian uint64 cursor the
-// client last received. When present and the bus's history can
-// honor it, the server skips step 2. The current implementation
-// always snapshots — bus retention is left for a follow-on; clients
-// already handle the conservative "treat snapshot as authoritative"
-// behaviour because each entry carries a deterministic UUID/E164.
+// Subscribe streams a full snapshot as UPSERT events tagged with the captured sequence, then live events with periodic resume tokens.
 func (s *Server) Subscribe(req *dirpb.SubscribeRequest, stream dirpb.DirectoryService_SubscribeServer) error {
 	if s.events == nil {
 		return status.Error(codes.Unimplemented, "directory: Subscribe not configured (no EventSource)")
@@ -208,14 +162,7 @@ func (s *Server) Subscribe(req *dirpb.SubscribeRequest, stream dirpb.DirectorySe
 		snapshotShipped = true
 	}
 
-	// Live phase. Resume tokens are emitted ONLY in the live phase
-	// (piggy-backed on the first live event past asOf, on every
-	// tokenInterval-th subsequent event, and from the keep-alive
-	// ticker during idle windows). The previous design emitted a
-	// resume token immediately after the snapshot — that allowed a
-	// client whose snapshot got interrupted mid-stream to persist
-	// the asOf cursor, then skip the snapshot on reconnect and
-	// silently lose the rows it never received.
+	// Resume tokens are emitted only in the live phase, so an interrupted snapshot is never skipped on reconnect.
 	const tokenInterval = 32
 	since := asOf
 	emitted := 0
@@ -232,10 +179,7 @@ func (s *Server) Subscribe(req *dirpb.SubscribeRequest, stream dirpb.DirectorySe
 			}
 			return nil
 		case <-keepAlive.C:
-			// Emit a token-only frame so idle streams still
-			// give clients a fresh cursor to persist. The
-			// cursor is the most recent sequence we've
-			// actually delivered, which is exactly `since`.
+			// Token-only frame: the cursor is the last delivered sequence.
 			if err := stream.Send(&dirpb.DirectoryChangeEvent{ResumeToken: encodeResumeToken(since)}); err != nil {
 				return err
 			}

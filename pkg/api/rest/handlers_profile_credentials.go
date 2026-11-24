@@ -27,16 +27,7 @@ const (
 	maxBatchIdentityCheckElements = 1000
 )
 
-// handleGetProfileWithCredential processes
-// GET /v1/profile/{identifier}/{version}/{credentialRequest} and returns the
-// specified version of a user's profile along with an
-// ExpiringProfileKeyCredential.
-//
-// The credentialRequest path parameter is a hex-encoded
-// ProfileKeyCredentialRequest from the client. It is deserialized and verified
-// against the account's stored profile-key commitment during issuance, so a
-// request that doesn't match the commitment fails closed (the zkgroup proof
-// verification rejects it) rather than yielding a usable-but-wrong credential.
+// handleGetProfileWithCredential handles GET /v1/profile/{identifier}/{version}/{credentialRequest}; a request not matching the stored commitment fails.
 func (s *Server) handleGetProfileWithCredential(w http.ResponseWriter, r *http.Request) {
 	identifier := r.PathValue("identifier")
 	version := r.PathValue("version")
@@ -127,10 +118,7 @@ func (s *Server) handleGetProfileWithCredential(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// handleBatchIdentityCheck processes POST /v1/profile/identity_check/batch and
-// compares ACI fingerprints against stored identity keys. A fingerprint is the
-// first 4 bytes of the SHA-256 hash of the stored identity key. Any mismatches
-// are returned with the stored identity key so the client can update its cache.
+// handleBatchIdentityCheck handles POST /v1/profile/identity_check/batch, returning stored keys whose 4-byte SHA-256 fingerprint differs.
 func (s *Server) handleBatchIdentityCheck(w http.ResponseWriter, r *http.Request) {
 	acct := accountFromContext(r.Context())
 	if acct == nil {
@@ -187,15 +175,7 @@ func (s *Server) handleBatchIdentityCheck(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// fingerprintEqual performs a constant-time, exact-length comparison of two
-// fingerprint byte slices. Both slices must have identical length; a partial
-// prefix match is treated as a mismatch. This prevents two attacks:
-//
-//  1. Timing attack: early-return byte-by-byte comparison leaks how many
-//     leading bytes match. subtle.ConstantTimeCompare eliminates this.
-//  2. Prefix-match bug: a 1-byte submitted fingerprint would previously match
-//     the first byte of any 4-byte stored fingerprint. Requiring an exact
-//     length match closes this oracle.
+// fingerprintEqual compares in constant time and requires equal length, so a prefix never matches.
 func fingerprintEqual(submitted, stored []byte) bool {
 	if len(submitted) != len(stored) {
 		return false

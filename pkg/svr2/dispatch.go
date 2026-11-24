@@ -10,14 +10,7 @@ import (
 	"github.com/jeremyhahn/go-libsignal/pkg/svr/svrpb"
 )
 
-// Dispatcher routes encrypted SVR4 frames (Request4 protobuf bytes)
-// onto Storage operations and returns Response4 protobuf bytes. One
-// Dispatcher instance is shared by all sessions; per-session state
-// lives in the WebSocket handler.
-//
-// The dispatcher does NOT speak Noise — encrypted-transport framing
-// is the WebSocket handler's responsibility. Dispatcher consumes and
-// produces plaintext Request4/Response4 wire bytes.
+// Dispatcher turns plaintext Request4 frames into Storage operations and Response4 bytes; shared by all sessions, Noise framing is the WebSocket handler's.
 type Dispatcher struct {
 	storage Storage
 }
@@ -30,10 +23,7 @@ func NewDispatcher(storage Storage) *Dispatcher {
 	return &Dispatcher{storage: storage}
 }
 
-// Handle decodes a Request4 frame, dispatches it against the
-// identity's record, persists any mutation, and returns the
-// Response4 encoded bytes. identity is the authenticated principal
-// (HMAC-derived from the chat-server credential).
+// Handle decodes a Request4, applies it to identity's record, persists changes and returns the encoded Response4.
 func (d *Dispatcher) Handle(ctx context.Context, identity string, frame []byte) ([]byte, error) {
 	var req svrpb.Request4
 	if err := proto.Unmarshal(frame, &req); err != nil {
@@ -230,10 +220,7 @@ func (d *Dispatcher) handleRotateRollback(ctx context.Context, identity string, 
 	return &svrpb.Response4_RotateRollback_{RotateRollback: &svrpb.Response4_RotateRollback{Status: svrpb.Response4_OK}}
 }
 
-// applyDelta xors delta into target in place. When delta is shorter
-// or longer than target, the overlap region is updated; this mirrors
-// the SVR4 reference's byte-wise additive-share update semantics
-// (the deltas come pre-sized by the client).
+// applyDelta XORs delta into target over their overlap.
 func applyDelta(target, delta []byte) {
 	n := len(target)
 	if len(delta) < n {

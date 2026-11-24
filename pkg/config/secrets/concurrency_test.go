@@ -5,14 +5,7 @@ import (
 	"testing"
 )
 
-// TestWithBytes_ConcurrentRevealsAndDestroy is the race regression test for
-// the accessor's use from live request paths. A long-lived secret is revealed
-// on many goroutines while another wipes it; under -race any unsynchronised
-// access to the enclave pointer fails the test.
-//
-// The contract being pinned is that every reveal either completes on the real
-// key or fails closed — there is no third outcome where it reads through a
-// pointer that destruction is in the middle of clearing.
+// TestWithBytes_ConcurrentRevealsAndDestroy: concurrent reveals during a wipe either use the real key or fail closed (run with -race).
 func TestWithBytes_ConcurrentRevealsAndDestroy(t *testing.T) {
 	const (
 		readers   = 24

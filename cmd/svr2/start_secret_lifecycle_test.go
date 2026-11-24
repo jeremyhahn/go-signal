@@ -10,15 +10,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
-// TestRunStart_AbortedStartupWipesSharedSecret is the lifecycle guarantee for
-// the standalone svr2 daemon. Its shared secret is enclave-backed as of this
-// change, so every return path — validation failure as much as graceful
-// shutdown — has to wipe it. Without the deferred Destroy the secret stayed
-// reachable through the package-global cfg, which matters whenever the command
-// is driven in-process rather than followed immediately by process exit.
-//
-// The abort is attestation="tpm", which the standalone binary refuses by
-// design, and which returns before any listener is opened.
+// TestRunStart_AbortedStartupWipesSharedSecret checks an aborted startup (attestation="tpm") wipes the shared secret.
 func TestRunStart_AbortedStartupWipesSharedSecret(t *testing.T) {
 	saved := cfg
 	t.Cleanup(func() { cfg = saved })

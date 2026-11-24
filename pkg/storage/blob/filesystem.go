@@ -1,9 +1,4 @@
-// Package blob provides [backups.BlobStore] implementations.
-//
-// The current implementation is a single-root local-filesystem store,
-// intended for development and integration tests. Production deployments
-// substitute an S3 / GCS / Azure adapter constructed alongside the rest
-// of the storage layer in cmd/signald/start.go.
+// Package blob provides [backups.BlobStore] implementations: a local-filesystem store for development and tests.
 package blob
 
 import (
@@ -23,14 +18,7 @@ import (
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
-// FilesystemStore is a [backups.BlobStore] backed by a single local
-// directory tree. All objects live as files under root; keys are
-// path-segmented (slashes preserved). Listing is in-memory and bounded
-// by the configurable Limit on individual calls.
-//
-// Suitable for unit tests and single-node dev/self-host deployments where
-// "the CDN" is just a directory on disk. Not safe across machine
-// boundaries.
+// FilesystemStore is a [backups.BlobStore] in one local directory tree, keys as slash-separated paths; single node only.
 type FilesystemStore struct {
 	root      string
 	cdnNumber int
@@ -73,10 +61,7 @@ func (s *FilesystemStore) pathFor(key string) (string, error) {
 	return filepath.Join(s.root, key), nil
 }
 
-// GenerateUpload implements [backups.BlobStore]. The "upload form" for
-// filesystem-backed blobs is a file:// URL the client (i.e. a test) can
-// open and write to directly. Real CDNs return a signed PUT URL; the
-// shape of the response is identical.
+// GenerateUpload implements [backups.BlobStore] with a file:// URL.
 func (s *FilesystemStore) GenerateUpload(_ context.Context, key string) (*backups.UploadDescriptor, error) {
 	full, err := s.pathFor(key)
 	if err != nil {
@@ -100,12 +85,7 @@ func (s *FilesystemStore) ReadHeaders(_ context.Context, _ string) (map[string]s
 	return map[string]string{}, nil
 }
 
-// Copy implements [backups.BlobStore]. Reads the source object, AES-256-CBC
-// encrypts under params.EncryptionKey with a fresh random IV, computes an
-// HMAC-SHA256 tag with params.MACKey over (IV || ciphertext), then writes
-// IV || ciphertext || tag to destPath. Returns [*SourceNotFoundError] if
-// the source is missing and [*InvalidLengthError] if the read returns a
-// length different from sourceLength.
+// Copy implements [backups.BlobStore]: it writes IV || AES-256-CBC ciphertext || HMAC-SHA256 tag of the source to destPath; [*SourceNotFoundError] or [*InvalidLengthError] on a bad source.
 func (s *FilesystemStore) Copy(
 	_ context.Context,
 	_ int, // sourceCDN: ignored — filesystem store treats all CDNs as the same root
@@ -167,10 +147,7 @@ func (s *FilesystemStore) Delete(_ context.Context, path string) (int64, error) 
 	return info.Size(), nil
 }
 
-// List implements [backups.BlobStore]. Walks the prefix directory,
-// returning at most limit entries (defaulting to 1000 when zero/negative).
-// Cursor is the key of the last entry returned by a previous call; nil
-// starts from the beginning.
+// List implements [backups.BlobStore]: up to limit entries (default 1000) under prefix after cursor.
 func (s *FilesystemStore) List(_ context.Context, prefix string, cursor *string, limit int) (*backups.BlobListResult, error) {
 	if limit <= 0 {
 		limit = 1000
@@ -227,10 +204,7 @@ func (s *FilesystemStore) CalculateBytesUsed(_ context.Context, prefix string) (
 	return backups.UsageInfo{BytesUsed: totalBytes, NumObjects: totalObjects}, nil
 }
 
-// listSorted walks root and returns every regular file as a BlobListEntry
-// (key = path relative to root, with prefix re-attached so callers see the
-// same key shape they used to write). Sorted lexicographically so cursor
-// pagination is stable.
+// listSorted returns every file under root as a BlobListEntry with the caller's key shape, sorted for stable paging.
 func (s *FilesystemStore) listSorted(root, prefix string) ([]backups.BlobListEntry, error) {
 	var entries []backups.BlobListEntry
 	err := filepath.Walk(root, func(p string, info os.FileInfo, walkErr error) error {
@@ -260,10 +234,7 @@ func (s *FilesystemStore) listSorted(root, prefix string) ([]backups.BlobListEnt
 	return entries, nil
 }
 
-// encryptAESCBCHMAC produces the Signal media-encryption wire format used
-// when copying source attachments into a backup: 16-byte random IV +
-// AES-256-CBC ciphertext (PKCS#7 padded) + 32-byte HMAC-SHA256 over
-// (IV || ciphertext). Mirrors Java MediaEncryptionParameters consumer logic.
+// encryptAESCBCHMAC returns IV(16) || AES-256-CBC(PKCS#7) || HMAC-SHA256(IV || ciphertext), Signal's media encryption.
 func encryptAESCBCHMAC(plaintext, encryptionKey, macKey []byte) ([]byte, error) {
 	block, err := aes.NewCipher(encryptionKey)
 	if err != nil {

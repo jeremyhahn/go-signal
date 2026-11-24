@@ -618,9 +618,7 @@ func (s *mockUsernameStore) DeleteExpiredReservations(_ context.Context) (int, e
 
 // ─── Calling stubs ───────────────────────────────────────────────────────────
 
-// noOpTurnProvider satisfies calling.TurnCredentialProvider by returning an
-// empty token with no error. Used in service-level tests that need a
-// CallingManager but do not exercise TURN credential retrieval.
+// noOpTurnProvider returns an empty TURN token.
 type noOpTurnProvider struct{}
 
 func (noOpTurnProvider) RetrieveCredentials(_ context.Context) (*calling.TurnToken, error) {

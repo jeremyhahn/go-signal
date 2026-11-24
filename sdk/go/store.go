@@ -23,10 +23,7 @@ type Store interface {
 	GetGroups() ([]Group, error)
 	SaveGroup(group *Group) error
 
-	// Sticker packs (local registry of installed packs). The CLI's
-	// addStickerPack command persists parsed pack URLs here so
-	// subsequent getSticker calls can look up the pack key without
-	// the operator re-typing it.
+	// Installed sticker packs, so getSticker finds a pack key without retyping it.
 	GetStickerPacks() ([]InstalledStickerPack, error)
 	SaveStickerPack(pack *InstalledStickerPack) error
 	DeleteStickerPack(packID string) error

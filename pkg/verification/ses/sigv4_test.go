@@ -17,12 +17,7 @@ func fixedNow() time.Time {
 	return time.Date(2015, 8, 30, 12, 36, 0, 0, time.UTC)
 }
 
-// TestDeriveSigningKey checks the kSigning derivation against the AWS
-// reference example in:
-//
-//	https://docs.aws.amazon.com/general/latest/gr/signature-v4-examples.html
-//
-// The expected key for us-east-1/iam at 2015-08-30 is the hex digest below.
+// TestDeriveSigningKey checks the AWS reference example (https://docs.aws.amazon.com/general/latest/gr/signature-v4-examples.html).
 func TestDeriveSigningKey_AWSReference(t *testing.T) {
 	got := deriveSigningKey([]byte("wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"), "20150830", "us-east-1", "iam")
 	wantHex := "c4afb1cc5771d871763a393e44b703571b55cc28424d1a5e86da6ed3c154a4b9"

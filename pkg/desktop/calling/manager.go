@@ -1,11 +1,6 @@
 //go:build desktop
 
-// Package calling manages audio/video call state and signaling.
-// The actual WebRTC media transport is handled by the browser engine
-// in the Wails webview. This package handles:
-//   - Call state machine (idle → ringing → connected → ended)
-//   - Signal calling protocol (offer/answer, ICE candidates via WebSocket)
-//   - SFU communication for group calls
+// Package calling manages call state, Signal call signaling and SFU communication; WebRTC media runs in the webview.
 package calling
 
 import (

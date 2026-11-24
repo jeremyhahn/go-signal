@@ -16,22 +16,7 @@ import (
 	"github.com/fxamacker/cbor/v2"
 )
 
-// fakeAppAttest builds a self-signed Apple-style attestation fixture so we
-// can exercise the full VerifyAttestation / VerifyAssertion happy paths
-// without an iOS device. The fixture issues its own root CA so the
-// Verifier can be configured with it via Config.RootCAPEM.
-//
-// The fixture produces:
-//   - root CA cert
-//   - intermediate cert (signed by root)
-//   - leaf cert (signed by intermediate) with the App Attest nonce
-//     extension over the constructed authData + clientDataHash
-//   - authData with rpIdHash(teamID+"."+bundleID), counter, AAGUID,
-//     credentialID = SHA256(devicePubBytes)
-//   - top-level CBOR attestation map (fmt=apple-appattest)
-//
-// The fixture also exposes the leaf's private key so the test can sign
-// assertion blobs to drive VerifyAssertion.
+// fakeAppAttest builds a self-signed App Attest fixture (root, intermediate, leaf with nonce extension, authData, CBOR map) and its leaf key.
 type fakeAppAttest struct {
 	teamID, bundleID string
 	rootPEM          []byte
@@ -97,9 +82,7 @@ func (f *fakeAppAttest) buildAttestation(t *testing.T, challenge string) []byte 
 	f.keyID = keyHash[:]
 	f.leafKey = leafKey
 
-	// 4. authData layout: rpid(32) | flags(1) | counter(4) | aaguid(16) |
-	//    credLen(2) | credID(32) | empty COSE block (skipped — parser
-	//    ignores trailing bytes).
+	// authData: rpid(32) | flags(1) | counter(4) | aaguid(16) | credLen(2) | credID(32).
 	rpIDHash := sha256.Sum256([]byte(f.teamID + "." + f.bundleID))
 	authData := make([]byte, 0, 32+1+4+16+2+32)
 	authData = append(authData, rpIDHash[:]...)
@@ -119,8 +102,7 @@ func (f *fakeAppAttest) buildAttestation(t *testing.T, challenge string) []byte 
 	nonceInput = append(nonceInput, authData...)
 	nonceInput = append(nonceInput, clientDataHash[:]...)
 	nonce := sha256.Sum256(nonceInput)
-	// Wrap the nonce in `SEQUENCE { [0] EXPLICIT OCTET STRING <32 bytes> }`
-	// matching Apple's actual production extension format.
+	// The nonce as SEQUENCE { [0] EXPLICIT OCTET STRING <32 bytes> }, Apple's extension format.
 	nonceOctets, err := asn1.Marshal(nonce[:])
 	if err != nil {
 		t.Fatalf("marshal nonce octets: %v", err)

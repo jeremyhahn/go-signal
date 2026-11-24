@@ -123,8 +123,7 @@ func TestCallQualitySurveyPublisher_Publish_HandlesEmptyQualityIssues(t *testing
 	p := NewCallQualitySurveyPublisher(c)
 	ctx := context.Background()
 
-	// Survey with QualityIssues == nil must persist as an empty array
-	// (the column has NOT NULL DEFAULT '{}'), not crash on the scan.
+	// Nil QualityIssues must persist as an empty array.
 	msg := &calling.CallQualitySurveyMessage{
 		ResponseID:     "empty-issues",
 		SubmissionTime: 1_700_000_000_000,

@@ -45,16 +45,7 @@ func (r *recordingTransport) SendCode(_ context.Context, destination, code strin
 }
 func (r *recordingTransport) Name() string { return "recording" }
 
-// startRegistrationServiceForTest spins up an in-memory
-// registration-service binary (gRPC over bufconn) and returns a
-// gRPC-backed registration.Client pointed at it. The Service runs the
-// real core implementation; only the transport is a test recorder.
-//
-// This is the cleanest end-to-end exercise of the Phase 4.1 wire:
-//
-//	signald (shim → grpcclient.Client) → registration-service (core.Service)
-//
-// over an actual gRPC channel.
+// startRegistrationServiceForTest runs the registration service over bufconn and returns a gRPC registration.Client for it.
 func startRegistrationServiceForTest(t *testing.T) (
 	*grpcclient.Client,
 	*core.Service,

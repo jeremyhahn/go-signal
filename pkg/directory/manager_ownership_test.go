@@ -15,18 +15,7 @@ import (
 // instructions wide, so the round count is what gives the test its power.
 const ownershipRaceRounds = 4000
 
-// TestSetSharedSecret_DestroyDuringOwnershipTransfer overlaps SetSharedSecret
-// with the caller destroying the secret it passed in.
-//
-// The manager has exactly two legitimate states once SetSharedSecret returns:
-// HMAC mode over a key it can reveal, or the legacy stub. Testing the caller's
-// secret and cloning it afterwards admits a third — HMAC mode published over
-// an unset clone, because the Destroy landed between the two reveals — and
-// that state mints nothing: GetAuthToken fails closed forever after. Cloning
-// first and branching on the clone removes it, because the value checked is
-// the value installed.
-//
-// Reverting SetSharedSecret to check-then-clone makes this fail.
+// TestSetSharedSecret_DestroyDuringOwnershipTransfer checks HMAC mode is never published over an unset clone when the caller destroys its secret concurrently.
 func TestSetSharedSecret_DestroyDuringOwnershipTransfer(t *testing.T) {
 	ctx := context.Background()
 

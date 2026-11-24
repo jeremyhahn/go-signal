@@ -31,11 +31,7 @@ func NewGRPCServer(log Log, signer ed25519.PrivateKey) *GRPCServer {
 	return &GRPCServer{log: log, signer: signer}
 }
 
-// Distinguished implements the Distinguished RPC. The "distinguished"
-// key in KT is a well-known account (operator-chosen, or zero-bytes
-// for the MVP) clients use as a consistency anchor; we return the
-// current TreeHead and the entry for the distinguished key when
-// present.
+// Distinguished returns the current TreeHead and, when present, the entry for the well-known distinguished key.
 func (s *GRPCServer) Distinguished(_ context.Context, _ *ktpb.DistinguishedRequest) (*ktpb.DistinguishedResponse, error) {
 	head, err := s.currentTreeHead()
 	if err != nil {
@@ -58,10 +54,7 @@ func (s *GRPCServer) Search(_ context.Context, req *ktpb.SearchRequest) (*ktpb.S
 	}
 	resp := &ktpb.SearchResponse{TreeHead: head}
 
-	// ACI lookup is always answered. Attach an inclusion proof when
-	// the underlying Log supports it (MemoryLog does); other Log
-	// impls degrade to a bare Opening which the client treats as
-	// "proof unavailable".
+	// ACI lookups are always answered, with an inclusion proof when the Log supports one.
 	resp.Aci = s.buildCondensed(req.GetAci())
 
 	// Optional username_hash lookup.
@@ -80,12 +73,7 @@ func (s *GRPCServer) Search(_ context.Context, req *ktpb.SearchRequest) (*ktpb.S
 	return resp, nil
 }
 
-// buildCondensed wraps the Search response shape for one lookup key.
-// When the log supports MerkleInclusionProof, the audit path is
-// encoded in the SearchProof field; clients verify it against
-// FullTreeHead.tree_head's root via VerifyMerkleInclusion. When the
-// key isn't present, both fields are zero (proto convention for
-// "absent").
+// buildCondensed builds the Search response for one key, with the inclusion audit path when available; zero fields mean absent.
 func (s *GRPCServer) buildCondensed(key []byte) *ktpb.CondensedTreeSearchResponse {
 	entry, ok := s.log.Latest(key)
 	if !ok {

@@ -9,22 +9,9 @@ import (
 	signalerrors "github.com/jeremyhahn/go-signal/pkg/errors"
 )
 
-// Key layout:
-//
-//	account:{uuid}           → JSON-serialized Account (primary record).
-//	account:by-number:{e164} → account UUID (mirror for GetByNumber).
-//
-// The mirror-key approach (rather than a native qrdb secondary index) is
-// deliberate for this iteration: secondary-index registration requires schema
-// coordination at startup, and not every transport exposes it. A mirror key
-// works uniformly across transports and is cheap enough for the volumes this
-// index sees (one entry per account).
+// Key layout: account:{uuid} -> JSON Account; account:by-number:{e164} -> UUID (a mirror key, not a qrdb secondary index).
 
-// Key prefixes. accountPrimaryScan is the primary-record prefix; iterating
-// it enumerates every account. accountByNumberPfx holds mirror keys that
-// map phone numbers to account UUIDs. accountByPNIPfx holds mirror keys
-// that map PNIs to account UUIDs. The primary prefix uses an underscored
-// segment ("_primary") so a Scan on it cannot match mirror-index keys.
+// Key prefixes: the "_primary" segment keeps a primary scan clear of the by-number and by-PNI mirror keys.
 const (
 	accountByNumberPfx = "account:by-number:"
 	accountByPNIPfx    = "account:by-pni:"
@@ -48,12 +35,7 @@ func accountKey(uuid string) string         { return accountPrimaryScan + uuid }
 func accountNumberKey(number string) string { return accountByNumberPfx + number }
 func accountPNIKey(pni string) string       { return accountByPNIPfx + pni }
 
-// Create persists a new account, enforcing unique UUID and (if set) unique
-// phone number. The operation is not atomic across the two keys — a failure
-// mid-write would leave a dangling mirror key. We mitigate by writing the
-// primary key first, then the mirror; a crash between them leaves a missing
-// mirror which a retry repairs. A dangling mirror would only happen if the
-// caller's UUID changed between retries, which never happens in practice.
+// Create stores a new account with unique UUID and number, writing the primary key before the mirror so a retry repairs a partial write.
 func (s *AccountStore) Create(ctx context.Context, account *accounts.Account) error {
 	if account == nil {
 		return &accounts.InvalidArgumentError{Field: "account", Message: "nil account"}
@@ -154,10 +136,7 @@ func (s *AccountStore) GetByPNI(ctx context.Context, pni string) (*accounts.Acco
 	return s.Get(ctx, uuid)
 }
 
-// Update persists changes to an existing account. Optimistic locking is
-// enforced: the supplied account.Version must be exactly one greater than
-// the version currently stored. Mirror-key maintenance handles phone-number
-// changes.
+// Update stores account when its Version is exactly one above the stored one, maintaining the number mirror.
 func (s *AccountStore) Update(ctx context.Context, account *accounts.Account) error {
 	if account == nil {
 		return &accounts.InvalidArgumentError{Field: "account", Message: "nil account"}

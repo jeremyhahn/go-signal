@@ -45,8 +45,7 @@ func TestNew_PasswordOverride(t *testing.T) {
 	}
 }
 
-// A nil SecureString is the common case (no AUTH configured) and must not
-// panic or clobber a password already carried in the connection URL.
+// A nil SecureString (no AUTH) neither panics nor overrides a password in the URL.
 func TestNew_NilPasswordKeepsURLCredential(t *testing.T) {
 	t.Parallel()
 	c, err := New(Config{URL: "redis://:urlpass@localhost:6379/0"})
@@ -58,8 +57,7 @@ func TestNew_NilPasswordKeepsURLCredential(t *testing.T) {
 	}
 }
 
-// A destroyed SecureString must behave like an absent one rather than
-// applying an empty AUTH password.
+// A destroyed SecureString behaves as absent, not as an empty password.
 func TestNew_DestroyedPasswordKeepsURLCredential(t *testing.T) {
 	t.Parallel()
 	pw := secrets.MustNewSecureString("secret")

@@ -20,12 +20,7 @@ import (
 	dirsvc "github.com/jeremyhahn/go-signal/pkg/api/grpc/services/directory"
 )
 
-// memoryAccountStore is a slimmed-down store for replication tests.
-// The mutex is intentional: the directory server's Subscribe handler
-// runs ListAll on its goroutine while the test's Create runs on the
-// test goroutine — without locking, the race detector flags the
-// concurrent map access. Production stores (memory/qrdb/postgres) all
-// have their own synchronization.
+// memoryAccountStore is a locked map store: Subscribe runs ListAll concurrently with the test's Create.
 type memoryAccountStore struct {
 	mu   sync.Mutex
 	data map[string]*accounts.Account
@@ -119,9 +114,7 @@ type directoryEventSourceForTest struct {
 
 func (s *directoryEventSourceForTest) Subscribe(ctx context.Context, buffer int) (dirsvc.EventSubscription, uint64) {
 	sub, asOf := s.bus.Subscribe(ctx, buffer)
-	// Recorded AFTER attaching, not before: the claim is that a later Publish
-	// will reach this subscriber, and that is true once bus.Subscribe has
-	// returned, not when it was called.
+	// Recorded after bus.Subscribe returns, when a later Publish is sure to arrive.
 	s.subscribed.Add(1)
 	wrap := &replSub{sub: sub, out: make(chan dirsvc.ChangeEvent, buffer)}
 	go func() {
@@ -200,11 +193,7 @@ func TestReplication_EndToEnd_NewAccountReachesCdsi(t *testing.T) {
 	dirpb.RegisterDirectoryServiceServer(gs,
 		dirsvc.NewServer(&accountSourceForTest{store: store},
 			dirsvc.WithEventSource(events),
-			// The server emits a resume token only in the LIVE phase — on the
-			// first live event, or from this ticker while idle. The default is
-			// 30s, so the token is the live-phase signal this test needs and
-			// cannot afford to wait for. Shortening it is what makes the wait
-			// below possible at all.
+			// A short keep-alive makes the server emit a live-phase resume token while idle.
 			dirsvc.WithSubscribeKeepAlive(20*time.Millisecond)))
 	go func() { _ = gs.Serve(lis) }()
 	t.Cleanup(gs.Stop)
@@ -235,26 +224,7 @@ func TestReplication_EndToEnd_NewAccountReachesCdsi(t *testing.T) {
 		})
 	}()
 
-	// Wait for the LIVE phase, not merely for the subscription.
-	//
-	// Two different races sit here and only one is obvious. The bus delivers
-	// only to subscribers attached at Publish time, so creating the account
-	// before the server attaches loses the event outright — that is what the
-	// old 50ms sleep was guessing at.
-	//
-	// The subtler one: dirsvc.Server.Subscribe attaches to the bus and THEN
-	// ships a snapshot (server.go:195-209). An account created in that window
-	// is enumerated by the snapshot, so the assertion below would pass through
-	// the snapshot path even if live event forwarding were completely broken —
-	// a test named for live replication proving nothing about it. Waiting only
-	// on the subscription made that MORE likely, by releasing at the earliest
-	// possible instant.
-	//
-	// A resume token is emitted only in the live phase, per the server's own
-	// contract, so a persisted token means the snapshot has shipped and the
-	// live loop is running. That is why the keep-alive is shortened above:
-	// with the 30s default this wait is not affordable, which is also why an
-	// earlier attempt at it timed out 10/10.
+	// Wait for a persisted resume token, which the server emits only after the snapshot, so the account below arrives as a live event.
 	waitFor(t, "the server to attach to the event bus", func() bool {
 		return events.subscribed.Load() > 0
 	})

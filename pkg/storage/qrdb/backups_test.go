@@ -742,9 +742,7 @@ func TestQrdbBackupStore_ScheduleBackupDeletion_ExistsError(t *testing.T) {
 }
 
 func TestQrdbBackupStore_ScheduleBackupDeletion_PendingDeletionError(t *testing.T) {
-	// To trigger PendingDeletionError we must arrange for the pending key to
-	// exist BEFORE the call. We do that by writing the pending entry directly
-	// to the fake KV using the same key formula the implementation uses.
+	// Write the pending entry directly so PendingDeletionError triggers.
 	kv := NewFakeKVStore()
 	s := NewBackupStore(kv)
 	ctx := context.Background()

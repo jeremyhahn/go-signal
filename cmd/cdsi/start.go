@@ -43,11 +43,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Wipe every protected configuration secret on the way out, registered
-	// before the first validation can return so an aborted startup leaves
-	// nothing resident. Matters most when the command is driven in-process
-	// rather than followed immediately by process exit. Destroy is
-	// idempotent and nil-safe.
+	// Wipe every protected configuration secret on the way out, even after an aborted startup; Destroy is idempotent and nil-safe.
 	defer cfg.Destroy()
 
 	if cfg.CDSI.SharedSecret.IsDestroyed() {
@@ -83,10 +79,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	logger.InfoContext(ctx, "directory loaded",
 		slog.Int("entries", directory.Count()))
 
-	// Live-replication: stream DirectoryService.Subscribe and apply
-	// change events to the local index. The loop reconnects with
-	// exponential backoff and persists resume tokens in-process so
-	// short blips don't trigger full resyncs.
+	// Live replication: stream DirectoryService.Subscribe into the local index, reconnecting with backoff and resume tokens.
 	go func() {
 		err := cdsi.SubscribeAndApply(ctx, cdsi.SubscribeConfig{
 			Client:     dirClient,
@@ -254,11 +247,7 @@ func newWebSocketHandler(
 	})
 }
 
-// validateBasicAuth parses an HTTP Basic header and confirms the password is
-// an HMAC-SHA256(secret, username) digest, returning the username on success.
-//
-// The secret is revealed from protected memory only for the length of the
-// digest comparison; an unset or wiped secret authenticates nothing.
+// validateBasicAuth checks an HTTP Basic password is HMAC-SHA256(secret, username) and returns the username; an unset or wiped secret authenticates nothing.
 func validateBasicAuth(r *http.Request, secret *secrets.SecureString) (string, bool) {
 	var (
 		identity string
@@ -269,15 +258,7 @@ func validateBasicAuth(r *http.Request, secret *secrets.SecureString) (string, b
 }
 
 func validateBasicAuthKey(r *http.Request, secret []byte) (string, bool) {
-	// Delegated rather than repeated. This was a byte-identical third copy of
-	// common.ValidateBasicAuth, and that package exists precisely to stop this
-	// code diverging across services — its own doc says a divergence "would
-	// silently break the HMAC contract".
-	//
-	// Repeating it also meant repeating its defect: the decoded
-	// `username:password` buffer was left resident, and both the presented and
-	// the expected credential were copied into Go strings that cannot be wiped
-	// (#47). Fixing that three times would have been three chances to miss one.
+	// Delegated to common.ValidateBasicAuth so the HMAC contract and credential wiping live in one place.
 	return common.ValidateBasicAuth(r.Header.Get("Authorization"), secret)
 }
 

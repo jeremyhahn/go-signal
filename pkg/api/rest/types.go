@@ -2,22 +2,11 @@ package rest
 
 // RegistrationRequest is the JSON body submitted during account registration.
 type RegistrationRequest struct {
-	// SessionID is the ID of a completed verification session. Mutually
-	// exclusive with RecoveryPassword: exactly one of the two must be
-	// supplied. When SessionID is set the session must exist, must not be
-	// expired, and must be in the Verified state for the phone number
-	// supplied via Basic Auth.
+	// SessionID is a verified, unexpired verification session for the Basic Auth number; exactly one of SessionID and RecoveryPassword is set.
 	SessionID string `json:"sessionId,omitempty"`
-	// RecoveryPassword is a base64-encoded registration recovery password
-	// that re-registers an account without an SMS verification round trip.
-	// Mutually exclusive with SessionID. Mirrors Java
-	// RegistrationRequest.recoveryPassword.
+	// RecoveryPassword is a base64 recovery password that re-registers without SMS verification; exclusive with SessionID.
 	RecoveryPassword string `json:"recoveryPassword,omitempty"`
-	// Captcha is an optional `provider.sitekey.action.token` string. When
-	// supplied, the server verifies it via captcha.RegistrationCaptchaManager
-	// before the account is created. Required when the request fails
-	// rate-limit/fraud heuristics (see captchaRequired in the verification
-	// session response).
+	// Captcha is an optional provider.sitekey.action.token string, verified before the account is created.
 	Captcha               string                   `json:"captcha,omitempty"`
 	AccountAttributes     AccountAttributesRequest `json:"accountAttributes"`
 	IdentityKey           string                   `json:"aciIdentityKey"`
@@ -46,23 +35,13 @@ type AccountAttributesRequest struct {
 	Capabilities     map[string]bool `json:"capabilities"`
 }
 
-// RegistrationLockErrorResponse is returned with HTTP 423 when a registration
-// attempt is blocked by an active registration lock on the existing account.
-// The timeRemaining field tells the client how long the lock is still active
-// (in seconds) so it can present an appropriate message.
+// RegistrationLockErrorResponse is the 423 body when a registration lock blocks re-registration; timeRemaining is how long it stays active.
 type RegistrationLockErrorResponse struct {
 	// TimeRemaining is the number of seconds until the registration lock expires.
 	TimeRemaining int64 `json:"timeRemaining"`
 }
 
-// RegistrationCaptchaField carries the optional captcha solution submitted
-// on a registration request. Top-level on RegistrationRequest so the
-// account-create handler can verify it before any account state mutates.
-// Mirrors Java RegistrationRequest.captcha.
-//
-// Format: `provider.sitekey.action.token` (the same dotted layout used by
-// PATCH /v1/verification/session/{id}). The action slot must be
-// "registration" — captcha.RegistrationCaptchaManager enforces that.
+// RegistrationCaptchaField is the optional provider.sitekey.action.token captcha on a registration request; the action must be "registration".
 type RegistrationCaptchaField = string
 
 // SignedPreKeyEntity represents a signed EC pre-key in API request/response
@@ -128,18 +107,7 @@ type PreKeyResponseItemEntity struct {
 	PqPreKey       *KEMSignedPreKeyEntity `json:"pqPreKey,omitempty"`
 }
 
-// IncomingMessageEntity represents a single incoming message destined for a
-// specific device. RegistrationId is the sender's last-known registration ID
-// for that device and is used to detect stale key material (Signal protocol
-// §4.2, Java MessageController stale-device check).
-// IncomingMessageEntity is one per-device message within a send request.
-//
-// It deliberately carries NO timestamp. Java's IncomingMessage record has none
-// either — the timestamp belongs to the batch (IncomingMessageListEntity) and
-// is the value the delivered envelope carries. A per-message field existed
-// here once and the send handler sourced the envelope timestamp from it;
-// clients never populate it, so every delivered envelope carried 0 and
-// libsignal rejected it. Do not reintroduce it.
+// IncomingMessageEntity is one per-device message in a send request; RegistrationId detects stale devices, and the timestamp belongs to the batch.
 type IncomingMessageEntity struct {
 	Type                int32  `json:"type"`
 	DestinationDeviceId uint64 `json:"destinationDeviceId"`
@@ -150,10 +118,7 @@ type IncomingMessageEntity struct {
 // IncomingMessageListEntity is a batch of messages submitted by a sender.
 type IncomingMessageListEntity struct {
 	Messages []IncomingMessageEntity `json:"messages"`
-	// Timestamp is the client-assigned send time for the whole batch and
-	// becomes the delivered envelope's client_timestamp. libsignal compares
-	// it against the timestamp sealed inside the message content, so it must
-	// reach the envelope unchanged.
+	// Timestamp is the batch send time and becomes the envelope's client_timestamp unchanged; libsignal checks it against the sealed content.
 	Timestamp uint64 `json:"timestamp"`
 	Online    bool   `json:"online"`
 	Urgent    bool   `json:"urgent"`
@@ -190,10 +155,7 @@ type VerificationSessionResponse struct {
 	RequestedInformation []string `json:"requestedInformation"`
 }
 
-// UpdateVerificationSessionRequest is the JSON body for PATCH on a
-// verification session. Today it carries an optional captcha solution
-// (provider.sitekey.action.token format). Future fields will follow Java's
-// shape (push challenge token, language hints, etc.).
+// UpdateVerificationSessionRequest is the PATCH body for a verification session, carrying an optional captcha.
 type UpdateVerificationSessionRequest struct {
 	Captcha string `json:"captcha,omitempty"`
 }
@@ -292,10 +254,7 @@ type AttachmentDescriptorV3 struct {
 	SignedUploadLocation string            `json:"signedUploadLocation"`
 }
 
-// RemoteConfigItem is preserved for the legacy /v1/config response that
-// returned a typed-list payload. Production clients are on /v2/config
-// (the Java-current shape, RemoteConfigResponse) which carries a
-// name→value map instead.
+// RemoteConfigItem is an entry of the /v1/config typed-list response; /v2/config uses a name-to-value map.
 type RemoteConfigItem struct {
 	Name    string `json:"name"`
 	Enabled bool   `json:"enabled"`
@@ -381,11 +340,7 @@ type MultiRecipientMessageResponse struct {
 	UUIDs404 []string `json:"uuids404"`
 }
 
-// MismatchedDevicesResponse is the JSON body returned with HTTP 409 when the
-// sender addressed the wrong set of devices. It lists the device IDs that the
-// sender omitted (missingDevices) and device IDs that do not exist on the
-// recipient account (extraDevices). Matches the Java MismatchedDevicesException
-// response format used by MessageController.
+// MismatchedDevicesResponse is the 409 body: missingDevices the sender omitted and extraDevices that do not exist.
 type MismatchedDevicesResponse struct {
 	MissingDevices []uint64 `json:"missingDevices"`
 	ExtraDevices   []uint64 `json:"extraDevices"`
@@ -403,11 +358,7 @@ type SpamReportRequest struct {
 	Token string `json:"token,omitempty"`
 }
 
-// SpamChallengeResponse is returned with HTTP 428 Precondition Required when
-// the spam checker requires the sender to complete a challenge before the
-// message can be delivered. ChallengeType identifies the required challenge
-// mechanism ("captcha" or "push"); Token is an optional opaque token that
-// the client must echo back when submitting the challenge response.
+// SpamChallengeResponse is the 428 body: ChallengeType ("captcha" or "push") and an optional Token the client echoes back.
 type SpamChallengeResponse struct {
 	Token         string `json:"token,omitempty"`
 	ChallengeType string `json:"options"`
@@ -444,12 +395,7 @@ type UsernameHashReserveResponse struct {
 	ReservationToken string `json:"reservationToken"`
 }
 
-// UsernameHashConfirmRequest is the JSON body for confirming a reserved
-// username hash. The client must supply a zero-knowledge proof (ZkProof,
-// base64-encoded) that it knows the nickname/discriminator pair behind
-// UsernameHash; the server verifies it via go-libsignal/usernames.VerifyProof
-// before binding the hash to the account, mirroring Java Signal-Server's
-// `usernameHashZkProofVerifier.verifyProof(...)` call site.
+// UsernameHashConfirmRequest confirms a reserved username hash with a base64 zero-knowledge proof checked by usernames.VerifyProof.
 type UsernameHashConfirmRequest struct {
 	UsernameHash     string `json:"usernameHash"`
 	ReservationToken string `json:"reservationToken"`
@@ -471,11 +417,7 @@ type UsernameHashLookupResponse struct {
 type UsernameLinkSetRequest struct {
 	UsernameLinkEncryptedValue string `json:"usernameLinkEncryptedValue"`
 
-	// KeepLinkHandle requests that the server re-use the account's
-	// existing link handle (if one exists) rather than minting a fresh
-	// one. Clients that are only rotating the ciphertext should set
-	// this so previously-published share URLs continue to resolve.
-	// Matches Java EncryptedUsername.keepLinkHandle().
+	// KeepLinkHandle reuses the existing link handle so published share URLs keep resolving.
 	KeepLinkHandle bool `json:"keepLinkHandle,omitempty"`
 }
 

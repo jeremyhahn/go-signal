@@ -1,8 +1,4 @@
-// Package interceptors provides gRPC unary interceptors that mirror the
-// authentication model established in pkg/api/rest/middleware.go. The gRPC
-// and REST layers use distinct (layer-private) context keys; each layer reads
-// the principal it stored via its own AccountFromContext/DeviceIDFromContext
-// helper rather than sharing a single key.
+// Package interceptors provides gRPC auth interceptors mirroring the REST middleware, each layer with its own context keys.
 package interceptors
 
 import (
@@ -23,9 +19,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/auth"
 )
 
-// AccountContextKey is the context key under which authenticated accounts
-// are stored by [AuthenticatedUnary]. The REST middleware uses the same
-// key so handlers can share look-up helpers.
+// AccountContextKey is the context key for the account stored by [AuthenticatedUnary].
 type accountCtxKey struct{}
 
 // AccountContextKey is exported so callers in services packages can
@@ -55,16 +49,7 @@ func DeviceIDFromContext(ctx context.Context) uint64 {
 	return accounts.PrimaryDeviceID
 }
 
-// AuthenticatedUnary returns a UnaryServerInterceptor that requires valid
-// HTTP Basic credentials on every request. Credentials are parsed from the
-// `authorization` gRPC metadata entry, matching the header clients already
-// use for REST. The authenticated account is stored on the context under
-// [AccountContextKey].
-//
-// Timing-equalisation: when a UUID lookup fails we still perform a full
-// auth.SaltedTokenHash.Verify against a dummy hash so response latency
-// does not reveal whether the account exists. This mirrors the REST
-// middleware and the Java Signal-Server implementation.
+// AuthenticatedUnary requires HTTP Basic credentials in `authorization` metadata, stores the account under [AccountContextKey], and verifies a dummy hash on unknown UUIDs to equalise timing.
 func AuthenticatedUnary(am *accounts.AccountsManager) grpc.UnaryServerInterceptor {
 	dummyHash, _ := auth.NewSaltedTokenHash("dummy-timing-equalization-token")
 
@@ -99,9 +84,7 @@ func AuthenticatedUnary(am *accounts.AccountsManager) grpc.UnaryServerIntercepto
 			_ = dummyHash.Verify(password)
 			return nil, status.Error(codes.Unauthenticated, "invalid credentials")
 		}
-		// Verify against the authenticated device — not always the primary —
-		// so linked devices authenticate as themselves and device-scoped
-		// authorization is enforceable downstream (mirrors the REST middleware).
+		// Verify against the authenticated device, so linked devices authenticate as themselves.
 		device := acct.GetDevice(deviceID)
 		if device == nil || device.AuthTokenHash == nil {
 			_ = dummyHash.Verify(password)
@@ -117,15 +100,7 @@ func AuthenticatedUnary(am *accounts.AccountsManager) grpc.UnaryServerIntercepto
 	}
 }
 
-// AnonymousUnary returns a UnaryServerInterceptor for services annotated
-// as AUTH_ONLY_ANONYMOUS. It rejects any request that carries Basic
-// credentials — anonymous services must be reached with no
-// `authorization` metadata present.
-//
-// This mirrors Java Signal-Server's require.auth = AUTH_ONLY_ANONYMOUS
-// semantic: the RPC accepts only unauthenticated callers (sealed sender,
-// group-send-credentialed calls, etc.) and the transport layer enforces
-// that no authenticated credential leaks into the handler.
+// AnonymousUnary rejects any request carrying `authorization` metadata, for AUTH_ONLY_ANONYMOUS services.
 func AnonymousUnary() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 		md, ok := metadata.FromIncomingContext(ctx)

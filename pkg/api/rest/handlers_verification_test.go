@@ -21,13 +21,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/verification"
 )
 
-// newTestShim wires a sessionshim.Shim atop a freshly constructed
-// core.Service for tests. coreCfg controls the lower-half behaviour
-// (CodeLength, CodeTTL, MaxAttempts, MaxSessions, SessionTTL,
-// CleanupInterval, RequestCodeCooldowns, FixedCode). captchaChecker,
-// escalateAfter and scoreThreshold control the chat-server-side
-// captcha gate exactly as the pre-split *verification.Manager did.
-// The core's background cleanup goroutine is wired through t.Cleanup.
+// newTestShim wires a sessionshim.Shim over a new core.Service; cleanup runs through t.Cleanup.
 func newTestShim(
 	t *testing.T,
 	store verification.VerificationSessionStore,
@@ -568,15 +562,7 @@ func TestHandleSubmitVerificationCode_ServiceUnavailable(t *testing.T) {
 // Cleanup goroutine
 // --------------------------------------------------------------------------
 
-// evictionSignalStore reports the moment the cleanup goroutine actually
-// evicts something, so a test can wait for the sweep instead of guessing how
-// long one takes. It signals AFTER the delete completes, so a test woken by it
-// can read the resulting count without racing the sweep it just observed.
-//
-// Signalling only on an eviction, rather than on every DeleteExpired call,
-// is what lets the waiter be a single receive instead of a poll: the sweeper
-// ticks whether or not anything is expired, and a signal from an empty sweep
-// would say nothing.
+// evictionSignalStore signals after each sweep that actually evicted something.
 type evictionSignalStore struct {
 	verification.VerificationSessionStore
 	once    sync.Once
@@ -599,21 +585,7 @@ func (s *evictionSignalStore) DeleteExpired(ctx context.Context) error {
 	return err
 }
 
-// TestVerificationManager_CleanupRemovesExpiredSessions verifies that the
-// background cleanup goroutine evicts expired sessions from the store.
-//
-// The session is given a long TTL and then expired BY HAND. Configuring a
-// one-nanosecond TTL instead — which is what this test used to do — makes the
-// session expired before Create returns, so "the session exists after
-// creation" is only true until the next sweep, and the test has to beat the
-// goroutine it is testing. Measured: the session was written already expired
-// and the first sweep evicted it 9 ms later, which the assertion normally won
-// by that margin and lost whenever a loaded runner descheduled it. A live
-// session cannot be swept, so the same assertion is now true by construction.
-//
-// The wait is a receive, not a deadline: the store signals when a sweep
-// actually evicted something. The timeout is a failure guard, not a claim
-// about how fast cleanup runs.
+// TestVerificationManager_CleanupRemovesExpiredSessions expires a session by hand and waits for the sweep to evict it.
 func TestVerificationManager_CleanupRemovesExpiredSessions(t *testing.T) {
 	transport := newNoopVerificationTransport()
 	store := newEvictionSignalStore(verification.NewMemoryVerificationSessionStore())
@@ -641,8 +613,7 @@ func TestVerificationManager_CleanupRemovesExpiredSessions(t *testing.T) {
 		t.Fatalf("sessions after creation = %d, want 1", count)
 	}
 
-	// Expire it explicitly. This is the step that used to be a TTL the
-	// sweeper raced.
+	// Expire it explicitly.
 	stored, err := store.Get(t.Context(), session.ID)
 	if err != nil {
 		t.Fatalf("store.Get: %v", err)
@@ -752,8 +723,7 @@ func TestHandleSubmitVerificationCode_EndToEndExpiry(t *testing.T) {
 // PATCH /v1/verification/session/{id}  +  captcha escalation gate
 // --------------------------------------------------------------------------
 
-// captchaStubVerifier is a tiny captcha.CaptchaVerifier used by the REST
-// PATCH tests; it returns a canned success/failure result.
+// captchaStubVerifier returns a canned captcha result.
 type captchaStubVerifier struct {
 	success bool
 	score   float64
@@ -987,11 +957,6 @@ func TestHandleRequestVerificationCode_AlreadyVerified(t *testing.T) {
 }
 
 // failOnNthGetStore passes Get through until armed, then fails the next Get.
-// The arming is what makes the test target the RELOAD specifically: SendCode
-// reads the session first and must succeed so it can report
-// SessionAlreadyVerifiedError, and only the handler's follow-up reload fails.
-// A store that failed every Get would make SendCode itself fail and never
-// reach the branch under test.
 type failOnNthGetStore struct {
 	verification.VerificationSessionStore
 	mu        sync.Mutex
@@ -1020,14 +985,7 @@ func (f *failOnNthGetStore) Get(ctx context.Context, id string) (*verification.V
 	return f.VerificationSessionStore.Get(ctx, id)
 }
 
-// TestHandleRequestVerificationCode_ReloadFailureIsNotAConflict is the
-// regression test for the second finding on #28.
-//
-// The already-verified branch answered 409 whether or not the session reload
-// succeeded, so a storage or transport failure was reported to the client as
-// a well-formed protocol outcome about a session nobody could read. The
-// client then acts on that. A failure to obtain the session is not an answer
-// about the session, so it is now a 500.
+// TestHandleRequestVerificationCode_ReloadFailureIsNotAConflict: a failed session reload is a 500, not a 409.
 func TestHandleRequestVerificationCode_ReloadFailureIsNotAConflict(t *testing.T) {
 	transport := newNoopVerificationTransport()
 	backing := verification.NewMemoryVerificationSessionStore()
@@ -1063,13 +1021,7 @@ func TestHandleRequestVerificationCode_ReloadFailureIsNotAConflict(t *testing.T)
 	}
 }
 
-// TestHandleRequestVerificationCode_ReloadFailureDoesNotLogTheSessionID pins
-// the security fix from #28 round 3.
-//
-// A verified session id is the bearer credential POST /v1/registration accepts
-// as proof of verification (enforceVerifiedSession), so writing it to logs
-// turns log access into account takeover for any number with a live session.
-// The reload-failure path logged it as a correlation attribute.
+// TestHandleRequestVerificationCode_ReloadFailureDoesNotLogTheSessionID: a verified session id is a bearer credential and is never logged.
 func TestHandleRequestVerificationCode_ReloadFailureDoesNotLogTheSessionID(t *testing.T) {
 	transport := newNoopVerificationTransport()
 	backing := verification.NewMemoryVerificationSessionStore()

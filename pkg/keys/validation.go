@@ -32,15 +32,7 @@ func (e *InvalidPreKeySignatureError) Error() string {
 		" has invalid signature: " + e.Reason
 }
 
-// ValidateSignedPreKey verifies the XEdDSA signature on an EC signed pre-key.
-//
-// The identity key must be the 33-byte serialized Curve25519 public key
-// (DJB type byte 0x05 followed by 32 key bytes). The signature covers the
-// serialized public key bytes of the signed pre-key (also 33 bytes).
-//
-// If identityKey is empty the validation is skipped and nil is returned. This
-// accommodates the bootstrap case where the server does not yet hold an
-// identity key for the account.
+// ValidateSignedPreKey verifies the XEdDSA signature on an EC signed pre-key with a 33-byte identity key; an empty identity key skips the check.
 func ValidateSignedPreKey(identityKey []byte, spk *SignedPreKey) error {
 	if len(identityKey) == 0 {
 		return nil
@@ -62,10 +54,7 @@ func ValidateSignedPreKey(identityKey []byte, spk *SignedPreKey) error {
 		}
 	}
 
-	// The signed pre-key's public key must be provided in serialized form
-	// (type byte + 32 key bytes). If the caller supplied raw 32-byte key
-	// material, prepend the DJB type byte so that verification matches what
-	// the Signal client signed.
+	// Prepend the DJB type byte to a raw 32-byte key, as the client signed.
 	message := serializePublicKey(spk.PublicKey)
 	if message == nil {
 		return &InvalidPreKeySignatureError{
@@ -98,13 +87,7 @@ func ValidateSignedPreKey(identityKey []byte, spk *SignedPreKey) error {
 	return nil
 }
 
-// ValidateKEMSignedPreKey verifies the XEdDSA signature on a KEM signed
-// pre-key.
-//
-// The identity key must be the 33-byte serialized Curve25519 public key.
-// The signature covers the raw KEM public key bytes as the message.
-//
-// If identityKey is empty the validation is skipped and nil is returned.
+// ValidateKEMSignedPreKey verifies the XEdDSA signature over a KEM public key; an empty identity key skips the check.
 func ValidateKEMSignedPreKey(identityKey []byte, kspk *KEMSignedPreKey) error {
 	if len(identityKey) == 0 {
 		return nil
@@ -159,11 +142,7 @@ func ValidateKEMSignedPreKey(identityKey []byte, kspk *KEMSignedPreKey) error {
 	return nil
 }
 
-// ValidateAllSignedKeys validates all EC signed pre-keys and KEM signed
-// pre-keys against the provided identity key. It returns the first
-// InvalidPreKeySignatureError encountered.
-//
-// If identityKey is empty or both slices are empty, nil is returned.
+// ValidateAllSignedKeys validates every EC and KEM signed pre-key and returns the first InvalidPreKeySignatureError.
 func ValidateAllSignedKeys(identityKey []byte, signedPreKeys []*SignedPreKey, kemPreKeys []*KEMSignedPreKey) error {
 	for _, spk := range signedPreKeys {
 		if err := ValidateSignedPreKey(identityKey, spk); err != nil {
@@ -180,13 +159,7 @@ func ValidateAllSignedKeys(identityKey []byte, signedPreKeys []*SignedPreKey, ke
 	return nil
 }
 
-// serializePublicKey returns the message bytes to verify an EC signed pre-key
-// signature. Signal clients sign the serialized form of the public key, which
-// is the DJB type byte (0x05) prepended to the 32-byte raw key.
-//
-// If the supplied bytes are already 33 bytes long (i.e., already include the
-// type prefix) they are returned as-is. If they are 32 bytes the type prefix
-// is prepended. Any other length returns nil.
+// serializePublicKey returns the 33-byte serialized key a client signed: 33 bytes as-is, 32 with 0x05 prepended, else nil.
 func serializePublicKey(pub []byte) []byte {
 	switch len(pub) {
 	case 33:

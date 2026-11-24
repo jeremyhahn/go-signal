@@ -1,10 +1,4 @@
-// Package checks holds the standard readiness-check builders the
-// Phase 4 binaries plug into health.Probes.Add.
-//
-// Every check follows the same contract: a single context-bounded
-// function returning nil when the backend is reachable and a typed
-// error otherwise. Probes.timeout caps how long a check may take, so
-// checks here MUST honour ctx.Done() — never block past it.
+// Package checks builds readiness checks for health.Probes.Add; each must honour ctx.Done().
 package checks
 
 import (
@@ -21,10 +15,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/health"
 )
 
-// HTTPGet returns a Check that does a HEAD/GET against url and reports
-// success when the response status is < 500. Use this for downstream
-// HTTP services whose health is signalled by HTTP-level reachability.
-// Java's FaultTolerantHttpClient uses the same liveness signal.
+// HTTPGet returns a Check that succeeds when url answers with a status below 500.
 func HTTPGet(url string, client *http.Client) health.Check {
 	if client == nil {
 		client = http.DefaultClient
@@ -46,15 +37,7 @@ func HTTPGet(url string, client *http.Client) health.Check {
 	}
 }
 
-// GRPCConn returns a Check that asks a gRPC connection for its
-// connectivity state and reports ready when the state is Ready or
-// Idle. gRPC's lazy connection model means freshly opened channels
-// sit in Idle until the first RPC; that's still considered healthy
-// from a readiness perspective. Connecting / TransientFailure /
-// Shutdown all flip the probe to 503.
-//
-// Pass the conn signald uses to call cdsi (or vice versa) so kubelet
-// can see when the downstream is unreachable.
+// GRPCConn returns a Check that is ready while conn is Ready or Idle.
 func GRPCConn(conn *grpc.ClientConn) health.Check {
 	return func(ctx context.Context) error {
 		if conn == nil {
@@ -80,10 +63,7 @@ func GRPCConn(conn *grpc.ClientConn) health.Check {
 	}
 }
 
-// Pinger is the smallest surface a backend store needs to expose to
-// participate in readiness checks. Both *cache.Client and the qrdb/
-// postgres stores can implement this with a few-line `Ping(ctx)`
-// shim.
+// Pinger is what a backend store implements to take part in readiness checks.
 type Pinger interface {
 	Ping(ctx context.Context) error
 }
@@ -100,11 +80,7 @@ func Ping(name string, p Pinger) health.Check {
 	}
 }
 
-// Aggregate returns a Check that runs the supplied checks in order
-// and reports the first failing one. Useful for binaries with
-// several dependencies that should all be ready before the binary
-// itself is — keeps the /readyz JSON keys tidy by collapsing them
-// into a single aggregate.
+// Aggregate returns a Check that runs checks in order and reports the first failure.
 func Aggregate(checks ...health.Check) health.Check {
 	return func(ctx context.Context) error {
 		for i, c := range checks {

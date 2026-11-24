@@ -1,28 +1,6 @@
 //go:build integration
 
-// Package api hosts the Phase 4 verification gate.
-//
-// TestPhase4Topology is the in-process superset of the per-sub-phase
-// e2e tests we shipped in 4.1–4.5. It stands up the wire surfaces of
-// every Phase 4 binary in one process and drives the operator-facing
-// flow:
-//
-//  1. registration-service creates a verification session for a new
-//     E.164, sends a code through the stub transport, accepts the
-//     code, returns a verified session.
-//  2. signald's directory gRPC service streams the new account row
-//     into cdsi's directory.
-//  3. cdsi resolves the registered E.164 → PNI tuple over the
-//     Noise NKhfs WebSocket.
-//  4. storage-service accepts an encrypted manifest; signald's admin
-//     client purges it.
-//  5. svr2 admin DELETE purges the per-account secret-recovery row.
-//  6. key-transparency appends a (search-key, identity-key) entry
-//     and surfaces it through the manager → remote gRPC chain.
-//
-// The full docker-compose-deployed cluster runs the same sequence via
-// `make integration-test`; this in-process variant verifies the
-// cross-package wire stays glued together inside the regular CI loop.
+// Package api holds the API integration tests; TestPhase4Topology runs registration, directory streaming, CDSI lookup, storage and SVR2 purges and key transparency in one process.
 package api
 
 import (
@@ -117,13 +95,7 @@ func (c *captureTransport) SendCode(_ context.Context, _, code string, _ ...veri
 
 func (c *captureTransport) Name() string { return "topology-capture" }
 
-// appendableMemorySource is dirsvc.AccountSource with a mutable
-// backing slice — the in-process equivalent of signald writing a new
-// account row that the snapshot stream then picks up.
-//
-// The load gate (TestPhase5_FullTopologyUnderLoad) appends from 50
-// goroutines at once, so the slice is guarded: an unsynchronized append
-// both races and silently loses entries.
+// appendableMemorySource is a dirsvc.AccountSource whose slice can grow, guarded for concurrent appends.
 type appendableMemorySource struct {
 	mu      sync.RWMutex
 	entries []dirsvc.DirectoryEntry

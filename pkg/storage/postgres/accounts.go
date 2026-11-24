@@ -15,17 +15,7 @@ import (
 // Compile-time interface satisfaction check.
 var _ accounts.AccountStore = (*AccountStore)(nil)
 
-// AccountStore is a Postgres-backed implementation of accounts.AccountStore.
-//
-// Schema design: the `data` JSONB column is the authoritative serialization
-// of the Account struct (including embedded Devices). The promoted columns
-// (aci, pni, e164, username_hash, username_link_handle, version) are
-// projections used for indexing and uniqueness; they are written from the
-// Account struct on every insert/update and stay in sync with `data`.
-//
-// Optimistic locking: Update applies WHERE version = current_version - 1,
-// matching the qrdb contract that account.Version must be exactly one
-// greater than the stored version.
+// AccountStore implements accounts.AccountStore on Postgres: the data JSONB is authoritative, promoted columns index it, and Update requires Version = stored + 1.
 type AccountStore struct {
 	q Querier
 }
@@ -37,9 +27,7 @@ func NewAccountStore(q Querier) *AccountStore {
 	return &AccountStore{q: q}
 }
 
-// Create persists a new account, enforcing unique aci/pni/e164/username_hash
-// via Postgres UNIQUE constraints. Conflicts on any of those are mapped to
-// AccountAlreadyExistsError. The whole Account is serialized to JSONB.
+// Create stores a new account as JSONB; a duplicate aci, pni, e164 or username hash is AccountAlreadyExistsError.
 func (s *AccountStore) Create(ctx context.Context, account *accounts.Account) error {
 	if account == nil {
 		return &accounts.InvalidArgumentError{Field: "account", Message: "nil account"}
@@ -147,10 +135,7 @@ func (s *AccountStore) Update(ctx context.Context, account *accounts.Account) er
 	}
 }
 
-// ListAll iterates every row in `accounts`, decoding the JSONB into
-// Account and yielding to fn. Uses a single SELECT over the data
-// column; pgx's row iteration streams server-side rather than
-// materialising the whole result set in memory.
+// ListAll streams every account to fn.
 func (s *AccountStore) ListAll(ctx context.Context, fn func(*accounts.Account) error) error {
 	rows, err := s.q.Query(ctx, `SELECT data FROM accounts`)
 	if err != nil {
@@ -186,9 +171,7 @@ func (s *AccountStore) Delete(ctx context.Context, uuid string) error {
 	return nil
 }
 
-// scanOne runs a single-row SELECT data and decodes the JSONB into Account.
-// Row absence is mapped to AccountNotFoundError using the trailing arg as
-// the identifier hint (matches the qrdb impl's behavior).
+// scanOne decodes one row's data into an Account; no row is AccountNotFoundError for the last arg.
 func (s *AccountStore) scanOne(ctx context.Context, sql string, ident string) (*accounts.Account, error) {
 	var raw []byte
 	if err := s.q.QueryRow(ctx, sql, ident).Scan(&raw); err != nil {
@@ -204,11 +187,7 @@ func (s *AccountStore) scanOne(ctx context.Context, sql string, ident string) (*
 	return &acct, nil
 }
 
-// identifyConflict inspects err for a unique-constraint violation and
-// returns (conflictingIdentifier, true) when one is detected. The
-// identifier is the value the caller was trying to insert that already
-// exists — useful for the AccountAlreadyExistsError message. Constraint
-// names are mapped explicitly so a future schema rename surfaces here.
+// identifyConflict returns the conflicting value when err is a known unique-constraint violation.
 func (s *AccountStore) identifyConflict(err error, account *accounts.Account) (string, bool) {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
@@ -229,8 +208,7 @@ func (s *AccountStore) identifyConflict(err error, account *accounts.Account) (s
 	return account.UUID, true
 }
 
-// nullableString converts an empty Go string to a NULL Postgres value.
-// Uniqueness on a TEXT column with NULLs allows multiple unset rows.
+// nullableString sends "" as NULL, so unset values do not collide on UNIQUE columns.
 func nullableString(s string) any {
 	if s == "" {
 		return nil
@@ -238,8 +216,7 @@ func nullableString(s string) any {
 	return s
 }
 
-// nullableUUID is the UUID-typed equivalent of nullableString. Postgres
-// rejects empty strings as UUIDs, so empties must be sent as NULL.
+// nullableUUID sends "" as NULL; Postgres rejects empty UUIDs.
 func nullableUUID(s string) any {
 	if s == "" {
 		return nil

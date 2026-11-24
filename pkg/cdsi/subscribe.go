@@ -35,11 +35,7 @@ type SubscribeConfig struct {
 	TokenStore ResumeTokenStore
 }
 
-// ResumeTokenStore persists the directory subscribe resume cursor
-// across reconnects and process restarts. Implementations must be
-// safe for concurrent access — Save is called from the subscribe
-// loop goroutine while Load may be called by the same goroutine on
-// reconnect.
+// ResumeTokenStore persists the subscribe resume cursor across reconnects and restarts; safe for concurrent use.
 type ResumeTokenStore interface {
 	Load(ctx context.Context) ([]byte, error)
 	Save(ctx context.Context, token []byte) error
@@ -73,15 +69,7 @@ func (s *MemoryResumeTokenStore) Save(_ context.Context, token []byte) error {
 	return nil
 }
 
-// SubscribeAndApply runs the live-replication loop until ctx is
-// cancelled. On every disconnect it backs off exponentially and
-// resubscribes with the most recently persisted resume token. When
-// the server detects that token is too old it falls back to a fresh
-// snapshot — the cdsi loop applies it as a sequence of Upsert events,
-// so the local index converges to the server's view without losing
-// in-flight lookups.
-//
-// Returns ctx.Err() on clean shutdown.
+// SubscribeAndApply replicates the directory until ctx ends, resubscribing with backoff from the saved token or a fresh snapshot; returns ctx.Err().
 func SubscribeAndApply(ctx context.Context, cfg SubscribeConfig) error {
 	if cfg.Client == nil {
 		return errors.New("cdsi: SubscribeAndApply requires Client")
@@ -146,29 +134,17 @@ func runOnce(ctx context.Context, cfg SubscribeConfig, token []byte, logger *slo
 		return err
 	}
 
-	// Wipe local state at the start of every fresh subscription so
-	// the upcoming snapshot is authoritative. Skip when resuming
-	// from a saved token — the server is going to send only
-	// deltas, and clobbering the local directory would create
-	// false negatives until the catch-up finishes. Doing the
-	// Replace before the first Recv (rather than gating on frame
-	// contents) means token-only frames or any other unexpected
-	// "no event payload" first frame can't deadlock convergence.
+	// On a fresh subscription, clear local state before the first Recv so the snapshot is authoritative; keep it when resuming.
 	if token == nil {
 		if err := cfg.Directory.Replace(ctx, nil); err != nil {
 			return signalerrors.Wrap(signalerrors.ErrInternal, "cdsi: clear directory before fresh subscribe", err)
 		}
 	}
 
-	// Track UUID → E164 across this stream so DELETE events with
-	// only the ACI carry enough state for the local index. UPSERT
-	// events carry both, so this map fills as we go.
+	// Track UUID to E.164 so ACI-only DELETE events can be applied.
 	uuidIndex := make(map[[16]byte]uint64)
 
-	// consecutiveTokenSaveFailures escalates to a stream-level
-	// error when the persistence layer is failing — better to drop
-	// the subscription and trigger a reconnect than to silently
-	// run with an ever-staler resume cursor.
+	// Repeated token save failures end the stream to force a reconnect.
 	consecutiveTokenSaveFailures := 0
 	const maxTokenSaveFailures = 5
 

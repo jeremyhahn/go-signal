@@ -15,10 +15,7 @@ import (
 	signalws "github.com/jeremyhahn/go-signal/pkg/websocket"
 )
 
-// SignalService is the top-level aggregate that provides all service
-// interfaces required by REST and gRPC protocol handlers. Protocol handlers
-// should accept *SignalService (or individual service interfaces) rather than
-// coupling directly to manager types.
+// SignalService aggregates every service interface the REST and gRPC handlers use.
 type SignalService struct {
 	Accounts      AccountService
 	Messages      MessageService
@@ -53,11 +50,7 @@ type ServiceConfig struct {
 	Backups *backups.Service
 }
 
-// NewSignalService constructs a SignalService, wiring each manager into its
-// corresponding service implementation. Accounts, Messages, Keys, Profiles,
-// Certificates, Devices, and Usernames are required and must not be nil.
-// CallSignaling is wired only when both WSSessions and Calling are non-nil;
-// deployments that do not require 1:1 calling may omit those fields.
+// NewSignalService wires each manager into its service; Accounts through Usernames are required, CallSignaling needs both WSSessions and Calling.
 func NewSignalService(cfg ServiceConfig) *SignalService {
 	svc := &SignalService{
 		Accounts:     NewAccountService(cfg.Accounts),

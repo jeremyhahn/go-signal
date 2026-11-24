@@ -15,12 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// usernameEntropyBytes is the fresh randomness per generated nickname. A
-// confirmed username hash belongs to one account for the lifetime of the
-// server, so uniqueness here has to hold against every account the server
-// has ever confirmed — not merely within this process. 10 bytes hex-encode
-// to 20 characters, which with the prefix stays inside the 32-character
-// nickname limit while leaving collisions out of reach.
+// usernameEntropyBytes of randomness per nickname: 20 hex characters, unique across every account the server has confirmed, within the 32-character limit.
 const usernameEntropyBytes = 10
 
 // uniqueNickname returns a nickname no run has used before. The per-run
@@ -55,11 +50,7 @@ func realUsernameHashAndProofForIntegration(t *testing.T) (hash []byte, proofB64
 	return out, base64.StdEncoding.EncodeToString(proof)
 }
 
-// confirmUsernameHashForAccount reserves and confirms a real username hash for
-// the given account via the REST API. It returns the confirmed hash base64-
-// encoded so callers can use it in subsequent assertions. Tests that require a
-// confirmed username hash (e.g. to set a username link) should call this helper
-// first.
+// confirmUsernameHashForAccount reserves and confirms a username hash over REST and returns it base64-encoded.
 func confirmUsernameHashForAccount(t *testing.T, env *testEnv, acctUUID, password string) string {
 	t.Helper()
 	hash, proofB64 := realUsernameHashAndProofForIntegration(t)

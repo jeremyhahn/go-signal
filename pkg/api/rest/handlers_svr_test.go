@@ -184,8 +184,7 @@ func TestHandleGetSVRSVRAuth_BodyCarriesUsableCredential(t *testing.T) {
 	}
 }
 
-// The SVRB archive credential goes out through a dedicated response DTO;
-// assert that path too, since it reads Plaintext() explicitly.
+// The SVRB archive credential uses its own response DTO, which reads Plaintext() explicitly.
 func TestHandleGetSVRBackupAuth_BodyCarriesUsableCredential(t *testing.T) {
 	s, _ := newTestServerWithAccount(t)
 

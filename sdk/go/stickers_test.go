@@ -545,10 +545,7 @@ func TestClient_UploadStickerPack_StickerCountMismatch(t *testing.T) {
 	}
 }
 
-// stubStore is a no-op Store satisfying the SDK interface so tests
-// can construct a Client without going through the DAO factory (which
-// requires the codec_json build tag). The stickerPacks slice backs
-// the sticker pack registry tests below.
+// stubStore is a no-op Store so tests need no DAO factory; stickerPacks backs the registry tests.
 type stubStore struct {
 	stickerPacks []InstalledStickerPack
 }

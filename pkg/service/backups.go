@@ -7,24 +7,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/backups"
 )
 
-// BackupService defines the message-archive operations exposed to REST and
-// gRPC handlers. The interface bundles two underlying managers (an
-// account-authenticated [backups.AuthManager] for credential issuance and
-// a ZK-authenticated [backups.Manager] for archive operations) so handlers
-// only depend on a single seam.
-//
-// Two auth models are present and handlers must call the appropriate
-// helper:
-//
-//   - Account-authenticated calls (SetBackupID, GetBackupIDLimits,
-//     RedeemReceipt, GetBackupAuthCredentials) take an accountUUID + deviceID
-//     extracted from the Signal session by middleware.
-//
-//   - ZK-authenticated calls (everything else) take an [*backups.AuthenticatedUser]
-//     produced by [BackupService.AuthenticateBackupUser]. Handlers extract
-//     the BackupAuthCredentialPresentation + XEd25519 signature from the
-//     anonymous request, call AuthenticateBackupUser once at the top of the
-//     handler, and pass the result into subsequent calls.
+// BackupService is the backup surface for REST and gRPC: SetBackupID, GetBackupIDLimits, RedeemReceipt and GetBackupAuthCredentials take an account and device; the rest take the user from AuthenticateBackupUser.
 type BackupService interface {
 
 	// --- Account-authenticated --------------------------------------------
@@ -41,10 +24,7 @@ type BackupService interface {
 	// account as eligible for the paid backup tier.
 	RedeemReceipt(ctx context.Context, accountUUID string, req backups.RedeemReceiptRequest) error
 
-	// GetBackupAuthCredentials issues backup-auth credentials covering the
-	// half-open window [redemptionStart, redemptionEnd). Each day in the
-	// window is issued separately. The maximum window is 7 days; longer
-	// windows are rejected with [*backups.InvalidArgumentError].
+	// GetBackupAuthCredentials issues one credential per day in [redemptionStart, redemptionEnd), at most 7 days.
 	GetBackupAuthCredentials(
 		ctx context.Context,
 		accountUUID string,
@@ -54,11 +34,7 @@ type BackupService interface {
 
 	// --- ZK-authenticated -------------------------------------------------
 
-	// AuthenticateBackupUser verifies a presentation + signature against
-	// the stored public key for the encoded backup-id. The returned
-	// [*backups.AuthenticatedUser] must be passed into all subsequent
-	// ZK-authenticated calls. Returns [*backups.FailedZkAuthError] on
-	// verification failure.
+	// AuthenticateBackupUser verifies a presentation and signature against the backup-id's stored key; pass the result to every ZK-authenticated call. Failure is [*backups.FailedZkAuthError].
 	AuthenticateBackupUser(
 		ctx context.Context,
 		presentation []byte,
@@ -91,10 +67,7 @@ type BackupService interface {
 		user *backups.AuthenticatedUser,
 	) (*backups.UploadDescriptor, error)
 
-	// CreateTemporaryAttachmentUploadDescriptor mints a resumable-upload
-	// form for a temporary attachment that the client will subsequently
-	// re-encrypt and copy to backup via [CopyToBackup]. Requires the
-	// media credential type and the paid tier.
+	// CreateTemporaryAttachmentUploadDescriptor returns a resumable-upload form for an attachment later copied via [CopyToBackup]; media credential and paid tier.
 	CreateTemporaryAttachmentUploadDescriptor(
 		ctx context.Context,
 		user *backups.AuthenticatedUser,
@@ -109,9 +82,7 @@ type BackupService interface {
 		cdnNumber int,
 	) (map[string]string, error)
 
-	// GenerateSVRBAuth returns credentials for the SVRB service (used by
-	// clients for forward-secrecy of the messages backup). Requires the
-	// messages credential type.
+	// GenerateSVRBAuth returns SVRB credentials; messages credential type.
 	GenerateSVRBAuth(
 		ctx context.Context,
 		user *backups.AuthenticatedUser,
@@ -155,10 +126,7 @@ type BackupService interface {
 		fn func(backups.StorageDescriptor) error,
 	) error
 
-	// DeleteEntireBackup schedules the user's entire backup (messages +
-	// media + SVRB state) for deletion. The CDN deletion runs
-	// asynchronously via the [RemoveExpiredBackups] worker; on conflict
-	// with a pending deletion the call performs a synchronous fallback.
+	// DeleteEntireBackup schedules the user's messages, media and SVRB state for deletion by [RemoveExpiredBackups], or deletes synchronously when one is already pending.
 	DeleteEntireBackup(ctx context.Context, user *backups.AuthenticatedUser) error
 
 	// --- Worker-facing ----------------------------------------------------
@@ -194,11 +162,7 @@ type BackupService interface {
 	) (*backups.RecalculationResult, error)
 }
 
-// NewBackupService returns a [BackupService] backed by the supplied
-// [backups.Service] (which itself bundles a [backups.Manager] and
-// [backups.AuthManager]). The constructor mirrors NewKeyService /
-// NewMessageService: protocol handlers only depend on the interface;
-// composition of the underlying managers lives in cmd/signald/start.go.
+// NewBackupService returns a [BackupService] over svc; managers are composed in cmd/signald/start.go.
 func NewBackupService(service *backups.Service) BackupService {
 	return service
 }

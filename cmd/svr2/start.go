@@ -39,11 +39,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Wipe every protected configuration secret on the way out, registered
-	// before the first validation can return so an aborted startup leaves
-	// nothing resident. Matters most when the command is driven in-process
-	// rather than followed immediately by process exit. Destroy is
-	// idempotent and nil-safe.
+	// Wipe every protected configuration secret on the way out, including an aborted startup; Destroy is idempotent and nil-safe.
 	defer cfg.Destroy()
 
 	att, err := buildAttester(cfg.SVR2, logger)
@@ -139,12 +135,7 @@ func staticPrivateKey(att attestation.Attester) ([]byte, error) {
 	return holder.StaticPrivateKey(), nil
 }
 
-// buildStorage selects the svr2.Storage implementation based on
-// cfg.Storage.Backend. The "qrdb" backend wires QrdbStorage behind
-// an in-process FakeKVStore (the same pattern signald uses for the
-// qrdb backend before a live qrdb transport is provisioned). Any
-// other value defaults to MemoryStorage. The qrdb backend is the
-// production-equivalent path; memory is for development and tests.
+// buildStorage selects the svr2.Storage for cfg.Storage.Backend: qrdb, or memory by default.
 func buildStorage(cfg config.StorageConfig) (svr2.Storage, error) {
 	switch cfg.Backend {
 	case "qrdb":
@@ -168,14 +159,7 @@ func buildAttester(c config.SVR2Config, logger *slog.Logger) (attestation.Attest
 			slog.String("signerPub", hex.EncodeToString(a.SignerPublic())))
 		return a, nil
 	case "tpm":
-		// go-signal does not bind a TPM 2.0 transport itself. Higher-
-		// level applications that need TPM attestation (e.g.,
-		// go-quicbaas which already imports go-xkms) construct the
-		// TrustedPlatformModule themselves and call
-		// attestation.NewTPM(...) directly with it injected. Running
-		// cmd/svr2 standalone with attestation="tpm" is therefore not
-		// supported — the binary refuses to start with a clear
-		// configuration error.
+		// The standalone binary binds no TPM transport, so attestation="tpm" is refused; embedding applications inject one via attestation.NewTPM.
 		return nil, signalerrors.New(signalerrors.ErrInternal, "attestation=\"tpm\" requires the binary to be embedded in a host application that injects a TPM via attestation.NewTPM; the standalone cmd/svr2 does not link a TPM transport. Use attestation=\"software\" for direct deployment.")
 	default:
 		return nil, signalerrors.New(signalerrors.ErrInvalidArgument, fmt.Sprintf("unknown attestation flavour: %q", c.Attestation))
@@ -293,13 +277,7 @@ func newAdminHandler(logger *slog.Logger, storage svr2.Storage, hmacSecret *secr
 	})
 }
 
-// validateBasicAuth parses an HTTP Basic header and confirms the
-// password is an HMAC-SHA256(secret, username) digest. Returns the
-// username on success — the SVR2 identity for downstream lookups.
-// Java's ExternalServiceCredentials uses the same construction.
-//
-// The secret is revealed from protected memory only for the length of the
-// digest comparison; an unset or wiped secret authenticates nothing.
+// validateBasicAuth checks an HTTP Basic password is HMAC-SHA256(secret, username) and returns the username.
 func validateBasicAuth(r *http.Request, secret *secrets.SecureString) (string, bool) {
 	var (
 		identity string
@@ -310,15 +288,7 @@ func validateBasicAuth(r *http.Request, secret *secrets.SecureString) (string, b
 }
 
 func validateBasicAuthKey(r *http.Request, secret []byte) (string, bool) {
-	// Delegated rather than repeated. This was a byte-identical third copy of
-	// common.ValidateBasicAuth, and that package exists precisely to stop this
-	// code diverging across services — its own doc says a divergence "would
-	// silently break the HMAC contract".
-	//
-	// Repeating it also meant repeating its defect: the decoded
-	// `username:password` buffer was left resident, and both the presented and
-	// the expected credential were copied into Go strings that cannot be wiped
-	// (#47). Fixing that three times would have been three chances to miss one.
+	// Delegates to common.ValidateBasicAuth, which wipes the decoded credentials.
 	return common.ValidateBasicAuth(r.Header.Get("Authorization"), secret)
 }
 

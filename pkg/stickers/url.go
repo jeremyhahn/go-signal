@@ -8,21 +8,13 @@ import (
 	"unicode"
 )
 
-// PackURL is a parsed Signal sticker share URL. The canonical text
-// form is `https://signal.art/addstickers/#pack_id=<hex>&pack_key=<hex>`
-// — pack_id is 16 hex bytes, pack_key is 32 hex bytes. Both halves
-// are required to fetch and decrypt the pack.
+// PackURL is a sticker share URL: https://signal.art/addstickers/#pack_id=<16-byte hex>&pack_key=<32-byte hex>.
 type PackURL struct {
 	PackID  string
 	PackKey []byte
 }
 
-// ParsePackURL decodes a Signal sticker pack share URL into its
-// pack-id + pack-key components. The hash fragment is parsed as
-// query-style key=value pairs; both pack_id and pack_key are
-// required, hex-encoded, and length-checked.
-//
-// Returns *PackURLError when the URL is malformed.
+// ParsePackURL extracts and checks the hex pack_id and pack_key from the fragment, or returns *PackURLError.
 func ParsePackURL(raw string) (*PackURL, error) {
 	if raw == "" {
 		return nil, &PackURLError{Reason: "empty URL"}
@@ -46,10 +38,7 @@ func ParsePackURL(raw string) (*PackURL, error) {
 	if packKeyHex == "" {
 		return nil, &PackURLError{Reason: "pack_key is required"}
 	}
-	// Whitespace inside hex-encoded fields is always a sign of a
-	// malformed URL; silently trimming would mask producer bugs and
-	// could be abused to construct identifiers that pass length
-	// checks after the trim. Reject up-front.
+	// Reject whitespace in hex fields rather than trimming it.
 	if strings.IndexFunc(packID, unicode.IsSpace) >= 0 {
 		return nil, &PackURLError{Reason: "pack_id must not contain whitespace"}
 	}

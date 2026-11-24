@@ -97,26 +97,7 @@ func TestSignalCLI_Verify_InvalidCode(t *testing.T) {
 	}
 }
 
-// TestSignalCLI_Register_Reregister pins the Java-parity behaviour for a
-// re-registration that reuses a still-verified session.
-//
-// signal-cli stores the verification session id and reuses it, so
-// `register --reregister` issues POST /v1/verification/session/{id}/code
-// against a session it verified seconds earlier. Java's VerificationController
-// checks verified() *before* the code-request cooldown and answers 409 with the
-// session (VerificationController.java:609-614), and neither Java's
-// RegistrationController nor its PhoneVerificationTokenManager deletes the
-// session afterwards — so the session stays verified for its full TTL and the
-// reference implementation refuses this request too.
-//
-// The assertion is therefore the conflict, not success: libsignal surfaces it
-// as AlreadyVerifiedException. It previously arrived as 429
-// RegistrationRetryException, which told the client to wait for something that
-// waiting could never resolve.
-//
-// Whether we should deviate from Java by invalidating a session once it has
-// been consumed by a successful registration — which would let this flow
-// succeed — is an open question for the owner, tracked in #27.
+// TestSignalCLI_Register_Reregister: a code request on an already-verified session returns 409 (AlreadyVerifiedException), as Signal-Server does.
 func TestSignalCLI_Register_Reregister(t *testing.T) {
 	number := signalCLIUniqueNumber()
 	signalCLIRegisterAndVerify(t, number)

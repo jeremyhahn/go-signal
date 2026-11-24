@@ -90,10 +90,7 @@ type kvPair struct {
 	value []byte
 }
 
-// snapshotPrefix returns a deterministic, lexicographically sorted snapshot
-// of all pairs matching the prefix. Taking a snapshot under the read lock
-// lets fn run without holding the lock, avoiding deadlocks if fn re-enters
-// the store.
+// snapshotPrefix returns the sorted pairs under prefix, taken under the read lock so fn runs unlocked.
 func (f *FakeKVStore) snapshotPrefix(prefix string) []kvPair {
 	f.mu.RLock()
 	defer f.mu.RUnlock()

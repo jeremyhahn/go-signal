@@ -462,12 +462,7 @@ func TestBackupUsageRecalculationWorker_PerRowErrorAccumulated(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// errInjectBackupService: minimal BackupService that returns controlled
-// errors for specific methods; all other methods delegate to a real service.
-// Used exclusively to hit error branches that the in-memory store cannot
-// trigger through normal operation.
-// ---------------------------------------------------------------------------
+// errInjectBackupService returns chosen errors from some methods and delegates the rest to a real service.
 
 type errInjectBackupService struct {
 	real            service.BackupService

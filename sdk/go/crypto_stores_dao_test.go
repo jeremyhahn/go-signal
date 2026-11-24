@@ -213,8 +213,7 @@ func TestDAOSessionStore_GetSubDeviceSessions_WithData(t *testing.T) {
 
 	ids, err := ss.GetSubDeviceSessions("multi-device-user")
 	require.NoError(t, err)
-	// Result depends on QRDB PREFIX operator support. Either way, no error
-	// and the function's query + loop code paths are exercised.
+	// The result depends on QRDB PREFIX support; only the absence of an error is checked.
 	_ = ids
 }
 

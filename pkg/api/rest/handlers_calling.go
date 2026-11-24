@@ -9,8 +9,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/calling"
 )
 
-// handleGetCallingRelays handles GET /v2/calling/relays and returns the
-// configured TURN relay servers.
+// handleGetCallingRelays handles GET /v2/calling/relays and returns the configured TURN relays.
 func (s *Server) handleGetCallingRelays(w http.ResponseWriter, r *http.Request) {
 	acct := accountFromContext(r.Context())
 	if acct == nil {
@@ -61,10 +60,7 @@ func (s *Server) handleGetCallLinkAuth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, auth)
 }
 
-// handleSubmitCallQualitySurvey handles PUT /v1/call_quality_survey and
-// accepts a call quality survey submission. This endpoint MUST be
-// unauthenticated; matching Java's behavior, authenticated requests are
-// rejected with 403.
+// handleSubmitCallQualitySurvey handles PUT /v1/call_quality_survey; it is unauthenticated and answers 403 to authenticated requests.
 func (s *Server) handleSubmitCallQualitySurvey(w http.ResponseWriter, r *http.Request) {
 	// Java: throws ForbiddenException if authenticatedDevice.isPresent()
 	if acct := accountFromContext(r.Context()); acct != nil {

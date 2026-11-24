@@ -6,19 +6,13 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/accounts"
 )
 
-// identityResolver is the subset of *accounts.AccountsManager the
-// message layer uses to turn an (identityType, uuid) pair into an
-// account. It exists so the messages package does not import the full
-// AccountsManager surface.
+// identityResolver is the subset of *accounts.AccountsManager the message layer needs.
 type identityResolver interface {
 	Get(ctx context.Context, uuid string) (*accounts.Account, error)
 	GetByPNI(ctx context.Context, pni string) (*accounts.Account, error)
 }
 
-// ResolveDestinationAccount returns the Signal account addressed by
-// (identityType, uuid). The ACI path goes through Get; the PNI path
-// goes through GetByPNI. Using this helper keeps every message
-// handler routing messages identically regardless of identity.
+// ResolveDestinationAccount returns the account for (identityType, uuid), via Get for ACI and GetByPNI for PNI.
 func ResolveDestinationAccount(ctx context.Context, r identityResolver, identityType accounts.IdentityType, uuid string) (*accounts.Account, error) {
 	switch identityType {
 	case accounts.IdentityTypePNI:
@@ -30,11 +24,7 @@ func ResolveDestinationAccount(ctx context.Context, r identityResolver, identity
 	}
 }
 
-// StorageNamespace returns the UUID string to use as the storage
-// namespace for the envelope. For ACI-addressed envelopes this is the
-// recipient's ACI (Account.UUID); for PNI-addressed envelopes it is
-// the recipient's PNI. The store keys messages under this string
-// directly so ACI and PNI queues never collide.
+// StorageNamespace returns the recipient's ACI or PNI, whichever the envelope addresses, so the two queues never collide.
 func (e *Envelope) StorageNamespace() string {
 	return e.DestinationUUID
 }

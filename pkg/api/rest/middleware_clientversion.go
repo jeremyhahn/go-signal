@@ -16,15 +16,7 @@ const statusDeprecatedClient = 499
 // clientVersionContextKey is the context key for the parsed client version.
 type clientVersionContextKey struct{}
 
-// clientVersionMiddleware inspects the User-Agent or Signal-Client-Version
-// header and enforces the ClientVersionConfig policy:
-//
-//   - If the version is in BlockedVersions, the request is rejected with 403.
-//   - If the version is below DeprecatedBefore, the request is rejected with
-//     499 and a JSON body containing the minimum_version field.
-//   - If the header is absent or cannot be parsed, the request is allowed
-//     through (lenient behaviour for scripts and tooling).
-//   - Parsed version strings are stored in the request context for logging.
+// clientVersionMiddleware rejects blocked versions with 403 and versions below DeprecatedBefore with 499; a missing or unparsable header passes.
 func clientVersionMiddleware(cfg *ClientVersionConfig, next http.Handler) http.Handler {
 	if cfg == nil {
 		return next
@@ -109,16 +101,7 @@ func ClientVersionFromContext(ctx context.Context) *ClientVersion {
 	return v
 }
 
-// parseClientVersion attempts to extract a platform and version from a raw
-// Signal client header value. The expected formats are:
-//
-//   - "Signal-Android/5.1.0 Android/13"
-//   - "Signal-iOS/5.1.0 iOS/16.0"
-//   - "Signal-Desktop/5.1.0 Linux"
-//   - Plain semver: "5.1.0"
-//
-// Returns the parsed ClientVersion and true on success; false if the value is
-// empty or contains no recognisable version information.
+// parseClientVersion extracts platform and version from "Signal-Android/5.1.0 Android/13"-style headers or plain semver.
 func parseClientVersion(raw string) (*ClientVersion, bool) {
 	if raw == "" {
 		return nil, false

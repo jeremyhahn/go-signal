@@ -39,34 +39,18 @@ type Config struct {
 // Enabled reports whether the gRPC listener should be started.
 func (c Config) Enabled() bool { return c.Listen != "" }
 
-// Server is the go-signal gRPC server. It owns a *grpc.Server configured
-// with two interceptor flavours (authenticated + anonymous) and all 16
-// service registrations.
-//
-// Today most service methods return codes.Unimplemented; as Phase 2 lands
-// each service's methods are implemented by replacing the Unimplemented
-// embed in pkg/api/grpc/services with real logic.
+// Server is the gRPC server: one *grpc.Server with authenticated and anonymous interceptors and every service registered.
 type Server struct {
 	cfg Config
 	s   *grpc.Server
 }
 
-// New constructs a Server. accounts is used by the authenticated
-// interceptor to resolve Basic credentials. svc is passed to every
-// service registration so handlers can reach storage once implemented.
-// directoryOpts are forwarded to dirsvc.NewServer — pass
-// dirsvc.WithEventSource(...) to activate live Subscribe replication.
+// New constructs a Server; accounts resolves Basic credentials and directoryOpts go to dirsvc.NewServer (WithEventSource enables live Subscribe).
 func New(cfg Config, am *accounts.AccountsManager, svc *service.SignalService, directorySource dirsvc.AccountSource, directoryOpts ...dirsvc.ServerOption) *Server {
 	authInterceptor := interceptors.AuthenticatedUnary(am)
 	anonInterceptor := interceptors.AnonymousUnary()
 
-	// One grpc.Server hosts every service. We pick the interceptor per
-	// service by chaining the correct one in each RegisterXServer call
-	// via a per-service handler wrapper. Go-grpc does not natively allow
-	// per-service interceptors on a single server, so we install both
-	// flavours on separate "virtual" gRPC servers sharing the same
-	// listener. Simpler: pick a single server-wide interceptor that
-	// dispatches by service name.
+	// One server-wide interceptor dispatches by service name, since grpc-go has no per-service interceptors.
 	s := grpc.NewServer(
 		grpc.UnaryInterceptor(routingInterceptor(authInterceptor, anonInterceptor)),
 	)
@@ -91,10 +75,7 @@ func New(cfg Config, am *accounts.AccountsManager, svc *service.SignalService, d
 	backupspb.RegisterBackupsAnonymousServer(s, services.NewBackupsAnonymousService(svc))
 	credentialspb.RegisterExternalServiceCredentialsAnonymousServer(s, services.NewExternalServiceCredentialsAnonymousService(svc))
 
-	// External-infrastructure services. RegistrationService lives in
-	// cmd/registration-service as of Phase 4.1; KT is still a signald
-	// stub until Phase 4.5 extracts it. DirectoryService (Phase 4.3)
-	// is the read surface cmd/cdsi consumes at startup.
+	// External-infrastructure services; DirectoryService is the read surface cmd/cdsi consumes.
 	ktpb.RegisterKeyTransparencyQueryServiceServer(s, services.NewKeyTransparencyService(svc))
 	if directorySource != nil {
 		dirpb.RegisterDirectoryServiceServer(s, dirsvc.NewServer(directorySource, directoryOpts...))
@@ -131,10 +112,7 @@ func (s *Server) Stop() {
 	s.s.GracefulStop()
 }
 
-// anonymousServicePrefixes lists the fully-qualified service names that
-// expect anonymous traffic. Java Signal-Server exposes these as
-// AUTH_ONLY_ANONYMOUS via the `require.auth` custom option; we hard-code
-// the list here to match. Keep sync'd with .proto annotations.
+// anonymousServicePrefixes lists the AUTH_ONLY_ANONYMOUS services; keep in sync with the .proto annotations.
 var anonymousServicePrefixes = []string{
 	"/org.signal.chat.account.AccountsAnonymous/",
 	"/org.signal.chat.messages.MessagesAnonymous/",

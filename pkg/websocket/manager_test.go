@@ -524,16 +524,7 @@ func TestSessionKey_AsMapKey(t *testing.T) {
 	}
 }
 
-// TestSessionManager_DeliverMessage_NilEnvelope covers the boundary the
-// encoding-failure branch created. buildDeliveryMessage returns nil for an
-// envelope it cannot encode, and the branch that reports that failure named
-// the envelope's ServerGUID — which panicked for the one input that reaches
-// it most directly. A nil envelope is a caller bug; it must not take the
-// process down.
-//
-// The session must be ACTIVE: with no session registered the method returns
-// early and the panic is unreachable, so a test without one would pass
-// against the defect.
+// TestSessionManager_DeliverMessage_NilEnvelope checks a nil envelope on an active session does not panic.
 func TestSessionManager_DeliverMessage_NilEnvelope(t *testing.T) {
 	m := NewSessionManager(managerTestLogger())
 	session := newTestSession("uuid-1", 1)

@@ -1,14 +1,6 @@
 //go:build integration
 
-// TestPhase5_FullTopologyUnderLoad + TestPhase5_Chaos_GRPCFailureDegradesCleanly
-// together form the Phase 5.6 verification gate. They exercise the
-// same wire as TestPhase4Topology but under concurrent load and with
-// injected failures to confirm the system degrades cleanly rather
-// than corrupting state.
-//
-// The docker-compose harness in deploy/docker-compose.yml runs the
-// same flow against real binaries via `make integration-test`; this
-// in-process variant catches breakage inside the regular CI loop.
+// The load and chaos tests run the full in-process topology under concurrency and injected failures; `make integration-test` runs the same flow on real binaries.
 package api
 
 import (
@@ -177,12 +169,7 @@ func runOneAccount(ctx context.Context, tp *loadTopology, tr *loadTransport, idx
 // phase4_topology_test.go; this alias makes intent obvious.
 func (m *appendableMemorySource) AppendForTest(e dirsvc.DirectoryEntry) { m.Append(e) }
 
-// TestPhase5_FullTopologyUnderLoad runs 50 concurrent end-to-end
-// flows against the same in-process topology. The per-flow steps
-// (register → directory write → svr2 backup → storage manifest →
-// KT append) share state across goroutines so the test confirms
-// the underlying stores are concurrency-safe and the wire
-// surfaces don't drop messages under contention.
+// TestPhase5_FullTopologyUnderLoad runs 50 concurrent end-to-end flows over shared stores.
 func TestPhase5_FullTopologyUnderLoad(t *testing.T) {
 	tp, tr := buildLoadTopology(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

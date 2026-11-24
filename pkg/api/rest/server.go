@@ -39,8 +39,7 @@ import (
 	signalws "github.com/jeremyhahn/go-signal/pkg/websocket"
 )
 
-// Server implements the Signal Server REST API using the standard net/http
-// package with Go 1.22+ pattern matching.
+// Server implements the Signal Server REST API on net/http pattern routing.
 type Server struct {
 	httpServer *http.Server
 	// listener is the active network listener. Access is protected by
@@ -80,10 +79,7 @@ type Server struct {
 	fraudChecker      spam.RegistrationFraudChecker
 	reportStore       messages.ReportStore
 	loopDetector      *messages.DeliveryLoopDetector
-	// mrmCache is the multi-recipient message shared-payload cache. When nil,
-	// the binary multi-recipient endpoint falls back to per-recipient inline
-	// content (legacy/test behavior). Production deployments should always
-	// supply a real cache so MRM sends benefit from shared-payload storage.
+	// mrmCache is the multi-recipient shared-payload cache; nil falls back to per-recipient inline content.
 	mrmCache *messages.MRMCache
 
 	// attachmentStore persists CDN attachment uploads.
@@ -106,9 +102,7 @@ type Server struct {
 	// SPA fallback routing and appropriate cache headers.
 	frontendFS fs.FS
 
-	// webUIHandler serves the client-facing /api/v1/* REST endpoints for the
-	// web UI. When non-nil, the web UI routes are registered alongside the
-	// Signal protocol routes.
+	// webUIHandler serves the web UI's /api/v1/* endpoints when non-nil.
 	webUIHandler *WebUIHandler
 
 	// webUIEventHub manages WebSocket connections for real-time events to
@@ -123,10 +117,7 @@ type Server struct {
 	// When nil, no version checks are applied.
 	clientVersion *ClientVersionConfig
 
-	// mux is the ServeMux used by this server. It is stored here so that
-	// post-construction route registration (e.g. RegisterFIDO2) can add new
-	// routes to the same mux that is already wrapped inside the middleware
-	// chain.
+	// mux is kept so later registrations such as RegisterFIDO2 reach the wrapped mux.
 	mux *http.ServeMux
 
 	// routeRegistrars holds extension route registration functions added via
@@ -134,8 +125,7 @@ type Server struct {
 	// of routes() with the mux and an auth middleware wrapper.
 	routeRegistrars []func(mux *http.ServeMux, auth func(http.HandlerFunc) http.HandlerFunc)
 
-	// trustedProxies holds parsed CIDR ranges for trusted reverse proxies.
-	// When non-empty, ipKey only trusts X-Forwarded-For from these sources.
+	// trustedProxies are the CIDRs X-Forwarded-For is trusted from.
 	trustedProxies []*net.IPNet
 }
 
@@ -164,18 +154,11 @@ type ServerConfig struct {
 	TLSCertFile string
 	TLSKeyFile  string
 	Logger      *slog.Logger
-	// Audit is the structured event sink for sensitive ops
-	// (ChangeNumber / DeleteAccount / LinkDevice /
-	// SetRegistrationLock). Optional — when nil, handlers skip
-	// emission. Production deployments wire a *audit.Logger backed by
-	// a dedicated sink so audit records outlive normal log rotation.
+	// Audit receives events for sensitive operations; nil skips them.
 	Audit    *audit.Logger
 	Accounts *accounts.AccountsManager
 	Captcha  *captcha.CaptchaManager
-	// CaptchaChecker is the multi-provider dispatcher used by PATCH
-	// /v1/verification/session/{id} (challenge action) and by the
-	// registration captcha manager. Optional — when nil, captcha
-	// submissions are not accepted.
+	// CaptchaChecker verifies captcha submissions; nil accepts none.
 	CaptchaChecker *captcha.Checker
 	// RemoteConfig backs GET /v2/config with per-account dynamic feature
 	// flag evaluation. Optional — when nil the endpoint returns an empty
@@ -199,10 +182,7 @@ type ServerConfig struct {
 	Backups         service.BackupService
 	KeyTransparency *keytransparency.KeyTransparencyManager
 	Usernames       *usernames.UsernamesManager
-	// RecoveryPasswords manages registration recovery password storage and
-	// verification. When nil, the registration handler treats any inbound
-	// `recoveryPassword` field as unsupported and returns 400; the
-	// session-based registration path is unaffected.
+	// RecoveryPasswords stores and verifies recovery passwords; nil rejects a recoveryPassword field with 400.
 	RecoveryPasswords *recoverypassword.Manager
 	Devices           *devices.DevicesManager
 	WSSessions        *signalws.SessionManager
@@ -211,11 +191,7 @@ type ServerConfig struct {
 	// When nil, rate limiting is disabled. Production deployments should
 	// always supply a registry; use limits.NewDefaultRegistry().
 	RateLimits *limits.Registry
-	// IsProduction selects the fail mode for missing abuse checkers. In
-	// development (false) a nil SpamChecker/FraudChecker falls back to the
-	// allow-all NoOp policy. In production (true) the fallback is the
-	// fail-closed DenyAll policy, so a misconfiguration blocks traffic
-	// loudly rather than silently admitting unfiltered traffic.
+	// IsProduction makes a missing spam or fraud checker deny all traffic instead of allowing it.
 	IsProduction bool
 	// SpamChecker is the spam detection policy applied before each message
 	// send. When nil, a NoOpChecker is used and all messages are allowed.
@@ -231,11 +207,7 @@ type ServerConfig struct {
 	// consulted before each message store operation. When nil, loop detection is
 	// disabled.
 	LoopDetector *messages.DeliveryLoopDetector
-	// MRMCache holds shared multi-recipient message payloads. When non-nil,
-	// the binary multi-recipient endpoint stores the SSv2 ciphertext once
-	// and per-recipient envelopes reference it via SharedMrmKey. When nil,
-	// the binary endpoint returns 503; the legacy JSON multi-recipient path
-	// is unaffected.
+	// MRMCache stores Sealed Sender v2 payloads once for binary multi-recipient sends; nil makes that endpoint return 503.
 	MRMCache *messages.MRMCache
 	// ReadTimeout is the maximum duration for reading the entire request,
 	// including the body. Zero uses DefaultReadTimeout (30s).
@@ -246,11 +218,8 @@ type ServerConfig struct {
 	// IdleTimeout is the maximum amount of time to wait for the next request
 	// when keep-alives are enabled. Zero uses DefaultIdleTimeout (120s).
 	IdleTimeout time.Duration
-	// AllowedOrigins is the list of Origin header values permitted for
-	// WebSocket upgrade requests. When empty, only same-origin requests are
-	// accepted (the coder/websocket library default).
-	// Attachments is the storage backend for CDN attachment uploads/downloads.
-	// When nil, uploads are accepted but discarded (dev mode).
+	// AllowedOrigins lists Origin values permitted for WebSocket upgrades; empty means same-origin only.
+	// Attachments stores CDN attachments; nil discards uploads.
 	Attachments attachments.Store
 	// StaticResourcesDir is the root directory for serving static resources
 	// (emoji, dictionaries, release notes) at /resources/{path} and /updates/{path}.
@@ -260,21 +229,12 @@ type ServerConfig struct {
 	// ClientVersion controls the client version deprecation and blocking
 	// policy. When nil, no version checks are applied.
 	ClientVersion *ClientVersionConfig
-	// TrustedProxies is a list of CIDR ranges for trusted reverse proxies.
-	// When set, the X-Forwarded-For header is only trusted if the request's
-	// RemoteAddr falls within one of these ranges. When empty, XFF is ignored
-	// and RemoteAddr is used directly.
+	// TrustedProxies are CIDRs whose X-Forwarded-For is trusted; empty ignores the header.
 	TrustedProxies []string
-	// FrontendFS is the file system for the compiled React/Vite SPA. When
-	// non-nil a catch-all GET handler is registered after all API routes that
-	// serves the SPA with SPA fallback routing and appropriate cache headers.
-	// Pass the value returned by internal/frontend.FS() to enable the web UI.
-	// When nil the web UI is not served.
+	// FrontendFS is the built SPA (internal/frontend.FS()); nil serves no web UI.
 	FrontendFS fs.FS
 
-	// WebUIHandler provides the client-facing /api/v1/* REST endpoints for
-	// the web UI. When non-nil, the web UI API is available alongside the
-	// Signal protocol endpoints.
+	// WebUIHandler serves the web UI's /api/v1/* endpoints when non-nil.
 	WebUIHandler *WebUIHandler
 
 	// WebUIEventHub provides the /api/v1/events WebSocket endpoint for
@@ -405,10 +365,7 @@ func NewServer(cfg ServerConfig) *Server {
 	s.mux = mux
 	s.routes(mux)
 
-	// Build the middleware chain (outermost to innermost):
-	//   clientVersion -> securityHeaders -> bodyLimit -> json -> logging -> mux
-	// The clientVersion middleware is applied outermost so that deprecated or
-	// blocked clients are rejected before any other processing occurs.
+	// Middleware, outermost first: clientVersion, securityHeaders, bodyLimit, json, logging, mux.
 	handler := clientVersionMiddleware(
 		cfg.ClientVersion,
 		securityHeadersMiddleware(
@@ -420,9 +377,7 @@ func NewServer(cfg ServerConfig) *Server {
 		),
 	)
 
-	// Create WebSocket handler if sessions manager is available. The HTTP
-	// handler chain is passed so that WebSocket requests can be routed to
-	// the same REST handlers (like Java's WebSocketResourceProvider).
+	// WebSocket requests are routed to the same REST handler chain.
 	if cfg.WSSessions != nil {
 		s.wsHandler = apiws.NewHandler(cfg.Accounts, cfg.Messages, cfg.WSSessions, handler, cfg.Logger, cfg.AllowedOrigins...)
 	}
@@ -463,10 +418,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 		return ipKeyWithProxies(r, s.trustedProxies)
 	}
 
-	// optionalAuth wraps h with optionalAuthMiddleware, allowing both Basic
-	// auth (standard authenticated sender) and the Unidentified-Access-Key
-	// header (sealed sender). The destination UUID is extracted dynamically
-	// from each request's path value so the correct account is looked up.
+	// optionalAuth accepts Basic auth or an Unidentified-Access-Key for the destination in the path.
 	optionalAuth := func(h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			dest := r.PathValue("destination")
@@ -477,13 +429,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 		}
 	}
 
-	// optionalAuthByIdentifier is like optionalAuth but reads the destination
-	// account identifier from the {identifier} path variable. This is used for
-	// profile GET routes where the path parameter is named "identifier" rather
-	// than "destination". Callers may authenticate with Basic auth (returns the
-	// authenticated sender's account in context) or via the
-	// Unidentified-Access-Key header (sealed sender path). Unauthenticated
-	// requests without either credential are rejected with 401.
+	// optionalAuthByIdentifier is optionalAuth reading the account from {identifier}; requests with neither credential get 401.
 	optionalAuthByIdentifier := func(h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			dest := r.PathValue("identifier")
@@ -557,11 +503,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.Handle("POST /v2/keys/check",
 		rateLimit(rlKeys, uuidKey, http.HandlerFunc(auth(s.handleCheckKeys))))
 
-	// Messages
-	// Both message-send endpoints accept either standard Basic auth (normal
-	// authenticated sender) or an Unidentified-Access-Key header (sealed
-	// sender / anonymous delivery). See optionalAuthMiddleware for the
-	// validation logic.
+	// Messages accept Basic auth or an Unidentified-Access-Key header.
 	mux.Handle("PUT /v1/messages/multi_recipient",
 		rateLimit(rlMsg, uuidKey, http.HandlerFunc(optionalAuth(s.handleSendMultiRecipientMessage))))
 	mux.Handle("PUT /v1/messages/{destination}",
@@ -701,10 +643,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /storage/{rest...}", auth(s.handleGetStorageManifestVersion))
 	mux.HandleFunc("GET /storage/{rest...}", auth(s.handleGetStorageManifestVersion))
 
-	// SVR2 WebSocket lives in cmd/svr2 as of Phase 4.2. Per Java's
-	// architecture the mobile client connects there directly; signald
-	// only issues credentials at /v2/svr/auth and calls cmd/svr2's
-	// admin DELETE /v1/delete on account deletion.
+	// SVR2 is served by cmd/svr2; signald only issues credentials at /v2/svr/auth.
 
 	// SVR (Secure Value Recovery)
 	mux.HandleFunc("GET /v2/backup/auth", auth(s.handleGetSVRBackupAuth))
@@ -802,10 +741,7 @@ func (s *Server) SetAttachmentTus(uri string, gen *external.Generator) {
 	s.tusGenerator = gen
 }
 
-// Listen binds the network listener without starting to serve requests. This
-// is useful for tests that need the resolved listen address before serving
-// begins. After calling Listen the Addr method returns the actual address.
-// Callers must follow up with Serve to begin accepting connections.
+// Listen binds the listener without serving; Addr then returns the bound address. Follow with Serve.
 func (s *Server) Listen() error {
 	ln, err := net.Listen("tcp", s.httpServer.Addr)
 	if err != nil {
@@ -817,10 +753,7 @@ func (s *Server) Listen() error {
 	return nil
 }
 
-// Serve begins accepting connections on the previously bound listener. It
-// blocks until the server is shut down and returns http.ErrServerClosed on
-// graceful shutdown. Listen must be called before Serve. When TLSCertFile
-// and TLSKeyFile are configured, the server serves HTTPS; otherwise HTTP.
+// Serve accepts connections on the bound listener until shutdown, over HTTPS when TLSCertFile and TLSKeyFile are set.
 func (s *Server) Serve() error {
 	s.listenerMu.RLock()
 	ln := s.listener
@@ -835,10 +768,7 @@ func (s *Server) Serve() error {
 		}
 		s.httpServer.TLSConfig = &tls.Config{
 			Certificates: []tls.Certificate{cert},
-			// TLS 1.3 is the minimum; TLS 1.2 and below are rejected. TLS 1.3
-			// manages its own cipher suites; the CipherSuites list below only
-			// applies to TLS 1.2 connections that may be negotiated if a future
-			// MinVersion downgrade occurs, and is kept for defence-in-depth.
+			// TLS 1.3 minimum; the cipher list applies only to TLS 1.2.
 			MinVersion: tls.VersionTLS13,
 			// Prefer modern ECDHE-based cipher suites with forward secrecy.
 			// The ordering follows Signal's reference server preference.
@@ -891,13 +821,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpServer.Shutdown(ctx)
 }
 
-// Addr returns the listen address of the server. If the server has been started
-// and a listener is bound, the actual address (including the resolved port) is
-// returned. Otherwise, the configured address is returned.
-//
-// The listener's Addr() call is made while holding the read lock so that the
-// underlying net.TCPAddr fields (populated during net.Listen) are not read
-// concurrently with their initialisation.
+// Addr returns the bound address once listening, otherwise the configured address.
 func (s *Server) Addr() string {
 	s.listenerMu.RLock()
 	defer s.listenerMu.RUnlock()

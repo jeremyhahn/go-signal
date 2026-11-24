@@ -1,8 +1,4 @@
-// Package memory provides an in-process implementation of cache.Client.
-// It is intended for unit tests, `make dev`, and any deployment that does
-// not need cross-instance coordination. It is NOT a drop-in replacement
-// for Redis in production — pub/sub and atomic script execution are
-// serialized through a single mutex and therefore do not scale.
+// Package memory is an in-process cache.Client for tests, `make dev` and single-instance deployments; it does not scale like Redis.
 package memory
 
 import (
@@ -28,9 +24,7 @@ type Client struct {
 	closed   bool
 }
 
-// entry holds a single key's value. Only one of string, sorted-set, or
-// hash is populated at a time; trying to use the same key as two kinds
-// returns an error, matching Redis's WRONGTYPE behavior.
+// entry holds one key's value as a string, sorted set or hash; mixing kinds is a WRONGTYPE error.
 type entry struct {
 	expiresAt time.Time // zero = no expiration
 	str       []byte
@@ -197,8 +191,7 @@ func (c *Client) Incr(ctx context.Context, key string) (int64, error) {
 	return c.IncrBy(ctx, key, 1)
 }
 
-// IncrBy atomically increments by delta. The value is stored as a decimal
-// string, matching Redis's INCRBY semantics.
+// IncrBy atomically increments by delta, storing a decimal string as INCRBY does.
 func (c *Client) IncrBy(ctx context.Context, key string, delta int64) (int64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -287,8 +280,7 @@ func (c *Client) ZAdd(ctx context.Context, key string, members ...cache.ScoredMe
 	}
 
 	for _, m := range members {
-		// Remove any existing member with the same bytes (Redis ZADD
-		// updates score on duplicate member).
+		// Replace an existing member: ZADD updates the score.
 		filtered := e.zset[:0]
 		for _, existing := range e.zset {
 			if !bytesEqual(existing.member, m.Member) {
@@ -483,11 +475,7 @@ func (c *Client) HLen(ctx context.Context, key string) (int64, error) {
 
 // --- Pub/sub ----------------------------------------------------------
 
-// Publish broadcasts a message to all subscribers of channel. The send is
-// non-blocking (drops on a full buffer, matching Redis's best-effort pub/sub
-// semantics), so holding the client mutex through the send loop cannot
-// deadlock and is required to serialize against subscription.Close, which
-// closes the underlying channels under the same mutex.
+// Publish sends to every subscriber without blocking (drops on a full buffer), under the mutex that subscription.Close uses.
 func (c *Client) Publish(ctx context.Context, channel string, message []byte) (int64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -563,10 +551,7 @@ func (s *subscription) Close() error {
 
 // --- Scripts ----------------------------------------------------------
 
-// Eval runs a Lua script. The in-memory client does not execute Lua; this
-// is a stub meant to keep tests that exercise the interface compiling. A
-// real Lua runtime would be significant scope; callers that need actual
-// Lua semantics must use the redis backend.
+// Eval is a stub: the in-memory client does not run Lua; use the redis backend for that.
 func (c *Client) Eval(ctx context.Context, script string, keys []string, args ...interface{}) (interface{}, error) {
 	return nil, errors.New("cache/memory: Eval not supported; use the redis backend")
 }

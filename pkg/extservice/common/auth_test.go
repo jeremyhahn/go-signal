@@ -70,9 +70,7 @@ func TestValidateBasicAuth_ConstantTimeAccept(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// BasicAuthHeaderCredential: assembly from an ALREADY-ISSUED credential.
-// =============================================================================
+// BasicAuthHeaderCredential: assembly from an issued credential.
 
 // The header must be byte-identical to the obvious string spelling it
 // replaces. The point of the change is where the bytes live, not what they are

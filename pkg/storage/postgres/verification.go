@@ -14,17 +14,7 @@ import (
 // Compile-time interface satisfaction check.
 var _ verification.VerificationSessionStore = (*VerificationSessionStore)(nil)
 
-// VerificationSessionStore is a Postgres-backed implementation of
-// verification.VerificationSessionStore.
-//
-// Schema: verification_sessions(id TEXT PK, data JSONB, expires_at TIMESTAMPTZ,
-// created_at TIMESTAMPTZ). The full VerificationSession is serialized to data;
-// id and expires_at are promoted columns used for primary-key lookup and
-// TTL-sweeper queries respectively.
-//
-// Note: VerificationSession.Code is tagged json:"-" and is therefore never
-// written to the JSONB column. This is intentional — verification codes are
-// ephemeral server-side secrets that must not be persisted.
+// VerificationSessionStore implements verification.VerificationSessionStore in Postgres; Code is never persisted (json:"-").
 type VerificationSessionStore struct {
 	q Querier
 }
@@ -35,11 +25,7 @@ func NewVerificationSessionStore(q Querier) *VerificationSessionStore {
 	return &VerificationSessionStore{q: q}
 }
 
-// Create stores a new verification session. Returns an error if a session
-// already exists at the same ID (Postgres unique-constraint violation →
-// *verification.SessionNotFoundError is NOT used here; the qrdb impl returns a
-// plain error for the already-exists case, so we mirror that and use
-// IsUniqueViolation to surface a clear typed error).
+// Create stores a new session; an existing ID is an error.
 func (s *VerificationSessionStore) Create(ctx context.Context, session *verification.VerificationSession) error {
 	if session == nil {
 		return signalerrors.New(signalerrors.ErrInvalidArgument, "postgres verification: nil session")
@@ -148,9 +134,7 @@ func (s *VerificationSessionStore) Count(ctx context.Context) (int, error) {
 	return n, nil
 }
 
-// DeleteExpired removes all sessions whose expires_at is in the past. The
-// WHERE clause is evaluated server-side so no rows need to be scanned in Go,
-// unlike the qrdb implementation which iterates all keys.
+// DeleteExpired removes sessions past expires_at in one statement.
 func (s *VerificationSessionStore) DeleteExpired(ctx context.Context) error {
 	_, err := s.q.Exec(ctx, `
 		DELETE FROM verification_sessions WHERE expires_at < NOW()`)

@@ -1,8 +1,7 @@
 # syntax=docker/dockerfile:1.7
 FROM golang:1.27.3-bookworm AS builder
 
-# SERVICE selects which ./cmd/<service> entry point to compile.
-# Valid values: cdsi, svr2, key-transparency, registration-service, storage-service
+# SERVICE selects the ./cmd/<service> entry point: cdsi, svr2, key-transparency, registration-service or storage-service.
 ARG SERVICE
 ARG BUILD_TAGS="fido2"
 
@@ -10,12 +9,7 @@ WORKDIR /app
 
 COPY go.mod go.sum ./
 
-# See the top-level Dockerfile for why the four `COPY --from=go-*` lines are
-# gone and what replaced them: go.mod carries no local-path replaces, so those
-# contexts fed nothing and only made every `make docker-build-services` target
-# fail at the first COPY. First-party modules resolve from Gitea with the
-# credentials mounted here as a BuildKit secret (dependency-resolution.md §6);
-# the mount is optional so the build still works where no secret is supplied.
+# Private first-party modules resolve with credentials from an optional BuildKit secret.
 RUN --mount=type=secret,id=gomodauth \
     set -eu; \
     if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \

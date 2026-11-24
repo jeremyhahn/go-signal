@@ -62,9 +62,7 @@ func (s *MemoryPreKeyStore) StoreKEMPreKeys(_ context.Context, uuid string, devi
 	return nil
 }
 
-// StoreKEMLastResortPreKey persists the last-resort KEM pre-key for a device,
-// replacing any previously stored one. The last-resort key is never consumed
-// and must persist across session establishments.
+// StoreKEMLastResortPreKey replaces a device's last-resort KEM pre-key, which is never consumed.
 func (s *MemoryPreKeyStore) StoreKEMLastResortPreKey(_ context.Context, uuid string, deviceID uint64, preKey *keys.KEMSignedPreKey) error {
 	key := deviceKey{uuid: uuid, deviceID: deviceID}
 

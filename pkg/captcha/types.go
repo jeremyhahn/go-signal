@@ -1,5 +1,4 @@
-// Package captcha provides challenge and CAPTCHA verification for rate limit
-// mitigation and abuse prevention in the Signal server.
+// Package captcha verifies challenge and captcha responses for rate-limit and abuse mitigation.
 package captcha
 
 import "strings"
@@ -15,8 +14,7 @@ func normalize(s string) string {
 type ChallengeType string
 
 const (
-	// ChallengeTypeCaptcha indicates a CAPTCHA challenge that requires the
-	// client to solve a visual or audio puzzle.
+	// ChallengeTypeCaptcha is a captcha the client must solve.
 	ChallengeTypeCaptcha ChallengeType = "captcha"
 
 	// ChallengeTypePush indicates a push-based rate limit challenge where
@@ -24,8 +22,7 @@ const (
 	ChallengeTypePush ChallengeType = "rateLimitPushChallenge"
 )
 
-// ChallengeResponse is submitted by a client to answer a previously issued
-// challenge. The Type field determines which verification path is used.
+// ChallengeResponse answers an issued challenge; Type selects the verification path.
 type ChallengeResponse struct {
 	Type    ChallengeType `json:"type"`
 	Token   string        `json:"token"`
@@ -38,10 +35,7 @@ type PushChallengeRequest struct {
 	Token string `json:"token"`
 }
 
-// Action identifies the purpose of a CAPTCHA submission. The client embeds
-// it in the captcha token (slot 3 of the dotted format) so the server can
-// reject solutions intended for a different flow. Mirrors Java's
-// org.whispersystems.textsecuregcm.captcha.Action enum.
+// Action is the purpose embedded in slot 3 of the captcha token, so solutions for another flow are rejected.
 type Action string
 
 const (

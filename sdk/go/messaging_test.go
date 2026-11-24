@@ -530,8 +530,7 @@ func TestMarshalJSON_Struct(t *testing.T) {
 }
 
 func TestClient_Receive_WithGUIDMessage(t *testing.T) {
-	// Server returns a message with a non-empty GUID.  Receive should issue a
-	// DELETE /v1/messages/uuid/<guid> ACK, covering that branch.
+	// A message with a GUID makes Receive send the DELETE ACK.
 	var deleteCalled bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

@@ -27,12 +27,7 @@ func TestHandleStaticResource_NotConfigured(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/static/some/file.txt", nil)
 	rr := httptest.NewRecorder()
-	// Use PathValue simulation by calling the handler directly via the mux.
-	// The route uses {path...} so we need to invoke handleStaticResource directly
-	// with a fabricated PathValue (not possible with httptest), so route via the
-	// server mux with a registered URL pattern.
-	// Instead call the method directly; PathValue returns "" when not invoked via
-	// the stdlib mux, so we get the "missing path" branch.
+	// Called directly, PathValue is empty, so this hits the missing-path branch.
 	s.handleStaticResource(rr, req)
 
 	// staticResourcesDir is "" → 404 with "static resources not configured"
@@ -111,20 +106,7 @@ func TestHandleStaticResource_DirectoryTraversal(t *testing.T) {
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, req)
 
-	// This exercises the route COMPOSITION, and the handler is never reached:
-	// ServeMux normalises the path and answers 307 to /etc/passwd before
-	// PathValue exists. Measured, not assumed — an earlier version of this
-	// test asserted only "not 200" and had been passing on that redirect,
-	// which means it would equally have passed against a handler with no guard
-	// at all.
-	//
-	// So the assertion stays deliberately broad — no 2xx, no file content —
-	// because the specific code here is net/http's behaviour, not this
-	// repository's contract, and pinning 307 would fail on a stdlib change
-	// that broke nothing. The measured value is recorded above so a change is
-	// visible to a reader even though the test tolerates it.
-	// TestHandleStaticResource_TraversalInPathValueIsRefused is the one with
-	// teeth: it puts the hostile value where the handler actually reads it.
+	// Route composition: the mux redirects before the handler runs, so assert only no 2xx and no file content.
 	if rr.Code/100 == 2 {
 		t.Errorf("directory traversal returned %d: %s", rr.Code, rr.Body.String())
 	}
@@ -162,13 +144,7 @@ func TestHandleStaticResource_DirectoryIsNotListed(t *testing.T) {
 	}
 }
 
-// TestHandleStaticResource_SymlinkOutsideRootIsRefused is the regression test
-// for #68, and it is the exact probe that reproduced it: before the fix this
-// returned 200 with the contents of a file outside the resources root.
-//
-// A symlink is the case lexical containment cannot see. filepath.Abs does not
-// resolve symlinks, so the old check compared a lexical path that stayed
-// inside the root against reads that followed a physical one that did not.
+// TestHandleStaticResource_SymlinkOutsideRootIsRefused: a symlink pointing outside the root must not be served.
 func TestHandleStaticResource_SymlinkOutsideRootIsRefused(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
@@ -235,12 +211,7 @@ func TestHandleStaticResource_SymlinkToSiblingDirectoryIsRefused(t *testing.T) {
 	}
 }
 
-// The handler's own guard, tested without the mux. ServeMux normalises the
-// request path before it ever reaches PathValue, so a traversal written into
-// the URL may be cleaned away by the router rather than refused by the
-// handler — which makes a mux-driven test agree with a handler that has no
-// guard at all. SetPathValue puts the hostile value where the handler reads
-// it.
+// Tests the handler's own guard: SetPathValue bypasses the mux's normalisation.
 func TestHandleStaticResource_TraversalInPathValueIsRefused(t *testing.T) {
 	s := newTestServer(t)
 	s.staticResourcesDir = t.TempDir()
@@ -259,10 +230,7 @@ func TestHandleStaticResource_TraversalInPathValueIsRefused(t *testing.T) {
 	}
 }
 
-// Containment must fail CLOSED when the root cannot be opened. The old code
-// discarded both filepath.Abs errors, leaving absRoot empty — and
-// HasPrefix(anything, "") is true, so an unresolvable root switched the check
-// off instead of turning the request away.
+// Containment fails closed when the root cannot be opened.
 func TestHandleStaticResource_UnopenableRootFailsClosed(t *testing.T) {
 	dir := t.TempDir()
 	notADir := filepath.Join(dir, "regular-file")

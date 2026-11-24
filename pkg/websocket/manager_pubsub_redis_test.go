@@ -22,14 +22,7 @@ func newMiniredisCacheClient(t *testing.T, mr *miniredis.Miniredis) *cacheredis.
 	return cacheredis.NewFromClient(rdb)
 }
 
-// TestNotifyMessageAvailable_CrossInstance_RealRedis is the production-shape
-// version of [TestNotifyMessageAvailable_CrossInstance]: it wires two
-// SessionManagers to distinct cache clients backed by the SAME miniredis
-// broker, then verifies that a notify published on instance A causes the
-// session held by instance B to flush. This plugs the multi-instance
-// correctness gap the earlier in-memory-cache test cannot exercise — every
-// hop (Publish → Subscribe → flush dispatch) runs through real Redis
-// protocol code paths.
+// TestNotifyMessageAvailable_CrossInstance_RealRedis: a notify on instance A flushes the session held by instance B over one miniredis.
 func TestNotifyMessageAvailable_CrossInstance_RealRedis(t *testing.T) {
 	mr := miniredis.RunT(t)
 	cacheA := newMiniredisCacheClient(t, mr)
@@ -51,9 +44,7 @@ func TestNotifyMessageAvailable_CrossInstance_RealRedis(t *testing.T) {
 	instanceB.Register(session)
 	defer instanceB.Unregister(session)
 
-	// Wait for the Redis SUBSCRIBE on instance B to land — miniredis does
-	// not guarantee synchronous subscription readiness, so we give the
-	// subscription goroutine a moment to register before publishing.
+	// miniredis subscribes asynchronously; wait before publishing.
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		if mr.PubSubNumSub(notifyChannel("uuid-redis", 5))[notifyChannel("uuid-redis", 5)] >= 1 {

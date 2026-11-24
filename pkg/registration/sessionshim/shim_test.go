@@ -144,9 +144,7 @@ func TestSendCode_BlocksWhenLocallyCaptchaRequired(t *testing.T) {
 }
 
 func TestSendCode_EscalatesAfterThreshold(t *testing.T) {
-	// Pre-populate a session so the stub's send call advances
-	// CodeRequests; CaptchaEscalationAfter=1 means the FIRST successful
-	// send should flip the gate.
+	// With CaptchaEscalationAfter=1 the first successful send sets the captcha gate.
 	sc := &stubClient{session: &verification.VerificationSession{ID: "s1", ExpiresAt: time.Now().Add(time.Hour)}}
 	checker := &captcha.Checker{}
 	shim := newShimFor(t, sc, checker, 1)

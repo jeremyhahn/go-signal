@@ -51,10 +51,7 @@ func generateDirName() string {
 	return base64.RawURLEncoding.EncodeToString(b[:])[:16]
 }
 
-// SetPublicKey implements [backups.Store]. Uses INSERT … ON CONFLICT with a
-// WHERE clause that rejects updates when the supplied public_key differs
-// from the stored one — the canonical "set once, idempotent on re-set"
-// semantic for backup-id commitments.
+// SetPublicKey implements [backups.Store]: set once, idempotent when the key matches, refused when it differs.
 func (s *BackupStore) SetPublicKey(
 	ctx context.Context,
 	id backups.BackupID,
@@ -79,8 +76,7 @@ func (s *BackupStore) SetPublicKey(
 		return signalerrors.Wrap(signalerrors.ErrInternal, "postgres backups: set public key", err)
 	}
 	if tag.RowsAffected() == 0 {
-		// ON CONFLICT … WHERE matched zero rows: a row exists with a
-		// different stored public key.
+		// No row matched: a different public key is stored.
 		return &backups.PublicKeyConflictError{BackupID: id}
 	}
 	return nil
@@ -255,10 +251,7 @@ func (s *BackupStore) SetMediaUsageFor(ctx context.Context, attrs backups.Stored
 	return nil
 }
 
-// ScheduleBackupDeletion implements [backups.Store]. Rotates the user's
-// directories in a single statement, queueing the old backup_dir into
-// backups_pending_deletion. Wrapped in a transaction so the pending-row
-// insert and the directory rotation either both succeed or neither does.
+// ScheduleBackupDeletion implements [backups.Store], rotating the directories and queueing the old one in one transaction.
 func (s *BackupStore) ScheduleBackupDeletion(ctx context.Context, user backups.AuthenticatedUser) error {
 	hashed := hashBackupID(user.BackupID)
 	conn, ok := s.q.(beginner)
@@ -317,10 +310,7 @@ func (s *BackupStore) ScheduleBackupDeletion(ctx context.Context, user backups.A
 	return nil
 }
 
-// StartExpiration is a no-op for postgres today (no lease semantics).
-// A future change may switch to SELECT … FOR UPDATE SKIP LOCKED to lease
-// rows across multiple worker replicas; the no-op default is correct as
-// long as a single worker runs.
+// StartExpiration is a no-op: a single worker needs no lease.
 func (s *BackupStore) StartExpiration(_ context.Context, _ backups.ExpiredBackup) error {
 	return nil
 }
@@ -431,10 +421,7 @@ func (s *BackupStore) GetExpiredBackups(
 	return rows.Err()
 }
 
-// beginner is a thin shim around pgx pools / connections that expose Begin.
-// The package-level Querier doesn't have Begin, so transactional methods
-// type-assert to this interface and bail out cleanly if the caller injected
-// a non-pool Querier (e.g. a single-statement test mock).
+// beginner is implemented by pgx pools and connections; transactional methods fail cleanly without it.
 type beginner interface {
 	Querier
 	Begin(ctx context.Context) (pgx.Tx, error)

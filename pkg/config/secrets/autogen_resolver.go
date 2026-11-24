@@ -14,12 +14,7 @@ var autoGenSentinels = map[string]struct{}{
 	"placeholder": {},
 }
 
-// AutoGenResolver generates cryptographically random secrets for sentinel
-// values ("auto", "changeme", "placeholder"). Once a secret is generated for
-// a given sentinel, the same SecureString value is returned on subsequent
-// calls (cached in memory for the lifetime of the resolver). Cached entries
-// are SecureStrings stored in the enclave so the plaintext is not held in
-// ordinary heap memory between calls.
+// AutoGenResolver generates random secrets for "auto", "changeme" and "placeholder", cached per sentinel as enclave-backed SecureStrings.
 type AutoGenResolver struct {
 	byteLength int
 	mu         sync.RWMutex
@@ -45,10 +40,7 @@ func (r *AutoGenResolver) Scheme() string {
 	return "autogen"
 }
 
-// Resolve generates a random hex-encoded secret for recognized sentinel
-// values, wrapped in a SecureString. Non-sentinel values are wrapped
-// unchanged. Generated values are cached by the input sentinel key so
-// repeated calls return the same secret.
+// Resolve returns a cached random hex secret for a sentinel and wraps any other value unchanged.
 func (r *AutoGenResolver) Resolve(_ context.Context, value string) (*SecureString, error) {
 	if !IsSentinel(value) {
 		return NewOptionalSecureString(value)

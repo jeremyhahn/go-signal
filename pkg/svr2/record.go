@@ -1,28 +1,13 @@
-// Package svr2 is the server-side state engine for SVR4 backup
-// operations. cmd/svr2 wires it behind a Noise-attested WebSocket
-// endpoint; this package owns the protocol-level Request4/Response4
-// dispatch + the persistent Record state.
-//
-// One Record per authenticated identity, identified by the
-// HMAC-derived auth token the chat-server hands out via
-// SVRManager.GetAuth. SVR2's threat model is "the operator does not
-// see the secret"; in our software-attestation profile that holds
-// only against passive operators. TPM/TDX deployments raise the bar
-// to active operators inside the supply chain.
+// Package svr2 is the SVR4 server engine: Request4/Response4 dispatch and one persistent Record per identity.
 package svr2
 
 import (
 	"time"
 )
 
-// Record is the per-identity SVR4 state persisted by Storage. It is
-// produced by Request4.Create and mutated by Restore1/Restore2/Remove/
-// Rotate*. The structure mirrors what an SVR2 enclave keeps in memory
-// per session — secret shares plus metadata for the Merkle commitment
-// used by the OPRF/PPSS protocol.
+// Record is an identity's SVR4 state, created by Request4.Create: secret shares and Merkle commitment metadata.
 type Record struct {
-	// Version is the OPRF key version the record currently uses. It
-	// is set by Create and rotated by RotateCommit.
+	// Version is the OPRF key version, set by Create and rotated by RotateCommit.
 	Version uint32
 
 	// MaxTries is the operator-fixed cap on Restore1 attempts before
@@ -33,9 +18,7 @@ type Record struct {
 	// zero the record is removed by the server.
 	TriesRemaining uint32
 
-	// OPRFSecretShare is the server's share of the OPRF key. Sealed
-	// at rest by Storage implementations that support envelope
-	// encryption (qrdb backend).
+	// OPRFSecretShare is the server's OPRF key share.
 	OPRFSecretShare []byte
 
 	// AuthCommitment is sha256-style commitment used by Restore2 to
@@ -47,8 +30,7 @@ type Record struct {
 	// derived encryption key returned in Restore2.
 	EncryptionSecretShare []byte
 
-	// ZeroSecretShare is the additive-zero share used by the OPRF
-	// PPSS variant for blind verification.
+	// ZeroSecretShare is the additive-zero share for blind verification.
 	ZeroSecretShare []byte
 
 	// CreatedAt is when the record was first stored.
@@ -58,11 +40,7 @@ type Record struct {
 	// implement TTL semantics expire on (UpdatedAt + RecordTTL).
 	UpdatedAt time.Time
 
-	// PendingRotation, when non-nil, contains the secret-share deltas
-	// for an in-flight RotateStart that has not yet been Committed or
-	// Rolled-Back. The Java reference's enclave keeps these in memory
-	// only; we persist them so a process restart mid-rotation does
-	// not corrupt the record.
+	// PendingRotation holds the deltas of an uncommitted RotateStart, persisted so a restart cannot corrupt the record.
 	PendingRotation *PendingRotation
 }
 

@@ -15,9 +15,7 @@ type discard struct{}
 
 func (discard) Write(p []byte) (int, error) { return len(p), nil }
 
-// newTestManager returns a CaptchaManager configured with a TestVerifier that
-// accepts any token carrying the TestTokenPrefix. All existing tests that
-// previously passed arbitrary strings are updated to use a valid test token.
+// newTestManager returns a CaptchaManager whose TestVerifier accepts tokens with TestTokenPrefix.
 func newTestManager() *CaptchaManager {
 	return NewCaptchaManagerWithConfig(CaptchaManagerConfig{
 		Verifier:       NewTestVerifier(TestVerifierConfig{}),
@@ -446,8 +444,7 @@ func TestHandleChallengeResponse_PushSucceedsWithNoProviderConfigured(t *testing
 	}
 }
 
-// The field checks run before the provider check, so a malformed submission
-// is still reported as malformed rather than as an outage.
+// Field checks run before the provider check, so a malformed submission is reported as malformed.
 func TestHandleChallengeResponse_MissingSolutionOutranksMissingProvider(t *testing.T) {
 	m := newUnconfiguredManager()
 	resp := &ChallengeResponse{Type: ChallengeTypeCaptcha, Token: "tok-123"}

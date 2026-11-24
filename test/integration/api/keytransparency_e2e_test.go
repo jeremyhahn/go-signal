@@ -18,11 +18,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/keytransparency/server"
 )
 
-// startKTInProcess wires the cmd/key-transparency-side gRPC server +
-// an extservice/keytransparency.GRPCClient pointing at it, and the
-// signald-side KeyTransparencyManager with the remote set. Returns
-// the manager so tests can drive the same code path the REST
-// handlers exercise.
+// startKTInProcess starts the key-transparency gRPC server and returns a KeyTransparencyManager using it as its remote.
 func startKTInProcess(t *testing.T) (*ktmgr.KeyTransparencyManager, *server.MemoryLog) {
 	t.Helper()
 	_, priv, _ := ed25519.GenerateKey(nil)
@@ -52,11 +48,7 @@ func startKTInProcess(t *testing.T) (*ktmgr.KeyTransparencyManager, *server.Memo
 	return mgr, log
 }
 
-// TestKeyTransparencyE2E_ManagerProxiesToRemote drives the chat-server
-// path: REST handlers call into the manager which forwards to the
-// remote service over a real gRPC connection. The returned token is
-// the ed25519 signature over (size || root || ts) — verifying it lands
-// is enough to prove the wire is end-to-end correct.
+// TestKeyTransparencyE2E_ManagerProxiesToRemote checks the manager forwards over gRPC by verifying the ed25519 token over (size || root || ts).
 func TestKeyTransparencyE2E_ManagerProxiesToRemote(t *testing.T) {
 	mgr, _ := startKTInProcess(t)
 	ctx := context.Background()

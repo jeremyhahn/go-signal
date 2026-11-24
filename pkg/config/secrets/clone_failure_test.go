@@ -22,18 +22,7 @@ func failProtectedSeal(t *testing.T, injected error) {
 	t.Cleanup(func() { sealProtectedBuffer = original })
 }
 
-// TestClone_AllocationFailureIsAnErrorNotAnEmptyValue is the regression test
-// for the fail-open this change closes.
-//
-// Clone used to return an unset SecureString for BOTH "there is no secret to
-// copy" and "the copy could not be allocated". Callers branch on emptiness to
-// choose legacy stub behaviour, so the second case silently became the first:
-// under memory pressure a configured deployment would downgrade to random
-// credentials its peer rejects, with no error anywhere. The two outcomes are
-// now distinguishable, which is the whole point.
-//
-// Reverting Clone to a single return value makes this fail to compile, which is
-// the strongest form of the guard.
+// TestClone_AllocationFailureIsAnErrorNotAnEmptyValue: Clone must report an allocation failure as an error, distinct from no secret.
 func TestClone_AllocationFailureIsAnErrorNotAnEmptyValue(t *testing.T) {
 	injected := errors.New("no protected memory available")
 

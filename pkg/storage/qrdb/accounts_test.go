@@ -9,8 +9,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/accounts"
 )
 
-// newAccount is a small factory that produces a deterministic Account
-// fixture with sensible defaults. Callers may override any field after.
+// newAccount returns a deterministic Account fixture.
 func newAccount(uuid, number string) *accounts.Account {
 	return &accounts.Account{
 		UUID:      uuid,
@@ -234,7 +233,7 @@ func TestAccountStore_Update_NumberChange_UpdatesMirror(t *testing.T) {
 		t.Fatalf("Update: %v", err)
 	}
 
-	// Old number should no longer resolve.
+	// The old number must not resolve.
 	if _, err := s.GetByNumber(ctx, "+15551234567"); err == nil {
 		t.Fatal("expected old number to be unreachable after change")
 	}

@@ -4,31 +4,9 @@ import (
 	"google.golang.org/protobuf/encoding/protowire"
 )
 
-// Pack manifest wire format (Signal client convention; matches the
-// Pack message in Signal-Android's Stickers.proto):
-//
-//	message Pack {
-//	  string title         = 1;
-//	  string author        = 2;
-//	  Sticker cover        = 3;
-//	  repeated Sticker stickers = 4;
-//	  message Sticker {
-//	    uint32 id           = 1;
-//	    string emoji        = 2;
-//	    string content_type = 3;
-//	  }
-//	}
-//
-// Encoded with google.golang.org/protobuf/encoding/protowire so the
-// output is byte-for-byte compatible with every other Signal client's
-// generated code.
+// Pack manifest wire format (Signal's Stickers.proto Pack, via protowire): title=1, author=2, cover=3, repeated stickers=4; Sticker id=1, emoji=2, content_type=3.
 
-// EncodePackManifest serializes the loaded pack into Signal's Pack
-// protobuf, ready for HKDF-derived AES-CBC + HMAC encryption + upload
-// to the manifest slot of the sticker CDN.
-//
-// Sticker IDs are assigned by position (0-indexed) to match the slot
-// numbers the server's StickerPackFormUpload returned.
+// EncodePackManifest serializes the pack as a Pack protobuf for encryption and upload; sticker IDs are positions matching the upload slots.
 func EncodePackManifest(p *LoadedPack) []byte {
 	var buf []byte
 	if p.Manifest.Title != "" {

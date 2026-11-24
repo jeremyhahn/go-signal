@@ -412,8 +412,7 @@ func TestApp_GetConversations(t *testing.T) {
 	})
 }
 
-// TestNewApp_DAOStoreFactory verifies that NewApp extracts the factory from
-// a *signal.DAOStore, making a.daos non-nil.
+// TestNewApp_DAOStoreFactory checks NewApp takes the factory from a *signal.DAOStore.
 func TestNewApp_DAOStoreFactory(t *testing.T) {
 	t.Run("ExtractsFactoryFromDAOStore", func(t *testing.T) {
 		daoStore, err := signal.NewDefaultDAOStore(t.TempDir())
@@ -499,20 +498,7 @@ func TestRunContext_ReportsAFailureToCloseTheStore(t *testing.T) {
 	require.Contains(t, err.Error(), "close app")
 }
 
-// TestRunContext_ReturnsOnCancelAndReleasesTheStore is the regression test for
-// #55.
-//
-// The previous version of this test started Run in a goroutine, slept 200 ms,
-// checked it had not returned, and ended — leaking a goroutine that held a live
-// PebbleDB on the test's t.TempDir(). Go then deleted that directory while the
-// database was still writing to it, and the package failed AFTER printing PASS,
-// with no test name attached. Run had no shutdown path at all, so the leak was
-// not an oversight in the test: there was nothing else the test could do.
-//
-// Cancelling before the wait is deterministic rather than racy. An
-// already-cancelled context skips only the waiting, never the setup, so
-// initialization always runs and RunContext always reaches its deferred
-// shutdown — no sleep, and nothing to lose a race with.
+// TestRunContext_ReturnsOnCancelAndReleasesTheStore checks RunContext returns on a cancelled context and releases the store.
 func TestRunContext_ReturnsOnCancelAndReleasesTheStore(t *testing.T) {
 	tmpDir := t.TempDir()
 

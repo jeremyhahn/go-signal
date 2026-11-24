@@ -1,11 +1,4 @@
-// Package build holds tests for the build system itself — targets whose
-// failure modes are invisible to Go tests because they live in the Makefile.
-//
-// The coverage gate is here because it once passed when it could not measure
-// coverage: `bc` handed an empty percentage emitted a syntax error, `|| echo
-// 0` substituted 0, and the comparison was false. CI ran that target on every
-// push and reported success while enforcing nothing. Manual verification does
-// not stop that returning, which is why these cases are executable.
+// Package build tests Makefile targets, including that the coverage gate fails when coverage cannot be measured.
 package build
 
 import (

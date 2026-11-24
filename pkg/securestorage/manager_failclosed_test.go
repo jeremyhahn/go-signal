@@ -19,21 +19,7 @@ func failClone(t *testing.T, injected error) {
 	t.Cleanup(func() { cloneSecret = original })
 }
 
-// TestSetSharedSecret_CloneFailureDoesNotDowngradeToStub is the regression
-// test for the fail-open Codex found.
-//
-// SetSharedSecret branched on "is the clone empty?" to choose legacy stub
-// mode. Clone returned an empty value both when there was no secret to copy
-// AND when the copy could not be allocated, so a protected-memory failure was
-// indistinguishable from an unconfigured deployment. The consequence was not a
-// crash but something quieter and worse: a storage-service-configured server would come
-// up in stub mode and hand clients random UUIDs with a nil error — credentials
-// the storage-service rejects — under nothing more exotic than memory pressure.
-//
-// The manager now propagates the failure and changes nothing.
-//
-// Reverting SetSharedSecret to treat a failed clone as an absent secret makes
-// this fail.
+// TestSetSharedSecret_CloneFailureDoesNotDowngradeToStub checks a clone failure is an error, not stub mode.
 func TestSetSharedSecret_CloneFailureDoesNotDowngradeToStub(t *testing.T) {
 	m := NewSecureStorageManager(slog.Default())
 	defer m.Destroy()
@@ -66,12 +52,7 @@ func TestSetSharedSecret_CloneFailureDoesNotDowngradeToStub(t *testing.T) {
 	}
 }
 
-// TestSetSharedSecret_CloneFailurePreservesTheInstalledKey covers the rotation
-// case the review named: a manager already minting must not lose its working
-// key because a replacement could not be allocated.
-//
-// Reverting SetSharedSecret to swap before it knows the clone succeeded makes
-// this fail.
+// TestSetSharedSecret_CloneFailurePreservesTheInstalledKey checks a failed rotation keeps the working key.
 func TestSetSharedSecret_CloneFailurePreservesTheInstalledKey(t *testing.T) {
 	ctx := context.Background()
 	m := NewSecureStorageManager(slog.Default())
@@ -112,22 +93,7 @@ func TestSetSharedSecret_CloneFailurePreservesTheInstalledKey(t *testing.T) {
 	}
 }
 
-// TestSetSharedSecret_UnopenableSecretDoesNotDowngradeToStub is the
-// regression test for the second half of the same fail-open (#15 §1), the
-// mirror of the directory manager's case.
-//
-// The clone-failure path was fixed, but the branch that CHOSE stub mode still
-// asked IsDestroyed, which reports true for three states: never configured,
-// destroyed, and configured-but-unopenable. Only the first means "this
-// deployment does not run a storage-service". The other two mean a key is
-// installed and unreadable, and answering those with the legacy stub mints
-// random UUIDs the storage-service rejects.
-//
-// A configured secret that has been destroyed is exactly that state: not
-// absent, and unrevealable.
-//
-// Reverting the branch to IsDestroyed makes this fail: SetSharedSecret
-// returns nil and quietly installs stub mode.
+// TestSetSharedSecret_UnopenableSecretDoesNotDowngradeToStub checks a configured but destroyed secret is an error, not stub mode.
 func TestSetSharedSecret_UnopenableSecretDoesNotDowngradeToStub(t *testing.T) {
 	m := NewSecureStorageManager(slog.Default())
 	defer m.Destroy()

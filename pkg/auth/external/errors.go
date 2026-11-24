@@ -9,11 +9,7 @@ func (e *MissingKeyError) Error() string {
 	return "external: Key is required"
 }
 
-// UnusableKeyError indicates a key WAS configured but could not be read out
-// of protected memory. It is deliberately distinct from MissingKeyError: a
-// caller must not respond to this by falling back to an unauthenticated mode,
-// because the deployment does have a key installed and the correct action is
-// to fail rather than to silently downgrade.
+// UnusableKeyError means a key is configured but unreadable; callers must fail, not fall back to unauthenticated.
 type UnusableKeyError struct {
 	Cause error
 }

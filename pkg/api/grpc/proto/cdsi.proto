@@ -6,23 +6,10 @@ syntax = "proto3";
 package org.signal.cdsi;
 option go_package = "github.com/jeremyhahn/go-signal/pkg/api/grpc/genproto/cdsi;cdsipb";
 
-// CDSI (Contact Discovery Service v2) client wire protocol.
-//
-// Minimum-viable port of the Signal CDSI server protocol per the Phase
-// 4.3 plan: authenticated rate-limited batch lookup with Noise-boxed
-// payloads. Mobile clients connect directly via WebSocket; signald is
-// not on the call path.
-//
-// The numeric wire layouts inside e164s_bytes / aci_uak_pairs /
-// e164_pni_aci_triples match the Rust libsignal FixedLengthSerializable
-// constants (see go-libsignal/pkg/net/cdsi.go for the matching Go
-// serializers).
+// CDSI (Contact Discovery Service v2) wire protocol: rate-limited batch lookup with Noise-boxed payloads; layouts match libsignal's FixedLengthSerializable.
 
 message ClientRequest {
-  // e164s_bytes is a packed array of E.164 phone numbers to look up.
-  // Each entry is 8 bytes (big-endian uint64). Combined with
-  // prev_e164s_bytes, this is the universe of phone numbers the client
-  // wants resolved to (PNI, ACI) tuples.
+  // e164s_bytes packs E.164 numbers as 8-byte big-endian uint64s.
   bytes e164s_bytes = 1;
 
   // prev_e164s_bytes is the packed E.164 array that was sent in a
@@ -39,17 +26,12 @@ message ClientRequest {
   // the initial request.
   bytes token = 4;
 
-  // token_ack is true when the client has finished consuming a
-  // previous response and acknowledges the new token. Used by some
-  // CDSI deployments to free server-side state.
+  // token_ack is true when the client acknowledges the new token after consuming a response.
   bool token_ack = 5;
 }
 
 message ClientResponse {
-  // e164_pni_aci_triples is a packed array of 40-byte tuples:
-  // 8 bytes E.164 || 16 bytes PNI || 16 bytes ACI. All-zero UUID
-  // bytes mean "absent" (e.g. number not registered, or caller has
-  // no permission to learn the ACI).
+  // e164_pni_aci_triples packs 40-byte tuples (E.164, PNI, ACI); an all-zero UUID means absent.
   bytes e164_pni_aci_triples = 1;
 
   // token is the continuation token the client can echo in its next

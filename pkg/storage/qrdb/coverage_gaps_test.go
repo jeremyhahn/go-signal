@@ -1,11 +1,6 @@
 package qrdb
 
-// coverage_gaps_test.go closes the branches left uncovered after the initial
-// test pass. Each test section targets a specific function and branch that the
-// coverage report identified as < 90%.
-//
-// Helper infrastructure reused from errors_test.go (faultyKV) and each
-// store's own _test.go fixtures (newAccount, newGroup, newProfile, etc.).
+// Branch coverage for the qrdb stores, using faultyKV and each store's fixtures.
 
 import (
 	"context"
@@ -127,12 +122,7 @@ func TestAccountStore_Create_DuplicatePNI_RejectedAsAlreadyExists(t *testing.T) 
 func TestAccountStore_Create_PNILookupError_Propagated(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	// getErr fires on every Get, including the PNI lookup after the number
-	// lookup. Seed the number mirror so the number lookup succeeds via Exists,
-	// but arm getErr so the PNI lookup (which goes through getOrNotFound) fails.
-	// Simpler: use a fresh store with getErr so the very first Exists call
-	// for the UUID check gets through (it's an Exists, not a Get), but the
-	// PNI mirror Get fails.
+	// getErr fails the PNI mirror Get; the UUID check is an Exists and passes.
 	boom := errors.New("pni lookup failure")
 	kv := &faultyKV{FakeKVStore: NewFakeKVStore(), getErr: boom}
 	s := NewAccountStore(kv)
@@ -307,7 +297,7 @@ func TestUsernameStore_DeleteHash_RemovesExisting(t *testing.T) {
 		t.Fatalf("DeleteHash: %v", err)
 	}
 
-	// Must no longer resolve.
+	// It does not resolve.
 	if _, err := s.LookupByHash(ctx, hash); err == nil {
 		t.Fatal("hash should be gone after DeleteHash")
 	}
@@ -1055,8 +1045,7 @@ func TestSecureStorageStore_DeleteItem_ExistsError_Propagated(t *testing.T) {
 func TestMessageStore_Insert_PutGUIDMirrorError_Propagated(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	// Arm put error after the first successful put (primary message), so the
-	// second put (GUID mirror) fails.
+	// The first put (message) succeeds and the second (GUID mirror) fails.
 	kv := &faultyListKV{FakeKVStore: NewFakeKVStore(), putN: 1, putErr: errors.New("put-mirror failure")}
 	s := NewMessageStore(kv)
 
@@ -1511,7 +1500,7 @@ func TestProfileStore_Delete_DeleteError_Propagated(t *testing.T) {
 	}
 }
 
-// ─── Round 2: closing remaining per-function gaps ────────────────────────────
+// Remaining per-function branches.
 
 // TestPreKeyStore_StoreKEMLastResortPreKey_PutError exercises the Put error.
 func TestPreKeyStore_StoreKEMLastResortPreKey_PutError(t *testing.T) {
@@ -1856,16 +1845,7 @@ func TestAccountStore_Update_PNIPutMirrorError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Use faultyListKV: let the primary Put (account data) succeed but fail
-	// the subsequent Put for the new PNI mirror. The number mirror Put happens
-	// before the PNI mirror Put, and we need to count through those.
-	// Easiest: no number change, only PNI change. Then Puts in Update are:
-	// 1. accountNumberKey mirror (skipped — number unchanged)
-	// 2. delete old PNI (succeeds)
-	// 3. Put new PNI mirror — fail here.
-	// 4. Put primary account.
-	// With no number change and PNI change: delete old PNI → Put new PNI → Put primary.
-	// So putN=0 fails the very first Put (new PNI mirror).
+	// Only the PNI changes, so putN=0 fails the first Put, the new PNI mirror.
 	kv := &faultyListKV{FakeKVStore: plain, putN: 0, putErr: errors.New("put pni mirror failure")}
 	s := NewAccountStore(kv)
 
@@ -1951,13 +1931,7 @@ func TestSecureStorageStore_DeleteAll_DeleteError(t *testing.T) {
 	}
 }
 
-// TestPreKeyStore_TakeEC_ErrNotFound_FallsBack exercises the ErrNotFound path
-// inside TakeEC when the key listed but no value returned (nil).
-// This is equivalent to the ErrNotFound branch: list returns a key but
-// getOrNotFound returns ErrNotFound (nil value from underlying store).
-// We simulate this by writing a key, listing it, then deleting it before
-// the value is read — not feasible without concurrency. Instead we test
-// the getErr path by reading a key that was listed but returns a Get error.
+// TestPreKeyStore_TakeEC_ErrNotFound_FallsBack covers a listed key whose Get fails.
 func TestPreKeyStore_TakeEC_GetError_Propagated(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -2017,7 +1991,7 @@ func TestPreKeyStore_StoreKEMPreKeys_PutError(t *testing.T) {
 	}
 }
 
-// ─── Round 3: final sub-90% function closures ────────────────────────────────
+// Final per-function branches.
 
 // TestGroupStore_Get_BackendError exercises the non-NotFound backend error
 // from Get (line 62-64 in groups.go).

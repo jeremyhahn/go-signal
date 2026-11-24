@@ -24,12 +24,7 @@ const (
 	hkdfInfo = "Signal-Server-AuthToken-v1"
 )
 
-// SaltedTokenHash stores a salted HKDF-SHA256 digest of an authentication
-// token. The salt and hash are each stored as lowercase hex strings so that
-// the struct round-trips cleanly through JSON and any text-based store.
-//
-// The plaintext token is never persisted; it exists only transiently during
-// registration and verification.
+// SaltedTokenHash is a salted HKDF-SHA256 digest of a token, salt and hash as lowercase hex; the token is never persisted.
 type SaltedTokenHash struct {
 	// Salt is the hex-encoded 16-byte random salt used when deriving Hash.
 	Salt string `json:"salt"`
@@ -39,11 +34,7 @@ type SaltedTokenHash struct {
 	Hash string `json:"hash"`
 }
 
-// NewSaltedTokenHash generates a random 16-byte salt, derives a 32-byte
-// HKDF-SHA256 hash from the token and salt, and returns the result.
-//
-// An empty token is rejected with InvalidTokenError because empty tokens
-// cannot distinguish between "no token" and "empty credential".
+// NewSaltedTokenHash derives a 32-byte HKDF-SHA256 hash of token with a random 16-byte salt; an empty token is InvalidTokenError.
 func NewSaltedTokenHash(token string) (*SaltedTokenHash, error) {
 	if token == "" {
 		return nil, &InvalidTokenError{Reason: "token must not be empty"}
@@ -76,16 +67,7 @@ func NewSaltedTokenHash(token string) (*SaltedTokenHash, error) {
 	return result, nil
 }
 
-// Verify re-derives the HKDF hash from the provided token and the stored salt,
-// then compares the result against the stored hash using a constant-time
-// comparison to prevent timing attacks.
-//
-// Returns false for any error (bad hex encoding, derivation failure) so that
-// callers can treat all failures as authentication rejections without
-// branching on error types.
-//
-// The token is taken as bytes so that callers can wipe it after use; Verify
-// neither retains nor modifies it.
+// Verify re-derives the hash with the stored salt and compares in constant time; any error returns false. token is neither kept nor modified, so the caller can wipe it.
 func (h *SaltedTokenHash) Verify(token []byte) bool {
 	if len(token) == 0 || h == nil {
 		return false

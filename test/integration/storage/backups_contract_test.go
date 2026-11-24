@@ -41,8 +41,7 @@ func truncateBackups(ctx context.Context, c *postgres.Client) {
 	_, _ = c.Pool().Exec(ctx, sql)
 }
 
-// backends returns one factory per registered backend. The postgres factory
-// calls t.Skip when TEST_POSTGRES_URL is unset so memory + qrdb always run.
+// backends returns one factory per backend; postgres skips without TEST_POSTGRES_URL.
 func backends(t *testing.T) []backendFactory {
 	t.Helper()
 	return []backendFactory{
@@ -104,10 +103,7 @@ func newContractUser(id backups.BackupID, ct backups.CredentialType) backups.Aut
 	}
 }
 
-// postgresEnv returns the TEST_POSTGRES_URL environment variable value.
-// It lets factory closures check the env before calling postgresClient(t),
-// which would acquire the advisory lock and start the connection even for
-// an immediate skip.
+// postgresEnv returns TEST_POSTGRES_URL so factories can skip before taking the advisory lock.
 func postgresEnv() string {
 	return os.Getenv(testPostgresEnv)
 }

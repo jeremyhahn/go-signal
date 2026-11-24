@@ -24,12 +24,7 @@ import (
 	memstorage "github.com/jeremyhahn/go-signal/pkg/storage/memory"
 )
 
-// startStorageServiceInProcess mounts the storage-service mux on an
-// httptest.NewServer. Returns the server URL and the backing store
-// for direct assertions.
-//
-// We duplicate the NewMux setup here rather than importing
-// cmd/storage-service's `main` package: Go disallows that.
+// startStorageServiceInProcess serves the storage-service mux on httptest and returns the URL and store; the setup is copied because main packages cannot be imported.
 func startStorageServiceInProcess(t *testing.T, sharedSecret string) (*httptest.Server, *memstorage.MemoryManifestStore) {
 	t.Helper()
 	store := memstorage.NewMemoryManifestStore()
@@ -231,14 +226,7 @@ func TestStorageServiceE2E_AdminDeleteViaSignaldClient(t *testing.T) {
 	}
 }
 
-// TestStorageServiceE2E_FullMobileClientFlow exercises the same
-// HTTP surface a mobile client would hit:
-//
-//  1. PUT manifest
-//  2. PUT item
-//  3. GET item
-//  4. DELETE item
-//  5. GET item (404)
+// TestStorageServiceE2E_FullMobileClientFlow: PUT manifest, PUT, GET and DELETE an item, then GET returns 404.
 func TestStorageServiceE2E_FullMobileClientFlow(t *testing.T) {
 	const sharedSecret = "mobile-client-flow-secret"
 	srv, _ := startStorageServiceInProcess(t, sharedSecret)

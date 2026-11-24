@@ -13,104 +13,37 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
-// DirectoryManager manages contact discovery (CDSI) credentials. The
-// credential format is HMAC-SHA256(sharedSecret, accountUUID) hex —
-// the same scheme svr2 and registration-service use. cmd/cdsi
-// validates inbound credentials against the same shared secret.
-// The secret lives in protected memory for the process lifetime and is
-// revealed only for the length of a single HMAC computation.
+// DirectoryManager issues CDSI credentials: hex HMAC-SHA256(sharedSecret, accountUUID), the secret revealed only per computation.
 type DirectoryManager struct {
 	logger *slog.Logger
-	// state is the credential configuration, published as ONE immutable
-	// value. Mode and key are a single logical fact and must never be
-	// observed out of step: two independent atomics let a rotation publish
-	// HMAC mode with no key (issuance fails forever) or a live key under
-	// stub mode (issuance quietly hands out random passwords cdsi rejects).
-	// A reader takes one Load and sees a consistent pair; a writer swaps a
-	// whole new value in, so the last writer to complete is the state that
-	// stands.
-	//
-	// Atomic rather than mutex-guarded because credentials are minted on
-	// request goroutines while startup rotates and shutdown wipes; the
-	// secret inside carries its own reveal-vs-destroy discipline.
+	// state is mode and key published as one immutable value, so readers never see them out of step.
 	state atomic.Pointer[secretState]
 }
 
-// cloneSecret is SecureString.Clone, indirected so the fail-closed path that
-// depends on a protected-memory allocation failure can be exercised. That
-// failure cannot be provoked from outside, and the path it guards is the one
-// that used to silently downgrade this manager to legacy credentials.
-// Production code never reassigns it; same seam as sealSecret in
-// pkg/config/secrets.
+// cloneSecret is SecureString.Clone, a variable for fault injection.
 var cloneSecret = (*secrets.SecureString).CloneWithPresence
 
 // secretState is the manager's credential configuration at an instant. It is
 // immutable once published: mutating one requires building a replacement and
 // swapping it in.
 type secretState struct {
-	// hmac records that a shared secret was configured. It stays true across
-	// Destroy, which is what separates "this deployment runs the legacy
-	// random-UUID stub" from "the key we were minting with is gone" — the
-	// second must fail closed rather than hand back a plausible password.
+	// hmac records that a shared secret was configured; it survives Destroy so issuance fails closed.
 	hmac bool
 	// secret is the manager's own clone, nil in stub mode and after Destroy.
 	secret *secrets.SecureString
-	// destroyed marks the terminal state Destroy publishes. It is one-way:
-	// no state carrying it is ever replaced, so a setter still in flight
-	// when shutdown ran cannot install a live secret behind it.
-	//
-	// A wiped state is otherwise indistinguishable from an ordinary one, and
-	// "the manager was shut down" is not something the fields it wipes can
-	// record — that is why the marker exists rather than being inferred from
-	// a nil secret.
+	// destroyed marks the terminal state; no state carrying it is replaced.
 	destroyed bool
 }
 
-// NewDirectoryManager creates a new DirectoryManager. When secret is
-// empty the manager falls back to random UUIDs so non-CDSI deployments
-// can keep using the legacy /v2/directory/auth stub.
+// NewDirectoryManager returns a DirectoryManager that issues random-UUID stub credentials until a secret is set.
 func NewDirectoryManager(logger *slog.Logger) *DirectoryManager {
 	return &DirectoryManager{logger: logger}
 }
 
-// SetSharedSecret installs the HMAC secret used to mint credentials.
-// Called by cmd/signald at startup with cfg.CDSI.SharedSecret. The secret
-// is cloned into an enclave the manager owns; the caller keeps ownership of
-// what it passed in.
-//
-// Any secret already installed is wiped before being replaced, so a rotation
-// leaves no copy of the superseded key resident.
-//
-// Returns an error only when the secret exists but could not be placed in
-// protected memory. That case leaves the manager untouched — the previously
-// installed configuration, key included, survives — and callers must treat it
-// as fatal rather than proceeding: continuing would run with GetAuthToken's legacy
-// stub, issuing random credentials the peer rejects. An absent secret is not
-// an error; it selects the stub deliberately.
+// SetSharedSecret installs a clone of secret, wiping any previous one; an absent secret selects the stub.
+// It errors, leaving the manager unchanged, when the secret exists but cannot be protected; callers treat that as fatal.
 func (m *DirectoryManager) SetSharedSecret(secret *secrets.SecureString) error {
-	// Three outcomes have to stay distinct here, and only one of them may
-	// select the legacy stub:
-	//
-	//   never configured   -> stub mode, deliberately
-	//   configured, usable -> HMAC mode
-	//   configured, not usable, or unclonable -> error, manager untouched
-	//
-	// Presence and the copy come from ONE snapshot. Asking IsAbsent() and
-	// then cloning are two separate reveals: a secret installed between them
-	// yields absent=true beside a clone holding a real value, and the stub
-	// would be published over a key that exists. Nor can presence be read
-	// off the clone — a clone of a configured-but-unrevealable secret is
-	// empty, exactly like a clone of an unset one, so that turns "the key
-	// will not open" into "there is no key". Both mistakes are fail-open and
-	// invisible: every credential minted afterwards is a random UUID the
-	// peer rejects.
-	//
-	// Usability is then asked of the clone, because the clone is what the
-	// manager keeps and mints with. Publishing HMAC mode over a key that
-	// cannot open is the same fail-open wearing different clothes.
-	//
-	// Nothing is published until both questions are answered, so an error
-	// leaves the previously installed configuration — key included — intact.
+	// Never configured selects the stub; configured and usable selects HMAC; anything else errors. Presence and copy come from one snapshot.
 	clone, configured, err := cloneSecret(secret)
 	if err != nil {
 		// Nothing has been published and nothing displaced, so the currently
@@ -119,21 +52,10 @@ func (m *DirectoryManager) SetSharedSecret(secret *secrets.SecureString) error {
 	}
 	next := &secretState{}
 	if !configured {
-		// An unset secret is an explicit request for the legacy stub, not a
-		// failure — GetAuthToken goes back to random UUIDs. Nothing to wipe in
-		// an unset clone; destroying it keeps the ownership contract total.
-		//
-		// IsAbsent, not IsDestroyed: the latter also reports true for a
-		// configured secret whose enclave will not open, and taking this
-		// branch on that would replace a real installed key with random-UUID
-		// credentials the peer rejects. A configured-but-unopenable secret is
-		// a failure, handled below.
+		// Absent (not merely unopenable) selects the stub.
 		clone.Destroy()
 	} else {
-		// Prove the clone can actually be opened before publishing HMAC mode
-		// over it. Publishing a key that cannot mint is the same fail-open in
-		// a different disguise: the mode says "authenticated" and every token
-		// it issues is unusable.
+		// The clone must open before HMAC mode is published over it.
 		if err := clone.TryWithBytes(func([]byte) {}); err != nil {
 			clone.Destroy()
 			return err
@@ -141,16 +63,7 @@ func (m *DirectoryManager) SetSharedSecret(secret *secrets.SecureString) error {
 		next.hmac = true
 		next.secret = clone
 	}
-	// One publish carries mode and key together, so no reader can catch the
-	// transition half-applied and no two concurrent rotations can interleave
-	// into a mixture of both. Whatever this call displaced is wiped exactly
-	// once, by the call that displaced it.
-	//
-	// A compare-and-swap rather than an unconditional Swap, because this call
-	// may have been racing shutdown: the clone above was made before Destroy
-	// ran, and a plain Swap would install it afterwards, leaving a live
-	// protected allocation nothing will ever wipe. Losing that race means
-	// wiping our own clone — we own it — and failing.
+	// Publish mode and key together by compare-and-swap; losing to Destroy wipes our clone and fails.
 	for {
 		old := m.state.Load()
 		if old != nil && old.destroyed {
@@ -166,37 +79,12 @@ func (m *DirectoryManager) SetSharedSecret(secret *secrets.SecureString) error {
 	}
 }
 
-// Destroy wipes the manager's copy of the shared secret and makes the manager
-// terminal: no later SetSharedSecret can install another one. Called from the
-// daemon's shutdown path. Safe to call more than once, and on a manager that
-// was never configured.
-//
-// Terminal is the point. Wiping what is installed at the instant Destroy runs
-// says nothing about a SetSharedSecret already in flight, which cloned its
-// secret before Destroy started and would publish it after Destroy returned —
-// a live protected allocation, installed after shutdown, that nothing would
-// ever wipe. The marker is what that setter checks.
-//
-// A manager that was minting HMAC credentials does not revert to the legacy
-// stub afterwards: GetAuthToken fails closed with a
-// SharedSecretUnavailableError, so a wipe can never be mistaken for a
-// successful credential grant. A manager that was never configured keeps
-// serving the random-UUID stub after Destroy, deliberately: there is no key to
-// protect, and failing closed there would turn shutdown into an outage for
-// non-CDSI deployments in exchange for nothing.
+// Destroy wipes the secret and makes the manager terminal; idempotent. A configured manager then fails closed, an unconfigured one keeps the stub.
 func (m *DirectoryManager) Destroy() {
 	if m == nil {
 		return
 	}
-	// Compare-and-swap rather than a plain swap: the replacement has to carry
-	// the CURRENT hmac flag forward, so it must be built from the state being
-	// replaced. Retrying on a lost race is correct — a rotation that landed
-	// in between is the newer configuration, and this wipes that one instead.
-	//
-	// The nil case still publishes. Returning early from a never-configured
-	// manager would leave no marker, and a SetSharedSecret arriving afterwards
-	// would install a live secret into a manager that had already shut down —
-	// the same defect as the race, reachable with no race at all.
+	// Compare-and-swap carrying the current hmac flag forward; the terminal state is published even when nothing is installed.
 	for {
 		old := m.state.Load()
 		if old != nil && old.destroyed {
@@ -215,18 +103,9 @@ func (m *DirectoryManager) Destroy() {
 	}
 }
 
-// GetAuthToken returns CDSI credentials for the given account. With a
-// configured shared secret, the password is the HMAC-SHA256 of the
-// account UUID under that secret. Without one, a random UUID is returned
-// (the legacy stub behaviour for non-CDSI deployments).
-//
-// Once a secret has been configured, a reveal that fails — the secret was
-// destroyed, or the enclave would not open — is a
-// SharedSecretUnavailableError, never a fallback to the stub.
+// GetAuthToken returns CDSI credentials: HMAC of the account UUID when configured, else a random UUID; a failed reveal is SharedSecretUnavailableError.
 func (m *DirectoryManager) GetAuthToken(_ context.Context, accountUUID string) (*DirectoryCredentials, error) {
-	// One Load: mode and key come from the same published state, so the
-	// branch below cannot be taken against a configuration that no longer
-	// exists.
+	// One Load: mode and key from the same state.
 	st := m.state.Load()
 	if st == nil || !st.hmac {
 		// MarshalText yields the UUID as bytes; uuid.NewString would stage the
@@ -245,10 +124,7 @@ func (m *DirectoryManager) GetAuthToken(_ context.Context, accountUUID string) (
 			Password: password,
 		}, nil
 	}
-	// The credential is assembled as bytes and sealed from them.
-	// hex.EncodeToString would put the finished password in a Go string,
-	// which the runtime may copy and which cannot be wiped;
-	// NewSecureStringFromBytes consumes and wipes the slice instead.
+	// Build the credential as bytes and seal it with NewSecureStringFromBytes, which wipes the slice.
 	var derived []byte
 	if !st.secret.WithBytes(func(key []byte) {
 		mac := hmac.New(sha256.New, key)

@@ -709,11 +709,7 @@ func TestNewFileSessionStore_SkipsNonBinFiles(t *testing.T) {
 }
 
 func TestFileSessionStore_StoreSession_WriteFileFails(t *testing.T) {
-	// Covers the persist-error return branch in StoreSession. A directory
-	// occupying the exact path the session file would take makes WriteFile
-	// fail with EISDIR, which holds for every uid — the read-only parent this
-	// used to rely on does not, because CI runs as root
-	// (testing-guidelines.md §Fault Injection).
+	// A directory at the session file path makes WriteFile fail with EISDIR, even as root.
 	ser := newTestSerializer()
 	dir := t.TempDir()
 	store, err := newFileSessionStore(dir, ser)
@@ -794,10 +790,7 @@ func TestFileIdentityStore_IsTrustedIdentity_KnownKey(t *testing.T) {
 }
 
 func TestFileIdentityStore_SaveIdentity_WriteFileFails(t *testing.T) {
-	// Covers the persist-error return branch in SaveIdentity. A directory
-	// occupying the exact path the identity file would take makes WriteFile
-	// fail with EISDIR, which root cannot bypass — unlike the read-only
-	// parent this used to rely on.
+	// A directory at the identity file path makes WriteFile fail with EISDIR, even as root.
 	kp, _ := ecc.GenerateKeyPair()
 	pubKey := identity.NewKey(kp.PublicKey())
 	idKP := identity.NewKeyPair(pubKey, kp.PrivateKey())

@@ -22,19 +22,9 @@ type MessageStore interface {
 	// DeleteForAccount removes all messages for an entire account.
 	DeleteForAccount(ctx context.Context, uuid string) error
 
-	// RemoveExpired deletes messages whose per-row expires_at is strictly
-	// before the supplied cutoff. Returns the number of rows removed.
-	// Backends that do not yet record an expiration timestamp (memory,
-	// qrdb today) return (0, nil) — the operation is a no-op rather than
-	// an error so the worker can run uniformly across all backends.
-	// Mirrors Java Signal-Server's RemoveExpiredMessagesCommand sweep.
+	// RemoveExpired deletes messages whose expires_at is before cutoff and returns the count; backends without expiry return (0, nil).
 	RemoveExpired(ctx context.Context, before time.Time) (int64, error)
 
-	// HasMessagesForDevice reports whether the device has at least
-	// one pending envelope. Implementations MUST avoid loading the
-	// full envelope set — e.g. postgres uses `SELECT 1 ... LIMIT 1`
-	// and qrdb returns after the first hit. Used by the idle-device
-	// notifier so a fleet-wide scan does not pay the full
-	// GetMessagesForDevice cost on every account×device pair.
+	// HasMessagesForDevice reports whether the device has a pending envelope; implementations must not load the envelopes.
 	HasMessagesForDevice(ctx context.Context, destinationUUID string, destinationDevice uint64) (bool, error)
 }

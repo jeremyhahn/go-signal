@@ -12,9 +12,7 @@ type UsernameService interface {
 	// for the given account, returning the selected hash and a token.
 	ReserveHash(ctx context.Context, uuid string, hashes [][]byte) ([]byte, string, error)
 
-	// ConfirmHash confirms a previously reserved username hash using the
-	// reservation token. The caller supplies a zero-knowledge proof that is
-	// verified server-side via go-libsignal/usernames.VerifyProof.
+	// ConfirmHash confirms a reserved username hash with its token and a zero-knowledge proof.
 	ConfirmHash(ctx context.Context, uuid string, hash []byte, token string, zkProof []byte) error
 
 	// LookupByHash returns the account UUID associated with a confirmed hash.
@@ -37,9 +35,7 @@ type UsernameService interface {
 	// from any node — the underlying store handles concurrency.
 	DeleteExpiredReservations(ctx context.Context) (int, error)
 
-	// ExistingLinkHandle returns the handle of the account's currently-published
-	// username link, or *UsernameLinkNotFoundError when none exists. Used by the
-	// REST handler to honour keepLinkHandle=true.
+	// ExistingLinkHandle returns the account's username link handle, or *UsernameLinkNotFoundError.
 	ExistingLinkHandle(ctx context.Context, uuid string) (string, error)
 }
 

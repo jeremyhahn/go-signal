@@ -1,18 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Generate the test TLS material the integration stack uses: a throwaway CA and
-# a server certificate it issued. Nothing here is committed. `make test-tls`
-# runs this before the integration suite and the images that need it, and
-# regenerates when the material is missing or about to expire.
-#
-#   CERT_DIR  output directory (default: this script's directory, test/tls)
-#   HOSTNAME  server name the leaf is issued for (default: signal-server)
-#   DAYS      validity in days (default: 30; short-lived on purpose)
-#
-# ECDSA P-256 keys, written 0600. The CA key is deleted once the leaf is signed:
-# nothing needs to issue a second certificate from it, and a key that does not
-# exist cannot leak. Re-run the script for a new pair.
+# Generate a throwaway CA and server certificate (ECDSA P-256, keys 0600, CA key deleted) for make test-tls; env CERT_DIR, HOSTNAME, DAYS (default 30).
 
 CERT_DIR="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 HOSTNAME="${2:-signal-server}"

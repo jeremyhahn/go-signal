@@ -9,14 +9,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/profiles"
 )
 
-// Profiles are versioned per account. Layout:
-//
-//	profile:{uuid}:{version} → JSON profile
-//	profile:{uuid}:_latest   → JSON profile (mirror of the most recent Set).
-//
-// GetLatest reads the _latest mirror; Get by version reads the primary.
-// Scanning "profile:{uuid}:" returns both primary and mirror records, so
-// list operations that want only primaries must filter out the _latest tail.
+// Layout: profile:{uuid}:{version} and profile:{uuid}:_latest (mirror of the latest Set); scans must skip _latest.
 
 const profileKeyPrefix = "profile:"
 

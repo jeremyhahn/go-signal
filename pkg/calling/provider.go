@@ -13,8 +13,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
-// TurnCredentialProvider abstracts retrieval of TURN relay credentials. This
-// interface enables testability by allowing mock implementations.
+// TurnCredentialProvider retrieves TURN relay credentials.
 type TurnCredentialProvider interface {
 	RetrieveCredentials(ctx context.Context) (*TurnToken, error)
 }
@@ -47,9 +46,7 @@ type CloudflareTurnProvider struct {
 	hostname            string
 	clientCredentialTTL time.Duration
 	logger              *slog.Logger
-	// breaker short-circuits credential calls when Cloudflare is having
-	// a bad day, so a TURN outage doesn't cascade into the request path
-	// for every concurrent caller. Always non-nil after construction.
+	// breaker short-circuits Cloudflare calls while they fail; never nil after construction.
 	breaker *CircuitBreaker
 }
 
@@ -95,8 +92,7 @@ func NewCloudflareTurnProvider(cfg CloudflareTurnProviderConfig) (*CloudflareTur
 	}, nil
 }
 
-// Destroy wipes the API token from protected memory. It should be called when
-// the provider is no longer needed.
+// Destroy wipes the API token from protected memory.
 func (p *CloudflareTurnProvider) Destroy() {
 	if p.apiToken != nil {
 		p.apiToken.Destroy()
@@ -104,10 +100,7 @@ func (p *CloudflareTurnProvider) Destroy() {
 	}
 }
 
-// RetrieveCredentials fetches TURN credentials from the Cloudflare API, resolves
-// the configured hostname to IP addresses, and formats urlsWithIps patterns.
-// The Cloudflare HTTP call is wrapped in a CircuitBreaker so a downstream
-// outage short-circuits subsequent calls instead of saturating goroutines.
+// RetrieveCredentials fetches TURN credentials from Cloudflare behind a circuit breaker and resolves the hostname into urlsWithIps.
 func (p *CloudflareTurnProvider) RetrieveCredentials(ctx context.Context) (*TurnToken, error) {
 	// Resolve hostname to IP addresses for urlsWithIps.
 	composedURLs, err := p.resolveHostnameURLs(ctx)
@@ -142,11 +135,7 @@ func (p *CloudflareTurnProvider) RetrieveCredentials(ctx context.Context) (*Turn
 	}, nil
 }
 
-// callCloudflare performs the actual HTTP request to the Cloudflare TURN
-// API and decodes the response into out. Factored out of
-// RetrieveCredentials so the breaker has a clean "downstream call" to
-// wrap. Returns a *CloudflareRequestError on every failure mode so the
-// breaker counts the right family of failures.
+// callCloudflare makes the Cloudflare TURN request; every failure is a *CloudflareRequestError, which the breaker counts.
 func (p *CloudflareTurnProvider) callCloudflare(ctx context.Context, out *cloudflareResponse) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, strings.NewReader(string(p.requestBody)))
 	if err != nil {
@@ -204,8 +193,7 @@ func (p *CloudflareTurnProvider) resolveHostnameURLs(ctx context.Context) ([]str
 	return composed, nil
 }
 
-// StaticTurnProvider returns static TURN credentials for development use.
-// It does not contact any external service.
+// StaticTurnProvider returns static development TURN credentials.
 type StaticTurnProvider struct {
 	URLs     []string
 	Hostname string

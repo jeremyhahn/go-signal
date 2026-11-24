@@ -13,18 +13,7 @@ import (
 // instructions wide, so the round count is what gives the test its power.
 const ownershipRaceRounds = 4000
 
-// TestNewHTTP_DestroyDuringOwnershipTransfer overlaps NewHTTP with the caller
-// destroying the shared secret it passed in.
-//
-// The contract under test is the constructor's verdict: a client returned
-// without an error must be able to derive credentials. Validating
-// cfg.SharedSecret and cloning it afterwards cannot honour that — the two
-// steps are separate reveals of a secret the caller still owns, so a Destroy
-// landing between them leaves NewHTTP reporting success over an unset clone
-// and every later request failing closed. Cloning first and validating the
-// clone closes the window, because the value checked is the value kept.
-//
-// Reverting NewHTTP to check-then-clone makes this fail.
+// TestNewHTTP_DestroyDuringOwnershipTransfer checks a client NewHTTP returns can derive credentials even if the caller destroys the secret concurrently.
 func TestNewHTTP_DestroyDuringOwnershipTransfer(t *testing.T) {
 	for round := range ownershipRaceRounds {
 		secret := secrets.MustNewSecureString("shared-secret")

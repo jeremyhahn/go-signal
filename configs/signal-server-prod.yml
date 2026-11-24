@@ -1,13 +1,4 @@
-# Signal Server — PRODUCTION configuration template.
-#
-# This profile activates the fail-closed production security gate
-# (config.validateProduction). signald will REFUSE to boot if any
-# development/test affordance is present. See pkg/config/config.go.
-#
-# Secrets are injected from the environment via ${VAR} references (resolved
-# by pkg/config/secrets EnvResolver) or, in a KMS deployment, by registering
-# a kms:// resolver and using kms:// URIs in place of the ${VAR} values.
-# Never commit real secret material to this file.
+# Production template: signald refuses to boot with any development affordance; secrets come from ${VAR} or kms:// references.
 
 mode: production
 

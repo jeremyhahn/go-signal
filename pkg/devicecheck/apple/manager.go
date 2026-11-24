@@ -93,10 +93,7 @@ func (k *Key) PublicKey() (*ecdsa.PublicKey, error) {
 	return ec, nil
 }
 
-// Manager orchestrates challenge issuance + attestation + assertion
-// flows. Mirrors Java AppleDeviceCheckManager: challenges in Redis
-// (here: ChallengeStore), device keys in Postgres-like DDB (here:
-// DeviceKeyStore), verification via the Verifier.
+// Manager runs the challenge, attestation and assertion flows over ChallengeStore, DeviceKeyStore and Verifier.
 type Manager struct {
 	verifier     *Verifier
 	challenges   ChallengeStore
@@ -138,10 +135,7 @@ func NewManager(cfg ManagerConfig) (*Manager, error) {
 	}, nil
 }
 
-// CreateChallenge issues a fresh random url-safe-base64 challenge for the
-// given (account, type). If a challenge already exists its TTL is
-// refreshed and the same value is returned — mirrors Java's setGet+expire
-// behavior so concurrent issuers don't race-create distinct challenges.
+// CreateChallenge returns a new url-safe base64 challenge, or refreshes and returns the existing one.
 func (m *Manager) CreateChallenge(ctx context.Context, accountUUID string, ct ChallengeType) (string, error) {
 	if accountUUID == "" {
 		return "", errors.New("apple: accountUUID required")
@@ -216,12 +210,7 @@ func (m *Manager) RegisterAttestation(ctx context.Context, accountUUID string, k
 	return nil
 }
 
-// ValidateAssertion verifies an assertion against a previously registered
-// device key + challenge. On success the sign-counter is updated.
-//
-// request is the application bytes the client signed (Signal embeds the
-// challenge in this); the embedded challenge must match the challenge
-// stored under (accountUUID, ct).
+// ValidateAssertion verifies an assertion over request, whose embedded challenge must match the stored one, and updates the sign counter.
 func (m *Manager) ValidateAssertion(ctx context.Context, accountUUID string, keyID []byte, ct ChallengeType, challenge string, request, assertion []byte) error {
 	if accountUUID == "" {
 		return errors.New("apple: accountUUID required")

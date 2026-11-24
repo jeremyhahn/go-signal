@@ -1,10 +1,6 @@
 import { useState, useCallback } from 'react';
 
-// useFIDO2 provides WebAuthn ceremony helpers for the FIDO2 UI.
-// The ceremony flow:
-//   1. Go backend calls server to get challenge options
-//   2. This hook calls navigator.credentials.create/get in the webview
-//   3. The response is sent back to Go backend to complete the ceremony
+// useFIDO2 runs the WebAuthn ceremony in the webview for challenges the Go backend fetches and completes.
 
 export function useFIDO2() {
   const [loading, setLoading] = useState(false);

@@ -1,9 +1,4 @@
-// Package backups implements the message-archive (backup) subsystem.
-//
-// It mirrors Java Signal-Server's BackupManager / BackupAuthManager /
-// BackupsDb / RemoteStorageManager triad. Storage state lives behind
-// the [Store] interface (implemented per-backend under pkg/storage/);
-// CDN content lives behind the [BlobStore] interface.
+// Package backups implements message backups: metadata behind [Store], content behind [BlobStore].
 package backups
 
 import (
@@ -253,34 +248,16 @@ type RecalculationResult struct {
 	NewUsage UsageInfo
 }
 
-// ExternalServiceCredentials is the username/password pair returned by
-// [Service.GenerateSVRBAuth] for clients to authenticate against the SVRB
-// service. Mirrors Java's auth.ExternalServiceCredentials record.
-//
-// Password is a bearer credential, so it is held in protected memory from
-// issuance until a handler serialises it onto the response. Handlers read it
-// with Password.Reveal() at that single boundary — an unavailable credential
-// is an error, not an empty password — and Destroy the credential
-// afterwards.
+// ExternalServiceCredentials is the SVRB username and password; Password stays in protected memory, read with Reveal() and destroyed after the response.
 type ExternalServiceCredentials struct {
 	Username string
 	Password *secrets.SecureString
 }
 
-// Compile-time proof that this credential serialises through the owned-buffer
-// path. Without it, writeJSON silently falls back to json.Marshal, which
-// abandons an unwiped copy of the password — a regression that no test can
-// observe, because the wire bytes are identical either way. Breaking the build
-// is the only reliable guard.
+// Compile-time check that the credential serialises through secrets.JSONAppender.
 var _ secrets.JSONAppender = ExternalServiceCredentials{}
 
-// AppendJSON implements secrets.JSONAppender, emitting the credential in the
-// `{"username":…,"password":…}` shape into a buffer the CALLER owns and wipes.
-//
-// The handler used to build this body by revealing the password into a Go
-// string and filling a response struct, which left the plaintext in memory
-// that cannot be wiped. The wire form is unchanged, byte for byte; only the
-// memory it is assembled in has changed.
+// AppendJSON writes {"username":…,"password":…} into a buffer the caller owns and wipes.
 func (c ExternalServiceCredentials) AppendJSON(dst []byte) ([]byte, error) {
 	user, err := json.Marshal(c.Username)
 	if err != nil {
@@ -305,13 +282,7 @@ func (c ExternalServiceCredentials) AppendJSON(dst []byte) ([]byte, error) {
 	return append(dst, '}'), nil
 }
 
-// MarshalJSON implements encoding/json.Marshaler for wire compatibility.
-//
-// WARNING: the returned buffer holds the plaintext password and encoding/json
-// drops it unwiped after copying — a property of the Marshaler contract, not
-// of this implementation. Production responses use AppendJSON via writeJSON.
-// This exists so a value nested in another struct still marshals to the right
-// wire form instead of falling back to SecureString's redacting default.
+// MarshalJSON keeps the wire form for nested values; its buffer holds the plaintext unwiped, so responses use AppendJSON.
 func (c ExternalServiceCredentials) MarshalJSON() ([]byte, error) {
 	return c.AppendJSON(nil)
 }

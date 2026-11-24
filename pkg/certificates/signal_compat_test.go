@@ -19,29 +19,7 @@ func mustKeyPair(t *testing.T) *ecc.ECKeyPair {
 	return kp
 }
 
-// TestBuildSignalSenderCertificate_RoundTrip exercises the full path:
-//
-//	trust root  ─ signs ─►  ServerCertificate
-//	                               │
-//	                               ▼
-//	server cert priv ─ signs ─►  SenderCertificate (protobuf bytes)
-//
-// then deserializes the resulting bytes through go-libsignal/pkg/sealed
-// (the SAME code path Rust libsignal would use to verify them) and
-// validates the signature chain. A successful Validate proves:
-//
-//  1. The bytes are valid Signal SenderCertificate protobuf.
-//  2. The XEdDSA signature over the inner cert verifies under the
-//     server-cert public key embedded inside.
-//  3. The server-cert XEdDSA signature verifies under the trust-root
-//     public key.
-//  4. All identifiers (UUID, deviceID, expiration, identityKey)
-//     survive round-trip.
-//
-// A successful round trip is byte-wire equivalent to what Rust
-// libsignal::SenderCertificate::deserialize + validate accept; the
-// bytes go-signal emits today via this path are therefore consumable
-// by Rust libsignal clients.
+// TestBuildSignalSenderCertificate_RoundTrip builds trust root -> ServerCertificate -> SenderCertificate and validates it with go-libsignal/pkg/sealed.
 func TestBuildSignalSenderCertificate_RoundTrip(t *testing.T) {
 	trustRoot := mustKeyPair(t)
 	serverCertKP := mustKeyPair(t)

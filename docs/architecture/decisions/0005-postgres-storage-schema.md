@@ -4,7 +4,6 @@
 > Decision record for the Postgres backend, corrected to the as-built code.
 
 - **Status**: accepted
-- **Date**: 2026-05-06
 - **Author**: go-signal team
 
 ## Context

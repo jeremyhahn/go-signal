@@ -893,8 +893,7 @@ func TestIpKeyWithProxies_NoTrustedProxies_IgnoresXFF(t *testing.T) {
 }
 
 func TestIpKeyWithProxies_TrustedProxy_ExtractsRightmostUntrusted(t *testing.T) {
-	// When RemoteAddr is within the trusted CIDR, the rightmost untrusted
-	// XFF hop is used as the client IP.
+	// With RemoteAddr in a trusted CIDR, the rightmost untrusted XFF hop is the client IP.
 	_, trustedNet, err := net.ParseCIDR("10.0.0.0/8")
 	if err != nil {
 		t.Fatalf("failed to parse CIDR: %v", err)
@@ -912,8 +911,7 @@ func TestIpKeyWithProxies_TrustedProxy_ExtractsRightmostUntrusted(t *testing.T) 
 }
 
 func TestIpKeyWithProxies_UntrustedProxy_IgnoresXFF(t *testing.T) {
-	// When RemoteAddr is NOT in a trusted CIDR, XFF is ignored entirely and
-	// the RemoteAddr IP is returned directly.
+	// With RemoteAddr outside the trusted CIDRs, XFF is ignored.
 	_, trustedNet, err := net.ParseCIDR("10.0.0.0/8")
 	if err != nil {
 		t.Fatalf("failed to parse CIDR: %v", err)
@@ -1034,17 +1032,9 @@ func TestRedactQueryParams_EmptyString(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// writeJSON must encode through secrets.JSONAppender when the payload offers
-// one. This is the whole mechanism that keeps credential plaintext in a single
-// owned buffer: json.Marshal on a credential cannot do it, because MarshalJSON
-// must RETURN a fresh buffer, encoding/json copies it and drops the original,
-// and the abandoned copy holds the password with no owner left to wipe it.
-// =============================================================================
+// writeJSON encodes through secrets.JSONAppender when the payload offers one.
 
-// appenderProbe implements BOTH interfaces, with deliberately different output,
-// so the response body itself reveals which path writeJSON took. A test that
-// only checked for valid JSON would pass either way.
+// appenderProbe implements both interfaces with different output, so the body shows which path writeJSON took.
 type appenderProbe struct{ marshalCalled *bool }
 
 func (p appenderProbe) AppendJSON(dst []byte) ([]byte, error) {

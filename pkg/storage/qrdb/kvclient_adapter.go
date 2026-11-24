@@ -7,13 +7,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/store"
 )
 
-// KVClientAdapter adapts a store.KVClient to satisfy the qrdb KVStore
-// interface. The two interfaces share an identical method set; the only
-// behavioural gap is Get's missing-key semantics — KVClient returns a
-// *store.KeyNotFoundError, KVStore returns (nil, nil). This adapter
-// translates the former into the latter so the qrdb-prefixed domain
-// stores (e.g. UsernameStore) can run unchanged on any KVClient backend
-// — currently the file-system KV in cmd/signald's "file" storage mode.
+// KVClientAdapter adapts a store.KVClient to KVStore, turning *store.KeyNotFoundError into (nil, nil).
 type KVClientAdapter struct {
 	client store.KVClient
 }

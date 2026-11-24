@@ -150,8 +150,7 @@ func (e *signalOnStatusEmitter) Emit(eventType string, _ interface{}) {
 type captureStatusEmitter struct {
 	mu     sync.Mutex
 	events []string
-	// states records the connected value of each status event, so a test can
-	// assert what a consumer was last TOLD rather than only how often.
+	// states records each status event's connected value.
 	states []bool
 }
 
@@ -205,12 +204,7 @@ func (h *syncHandler) len() int {
 	return len(h.msgs)
 }
 
-// ---------------------------------------------------------------------------
-// WebSocket-backed Manager tests
-// These tests stand up a real httptest WebSocket server so that
-// ConnectWebSocket can dial successfully, covering connect()'s return-nil
-// path and the message-delivery callback.
-// ---------------------------------------------------------------------------
+// Manager tests against a real httptest WebSocket server.
 
 // testWSCreds returns a minimal Credentials for WebSocket auth.
 func testWSCreds() *signal.Credentials {
@@ -323,9 +317,7 @@ func (c *stepClock) Now() time.Time {
 	return c.t
 }
 
-// scheduleRecorder stands in for time.After so a test can READ the retry
-// schedule instead of living through it — proving the delays escalate takes
-// 15 s of real waiting otherwise, which testing-guidelines.md rules out.
+// scheduleRecorder replaces time.After so a test can read the retry schedule.
 type scheduleRecorder struct {
 	mu     sync.Mutex
 	delays []time.Duration
@@ -385,14 +377,7 @@ func startWithSchedule(t *testing.T, srv *countingWSServer, step time.Duration, 
 	return sched.recorded()[:want]
 }
 
-// TestManager_StartSupersedesThePreviousLoop is one half of the generation
-// contract.
-//
-// Start used to overwrite m.cancel without cancelling the loop it replaced, so
-// the first loop reconnected forever with nothing holding its cancel func —
-// Stop could only reach the newest. Every restart leaked a goroutine and a
-// socket. The assertion is that the superseded loop actually TERMINATES, which
-// its done channel reports; a timeout means it was orphaned.
+// TestManager_StartSupersedesThePreviousLoop: a second Start must terminate the first loop.
 func TestManager_StartSupersedesThePreviousLoop(t *testing.T) {
 	srv := newCountingWSServer(t)
 	defer srv.Close()
@@ -453,13 +438,7 @@ func TestManager_SupersededLoopCannotPublish(t *testing.T) {
 	}
 }
 
-// takeOwnership installs a generation the way Start does, without launching a
-// loop. This test is about the commit path, not the loop, and a live loop
-// commits on its own schedule — it would trip the hook below before the
-// interleaving under test could be set up.
-//
-// It mirrors Start's swap, including starting the replacement disconnected. If
-// the two drift the helper stops standing for the thing it is named after.
+// takeOwnership installs a generation as Start does, disconnected, without a loop.
 func takeOwnership(m *Manager) *loopGeneration {
 	gen := &loopGeneration{cancel: func() {}, done: make(chan struct{})}
 	for {
@@ -471,15 +450,7 @@ func takeOwnership(m *Manager) *loopGeneration {
 	}
 }
 
-// TestManager_SupersededLoopCannotCommitAcrossTheHandoff is the regression
-// test for the TOCTOU between authorization and commit.
-//
-// Checking ownership and publishing were two steps. A superseded loop could
-// pass the check, be descheduled while a replacement took over AND connected,
-// then commit its stale "disconnected" over a live socket — leaving
-// IsConnected and every subscriber reporting a working connection as down.
-// A sequential test cannot see this; the interleaving has to be forced, which
-// is what beforeCommit is for.
+// TestManager_SupersededLoopCannotCommitAcrossTheHandoff forces the check-then-commit interleaving with beforeCommit.
 func TestManager_SupersededLoopCannotCommitAcrossTheHandoff(t *testing.T) {
 	client, err := newTestClient()
 	require.NoError(t, err)
@@ -495,10 +466,7 @@ func TestManager_SupersededLoopCannotCommitAcrossTheHandoff(t *testing.T) {
 		resume = make(chan struct{})
 	)
 	armed.Store(true)
-	// CompareAndSwap, not sync.Once: Once BLOCKS later callers until the first
-	// invocation RETURNS, so the replacement's commit would wait on the very
-	// goroutine this test is deliberately holding — a deadlock, not a race.
-	// Only the first caller pauses; every other one falls straight through.
+	// CompareAndSwap, not sync.Once: Once would block the replacement's commit on the held goroutine.
 	m.beforeCommit = func() {
 		if armed.CompareAndSwap(true, false) {
 			close(paused)
@@ -540,24 +508,7 @@ func TestManager_SupersededLoopCannotCommitAcrossTheHandoff(t *testing.T) {
 	}
 }
 
-// A subscriber is free to call Stop from its handler. Stop's NON-BLOCKING
-// contract is the whole of what makes that safe here: it cancels and returns
-// rather than waiting on the loop its own caller is running inside. Making
-// Stop terminal against this delivery model hangs this test, which is the
-// measurement behind the comment on Stop and the reason terminal Stop waits
-// for #67's dispatcher rather than being bolted on.
-//
-// It also pins a hazard of synchronous delivery that is worth stating rather
-// than discovering: Stop emits, so a handler that calls Stop is RE-ENTERED
-// before its first invocation returns. The guard below is an atomic
-// compare-and-swap and not a sync.Once for exactly that reason — Once blocks
-// later callers until the first invocation RETURNS, so on one goroutine it
-// deadlocks against itself. Written with a Once, this test hangs for 30s and
-// blames the manager for a defect in its own double.
-//
-// Delivery moving to a dispatcher goroutine (#67) removes the re-entrancy
-// along with the ordering problem; until then it is a documented property of
-// this package, not an accident.
+// A subscriber may call Stop from its handler; Stop emits, so the handler is re-entered, hence CompareAndSwap rather than sync.Once.
 func TestManager_SubscriberCallingStopFromItsHandlerDoesNotDeadlock(t *testing.T) {
 	client, err := newTestClient()
 	require.NoError(t, err)
@@ -685,17 +636,7 @@ func (s *heldSecondDialServer) releaseHeld() {
 	}
 }
 
-// TestManager_RestartDoesNotInheritTheCancelledGenerationsConnectedState is the
-// slow-dial restart case. Start cancels the generation it supersedes, so that
-// generation's socket is going away — and a replacement that copied its
-// connected flag reported a cancelled socket as live for as long as its own
-// dial took, with no disconnected event in between to correct anyone.
-//
-// The server holds the replacement's dial open so the window is a state the
-// test can stand in rather than a race it has to win. Without the fix the
-// assertions fail two independent ways: IsConnected stays true, and the
-// handoff emits nothing at all (the delivery side suppresses a repeat of
-// "connected", which is exactly why the stale flag was invisible).
+// TestManager_RestartDoesNotInheritTheCancelledGenerationsConnectedState holds the replacement's dial open and checks the handoff reports disconnected.
 func TestManager_RestartDoesNotInheritTheCancelledGenerationsConnectedState(t *testing.T) {
 	srv := newHeldSecondDialServer(t)
 
@@ -734,10 +675,7 @@ func TestManager_RestartDoesNotInheritTheCancelledGenerationsConnectedState(t *t
 	srv.releaseHeld()
 }
 
-// Stop reports disconnected itself, before it returns. The loop's own final
-// publish is ignored once it is no longer current, so without this a stopped
-// manager would keep claiming to be connected until its goroutine happened to
-// run — a window no caller can see or wait for.
+// Stop reports disconnected before it returns.
 func TestManager_StopReportsDisconnectedImmediately(t *testing.T) {
 	srv := newCountingWSServer(t)
 	defer srv.Close()
@@ -760,14 +698,7 @@ func TestManager_StopReportsDisconnectedImmediately(t *testing.T) {
 	}
 }
 
-// TestManager_ShortSessionsEscalateBackoff is the regression test for the
-// reconnect storm.
-//
-// The backoff used to be reset on the handshake, before the session's lifetime
-// was known. A server that accepts every socket and closes it immediately —
-// exactly countingWSServer, and exactly what a rejecting or flapping server
-// looks like in production — therefore reset the schedule on every attempt and
-// was re-dialled once a second forever. maxBackoff was unreachable.
+// TestManager_ShortSessionsEscalateBackoff: accept-and-close sessions must escalate the backoff.
 func TestManager_ShortSessionsEscalateBackoff(t *testing.T) {
 	srv := newCountingWSServer(t)
 	defer srv.Close()
@@ -819,16 +750,7 @@ func newCountingWSServer(t *testing.T) *countingWSServer {
 	return s
 }
 
-// TestManager_ReconnectsAfterServerClose is the regression test for #37.
-//
-// ConnectWebSocketSession returns at handshake, not on close, so before it
-// existed the manager had no way to learn a socket had dropped: it stayed
-// connected=true forever and never re-dialled, silently ending real-time
-// delivery after the first disconnect.
-//
-// The assertion is on receiving a SECOND accept from the server, not on
-// elapsed time — testing-guidelines.md rules out sleeps, and a sleep would
-// make this flaky in exactly the way #36 was.
+// TestManager_ReconnectsAfterServerClose: after the server closes, the manager must dial again (asserted on a second accept, not time).
 func TestManager_ReconnectsAfterServerClose(t *testing.T) {
 	srv := newCountingWSServer(t)
 	defer srv.Close()

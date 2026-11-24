@@ -177,17 +177,7 @@ func TestGenerator_DestroyIsIdempotentAndNilSafe(t *testing.T) {
 	g.Destroy()
 }
 
-// TestNewGenerator_ConfiguredButUnreadableKeyIsUnusableNotMissing pins the
-// distinction the typed errors exist to make.
-//
-// Clone erases the configured flag: a clone of a configured-but-unreadable
-// key is empty and reports IsAbsent() == true, exactly like a clone of an
-// unset one. Asking the CLONE therefore answers "no key configured" for a key
-// that is installed and merely unreadable — and a caller allowed to fall back
-// to an unauthenticated mode on MissingKeyError would downgrade a deployment
-// that does have a key.
-//
-// Reverting the check to ask the clone makes this fail with MissingKeyError.
+// TestNewGenerator_ConfiguredButUnreadableKeyIsUnusableNotMissing checks an unreadable configured key is not reported as MissingKeyError.
 func TestNewGenerator_ConfiguredButUnreadableKeyIsUnusableNotMissing(t *testing.T) {
 	key := secrets.MustNewSecureString("shared-secret")
 	key.Destroy() // configured, then unreadable

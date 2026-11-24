@@ -305,10 +305,7 @@ func TestAuthManager_RedeemReceipt_HappyPathUpdatesVoucher(t *testing.T) {
 		t.Errorf("voucher level = %d; want paid", acct.BackupVoucher.ReceiptLevel)
 	}
 
-	// Re-redeeming the same receipt by the SAME account is idempotent — Java's
-	// RedeemedReceiptsManager.put returns true when the existing entry matches
-	// (serial, expiration, level, accountUUID), so the second call must succeed
-	// without error and not double-extend the voucher.
+	// Redeeming the same receipt again by the same account succeeds without extending the voucher.
 	prevVoucher := *acct.BackupVoucher
 	if err := f.authMgr.RedeemReceipt(ctx, f.accountUUID, backups.RedeemReceiptRequest{
 		ReceiptCredentialPresentation: receipt,
@@ -511,8 +508,7 @@ func TestAuthManager_GetBackupAuthCredentials_AccountNotFound(t *testing.T) {
 }
 
 func TestAuthManager_GetBackupAuthCredentials_MissingMediaSlot(t *testing.T) {
-	// Commit only the messages slot; the issuance loop walks BOTH credential
-	// types and must return NotFoundError when the media slot is empty.
+	// Only the messages slot is committed, so issuance returns NotFoundError for the empty media slot.
 	f := newFixture(t)
 	ctx := context.Background()
 	if err := f.authMgr.CommitBackupID(ctx, f.accountUUID, accounts.PrimaryDeviceID, backups.SetBackupIDRequest{
@@ -720,8 +716,7 @@ func TestMergeVoucher_LevelMismatchReplaces(t *testing.T) {
 }
 
 func TestMergeVoucher_PrevExpirationFurther(t *testing.T) {
-	// Seed an existing Paid voucher whose expiration is FURTHER out than the
-	// incoming receipt; mergeVoucher must keep the existing expiration.
+	// An existing Paid voucher that expires later than the receipt keeps its expiration.
 	f := newFixture(t)
 	ctx := context.Background()
 	farFuture := f.clock.Add(365 * 24 * time.Hour).Truncate(24 * time.Hour)

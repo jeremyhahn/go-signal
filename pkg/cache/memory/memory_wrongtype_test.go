@@ -8,10 +8,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/cache"
 )
 
-// These tests exercise the WRONGTYPE-style error branches for every
-// operation family (string, zset, hash). The three types are mutually
-// exclusive per key, so attempting an operation of the wrong kind must
-// return an error rather than silently behaving incorrectly.
+// Using a key as the wrong kind (string, zset, hash) must return an error.
 
 func TestWrongType_GetOnZSet(t *testing.T) {
 	t.Parallel()

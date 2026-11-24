@@ -101,13 +101,7 @@ func TestFileStore_Put_MkdirError(t *testing.T) {
 }
 
 func TestFileStore_Put_CreateTempError(t *testing.T) {
-	// Exercises the os.Create error branch. Put first does MkdirAll on the
-	// key's parent, so the fault has to spare the parent and hit only the
-	// temp file: a final path component near NAME_MAX does exactly that,
-	// because Put appends ".tmp.<16 hex>" to it and pushes the temp name past
-	// the 255-byte limit. ENAMETOOLONG holds for every uid — a mode-0500
-	// parent would not, since CI runs as root and root bypasses the
-	// permission check (testing-guidelines.md §Fault Injection).
+	// A final path component near NAME_MAX makes the temp name fail os.Create with ENAMETOOLONG, for every uid.
 	root := t.TempDir()
 	s, err := NewFileStore(root)
 	require.NoError(t, err)
@@ -130,9 +124,7 @@ func TestFileStore_Put_WriteError(t *testing.T) {
 }
 
 func TestFileStore_Put_RenameError(t *testing.T) {
-	// If a directory already exists at the target path, os.Rename of the
-	// temp file to that path fails on Linux (EISDIR).  This exercises the
-	// rename error branch.
+	// A directory at the target path makes the rename fail.
 	root := t.TempDir()
 	s, err := NewFileStore(root)
 	require.NoError(t, err)
@@ -173,11 +165,7 @@ func TestFileStore_Get_NotFound(t *testing.T) {
 }
 
 func TestFileStore_Get_OpenError(t *testing.T) {
-	// Exercises the non-ENOENT open error branch. A regular file used as a
-	// directory component makes the child path fail with ENOTDIR, which is
-	// not ENOENT, so Get takes the wrapped-error path rather than reporting
-	// "not found". Root cannot bypass ENOTDIR the way it bypasses the
-	// permission bits this test used to rely on.
+	// A regular file as a directory component gives ENOTDIR, a non-ENOENT open error, for every uid.
 	root := t.TempDir()
 	s, err := NewFileStore(root)
 	require.NoError(t, err)
@@ -213,10 +201,7 @@ func TestFileStore_Delete_NotFound(t *testing.T) {
 }
 
 func TestFileStore_Delete_NonEnoentError(t *testing.T) {
-	// Covers the non-ENOENT delete branch: Delete swallows ENOENT to stay
-	// idempotent, so the fault must be a different errno. A regular file used
-	// as a directory component yields ENOTDIR, which root cannot bypass —
-	// unlike the mode-0500 parent this test used to rely on.
+	// ENOTDIR from a file used as a directory component exercises the non-ENOENT delete branch.
 	root := t.TempDir()
 	s, err := NewFileStore(root)
 	require.NoError(t, err)
@@ -250,10 +235,7 @@ func TestFileStore_Exists_False(t *testing.T) {
 }
 
 func TestFileStore_Exists_StatError(t *testing.T) {
-	// Covers the non-ENOENT stat branch: Exists reports (false, nil) for
-	// ENOENT, so the fault must be a different errno. A regular file used as
-	// a directory component yields ENOTDIR, which holds for every uid —
-	// unlike the permission bits this test used to rely on.
+	// ENOTDIR from a file used as a directory component exercises the non-ENOENT stat branch.
 	root := t.TempDir()
 	s, err := NewFileStore(root)
 	require.NoError(t, err)

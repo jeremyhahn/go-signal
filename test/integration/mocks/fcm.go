@@ -11,15 +11,7 @@ import (
 	"sync"
 )
 
-// FCMMock is a fake Firebase Cloud Messaging v1 server. It serves both
-// the Google OAuth2 token-grant endpoint (POST /token) and the FCM v1
-// send endpoint (POST /v1/projects/{id}/messages:send). The mock issues
-// a deterministic access_token for the first /token call and reuses it
-// thereafter, mirroring real OAuth2 cache behavior.
-//
-// Tests can install a per-send response with SetNextSendResponse for
-// negative-path coverage; otherwise sends return 200 OK with a minimal
-// MessageId envelope.
+// FCMMock fakes the OAuth2 token endpoint and FCM v1 send, with a fixed access token; SetNextSendResponse overrides the next send.
 type FCMMock struct {
 	Server *httptest.Server
 
@@ -82,8 +74,7 @@ func (m *FCMMock) LastSend() (authHeader string, body []byte) {
 	return m.lastSendAuth, append([]byte(nil), m.lastSendBody...)
 }
 
-// SetNextSendResponse forces the next send call to respond with status
-// + body. Used by negative-path tests (UNREGISTERED, internal error).
+// SetNextSendResponse makes the next send return status and body.
 func (m *FCMMock) SetNextSendResponse(status int, body string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

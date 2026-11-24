@@ -10,31 +10,13 @@ import (
 	"github.com/jeremyhahn/go-qrdb/sdk/go/secure"
 )
 
-// cloneHeapLimit{Numerator,Denominator} bound the Go-heap bytes Clone may
-// charge per byte of secret — 2.5x. Both endpoints were measured on a 1 MiB
-// secret against this exact stack, not assumed:
-//
-//	Clone as implemented (protected page -> protected page)  2.010x
-//	the same Clone with an intermediate []byte staging copy  3.010x
-//
-// 2.5x sits in the half-a-copy gap between them, so the bound fails if a
-// plaintext-sized heap staging buffer is reintroduced and does not trip on
-// allocator noise. The 2x floor is the sealing path itself: the enclave keeps
-// its ciphertext as an ordinary allocation, which is encrypted, not the key.
+// cloneHeapLimit bounds Clone's Go-heap bytes per secret byte at 2.5x, between the direct copy (2.0x) and a staged copy (3.0x).
 const (
 	cloneHeapLimitNumerator   = 5
 	cloneHeapLimitDenominator = 2
 )
 
-// revealHeapLimitNumerator/Denominator bound the Go-heap bytes WithBytes may
-// charge per reveal, as a multiple of the plaintext size. Measured endpoints
-// on a 1 MiB secret: 1.001x when fn receives the protected buffer directly,
-// 2.001x when a plaintext-sized heap copy is staged for it. 1.5x sits between
-// them with room for allocator noise on either side.
-//
-// The 1x floor is Open itself — the enclave decrypts into a fresh buffer,
-// which is what fn then borrows. What this bounds is a SECOND copy on top of
-// that, which is the shape the defect would take.
+// revealHeapLimit bounds WithBytes's Go-heap bytes per reveal at 1.5x, between the direct buffer (1.0x) and a staged copy (2.0x).
 const (
 	revealHeapLimitNumerator   = 3
 	revealHeapLimitDenominator = 2
@@ -55,12 +37,7 @@ func TestWithBytes_RevealsTheStoredValue(t *testing.T) {
 	}
 }
 
-// TestWithBytes_RevealedBufferIsNotAHeapCopy measures the property that
-// actually changes if fn is handed a heap copy instead of the protected
-// buffer's own pages. The accessor checks below are necessary but not
-// sufficient — they stay green whether or not a copy was staged, which the
-// previous version of this test conceded in its own comment. See
-// revealHeapLimitNumerator for the measured endpoints.
+// TestWithBytes_RevealedBufferIsNotAHeapCopy checks fn receives the protected buffer, not a heap copy, by heap growth.
 func TestWithBytes_RevealedBufferIsNotAHeapCopy(t *testing.T) {
 	const size = 1 << 20 // Large enough that one plaintext copy dwarfs constant overhead.
 	big, err := NewSecureStringFromBytes(bytes.Repeat([]byte("k"), size))
@@ -455,17 +432,7 @@ func TestIsEmpty_ReportsThePresenceOfAValue(t *testing.T) {
 	}
 }
 
-// TestEqualsAndIsEmpty_DoNotStagePlaintextOnTheGoHeap measures the property
-// that actually changes if either is written as `Plaintext() == want`: the
-// whole secret lands on the Go heap as an immutable string that can never be
-// wiped. The behavioural tests above stay green either way — this is the one
-// that does not.
-//
-// want is deliberately SHORT while the secret is large, so the two
-// implementations separate: comparing inside the borrow window charges one
-// plaintext (the enclave's own Open) plus a few bytes, while revealing to a
-// string charges a second. The bound is revealHeapLimit, whose endpoints were
-// measured on this same stack for WithBytes.
+// TestEqualsAndIsEmpty_DoNotStagePlaintextOnTheGoHeap checks neither reveals the secret as a string, by heap growth with a short want.
 func TestEqualsAndIsEmpty_DoNotStagePlaintextOnTheGoHeap(t *testing.T) {
 	const size = 1 << 20 // Large enough that one plaintext copy dwarfs constant overhead.
 	big, err := NewSecureStringFromBytes(bytes.Repeat([]byte("k"), size))
@@ -479,8 +446,7 @@ func TestEqualsAndIsEmpty_DoNotStagePlaintextOnTheGoHeap(t *testing.T) {
 		name string
 		fn   func() bool
 	}{
-		// Each returns whether the call gave the RIGHT answer, so a
-		// measurement can never be taken from a call that misbehaved.
+		// Each returns whether the call gave the right answer.
 		{"Equals", func() bool { return !big.Equals("not-the-secret") }},
 		{"IsEmpty", func() bool { return !big.IsEmpty() }},
 	} {

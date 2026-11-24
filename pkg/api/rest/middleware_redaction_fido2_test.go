@@ -14,14 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newFIDO2LoggingHarness registers the REAL FIDO2 route table behind the REAL
-// loggingMiddleware and captures what the middleware writes.
-//
-// The point of going through RegisterFIDO2Routes rather than hand-written
-// paths is that credentialPathPrefixes is a list of string literals: it can
-// silently stop matching if a route is renamed. Driving the registered mux and
-// requiring a non-404 proves the prefix and the route still describe the same
-// endpoint.
+// newFIDO2LoggingHarness drives the real FIDO2 routes through loggingMiddleware, so a renamed route breaks the redaction test.
 func newFIDO2LoggingHarness(t *testing.T) (http.Handler, *bytes.Buffer) {
 	t.Helper()
 

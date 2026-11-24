@@ -32,9 +32,7 @@ type fakeDirectoryService struct {
 	// exit. Tests now register release via t.Cleanup AND may call it inline.
 	releaseOnce sync.Once
 
-	// subscribes counts handler entries, so a test can wait for a RECONNECT
-	// rather than infer one. Without it, a test that cancels the context
-	// cannot tell the production abort path from its own cancel.
+	// subscribes counts handler entries, so a test can wait for a reconnect.
 	subscribes atomic.Int64
 
 	// gateAfter, when > 0, parks the handler after sending that many frames
@@ -58,13 +56,7 @@ func newFakeDirectoryService(t *testing.T, frames []*dirpb.DirectoryChangeEvent)
 		released: make(chan struct{}),
 		gotToken: make(chan []byte, 1),
 	}
-	// Registered HERE, not at each call site, so no test can forget it. That
-	// is not hypothetical: waitFor's t.Fatalf skips whatever close() the test
-	// was going to do at the end, the handler stays parked on <-released, and
-	// a deferred gs.Stop() then waits on a handler that can never return — so
-	// the very regression the timeout exists to REPORT hangs the process
-	// instead. Registering it in one test and not its siblings is how that
-	// shipped.
+	// Registered here so a failed wait cannot leave a handler parked and hang gs.Stop().
 	t.Cleanup(f.release)
 	return f
 }
@@ -118,24 +110,7 @@ func newClient(t *testing.T, svc dirpb.DirectoryServiceServer) (dirpb.DirectoryS
 	return dirpb.NewDirectoryServiceClient(conn), gs
 }
 
-// waitFor blocks until pred returns true, and FAILS the test if it never does.
-//
-// Every wait in this file used to fall THROUGH on timeout into the assertions,
-// so a wait that never succeeded produced whatever confusing message the
-// assertion happened to have — "token not persisted: []" for a token that
-// simply had not been written yet. Failing here instead names the condition
-// that was actually waited on.
-//
-// The predicate must be the state the assertions READ. Waiting on one thing
-// and asserting another is what made these flaky: the wait observed the
-// directory reflecting frame N-1 while the claim was about the token store
-// written at frame N, with nothing ordering them (#72).
-//
-// A poll is the right instrument here, not a timing bet: SubscribeAndApply
-// signals nothing when it has applied an event, and a signal from the fake
-// service would only prove frames were SENT, not applied — a hook at the start
-// of the work rather than at its end. What makes this not a sleep is that the
-// predicate is the asserted state and a timeout is a failure, not a shrug.
+// waitFor polls pred, the state the assertions read, and fails the test on timeout.
 func waitFor(t *testing.T, what string, pred func() bool) {
 	t.Helper()
 	const (
@@ -205,9 +180,7 @@ func TestSubscribeAndApply_AppliesSnapshotAndLiveEvents(t *testing.T) {
 		})
 	}()
 
-	// Wait for BOTH the entry frames and the resume-token frame. The token is
-	// the LAST frame the fake sends, so waiting only for the directory breaks
-	// one frame early and the token assertion below then races it (#72).
+	// Wait for the entry frames and the resume token, the last frame the fake sends.
 	waitFor(t, "the entry frames to be applied", func() bool {
 		if dir.Count() != 1 {
 			return false
@@ -248,11 +221,7 @@ func TestSubscribeAndApply_AppliesSnapshotAndLiveEvents(t *testing.T) {
 }
 
 func TestSubscribeAndApply_TokenOnlyFirstFrame_DoesNotDeadlock(t *testing.T) {
-	// Server's first frame is a token-only frame (Entry=nil, Kind=UNSPECIFIED).
-	// Previously this never tripped the `cleared` flag and subsequent
-	// real events were also gated out. The fix Replaces unconditionally
-	// at subscribe start, so a token-only first frame is fine and the
-	// following Upsert flows through.
+	// The first frame is token-only; the directory is replaced at subscribe start, so the following Upsert applies.
 	frames := []*dirpb.DirectoryChangeEvent{
 		{ResumeToken: []byte{0, 0, 0, 0, 0, 0, 0, 1}},
 		{Kind: dirpb.DirectoryChangeEvent_KIND_UPSERT,
@@ -320,11 +289,7 @@ func TestSubscribeAndApply_TokenSavePersistentFailures_AbortStream(t *testing.T)
 	waitFor(t, "the token store to be retried at least 5 times", func() bool {
 		return failing.Calls() >= 5
 	})
-	// The retries alone do not prove the production abort fired: the loop
-	// could read for ever and this test would still finish, because IT
-	// cancels the context below. The abort tears the stream down and
-	// reconnects, so a SECOND Subscribe is the observable that separates the
-	// two.
+	// A second Subscribe proves the abort reconnected, as distinct from the test's own cancel.
 	waitFor(t, "the aborted stream to reconnect", func() bool {
 		return svc.subscribes.Load() >= 2
 	})
@@ -369,13 +334,7 @@ func TestSubscribeAndApply_DeleteByACIUsesUUIDIndex(t *testing.T) {
 		{Kind: dirpb.DirectoryChangeEvent_KIND_UPSERT, Entry: &dirpb.DirectoryEntry{E164: 500, Aci: aci[:]}},
 		// Delete with no E164 but same ACI → resolved via index.
 		{Kind: dirpb.DirectoryChangeEvent_KIND_DELETE, Entry: &dirpb.DirectoryEntry{Aci: aci[:]}},
-		// A sentinel AFTER the delete, so the test has something to wait for
-		// that proves the stream got past it. Without this there is nothing
-		// observable: "500 is absent" is true before the upsert as well as
-		// after the delete, which is what made the original wait vacuous, and
-		// "500 is present" is a state the very next frame destroys, so waiting
-		// for THAT times out instead. The completion marker has to sit where
-		// the claim ends.
+		// A sentinel after the delete gives the test a state that proves the stream passed it.
 		{Kind: dirpb.DirectoryChangeEvent_KIND_UPSERT, Entry: &dirpb.DirectoryEntry{E164: 999}},
 	}
 	svc := newFakeDirectoryService(t, frames)
@@ -399,21 +358,7 @@ func TestSubscribeAndApply_DeleteByACIUsesUUIDIndex(t *testing.T) {
 	})
 	close(svc.gate)
 
-	// Wait for the sentinel that follows the delete, which is the only state
-	// here that proves the stream advanced past it.
-	//
-	// Waiting for "Count() == 0" was vacuous: a fresh directory is ALREADY
-	// empty, so the loop broke on its first iteration before any frame was
-	// applied and the assertion below was trivially true. Measured on the
-	// original: with applyEvent replaced by a no-op — nothing applied at all,
-	// UUID index never populated — this test passed 5/5 in 0.004s while its
-	// siblings failed. It could not detect the absence of the feature it is
-	// named for.
-	//
-	// Waiting for "500 is present" without gating the stream does not work
-	// either, and that is worth recording: the delete is the very next frame,
-	// so the upsert is a state the stream races past. Measured at 20/20
-	// timeouts. The gate above is what makes it observable.
+	// Wait for the sentinel that follows the delete.
 	waitFor(t, "the sentinel following the ACI-resolved delete", func() bool {
 		_, ok := dir.Lookup(999)
 		return ok
@@ -422,8 +367,7 @@ func TestSubscribeAndApply_DeleteByACIUsesUUIDIndex(t *testing.T) {
 	if _, ok := dir.Lookup(500); ok {
 		t.Errorf("E164=500 should be deleted via ACI lookup")
 	}
-	// Only the sentinel remains: 500 was added and then removed. Without this
-	// the test cannot tell a resolved delete from an upsert that never landed.
+	// Only the sentinel remains: 500 was added and then removed.
 	if got := dir.Count(); got != 1 {
 		t.Errorf("directory holds %d entries, want only the sentinel", got)
 	}

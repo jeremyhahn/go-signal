@@ -1,7 +1,6 @@
 //go:build smtp
 
-// Package smtp provides an SMTP-based verification transport that delivers
-// verification codes via email-to-SMS carrier gateways.
+// Package smtp sends verification codes through email-to-SMS carrier gateways.
 package smtp
 
 // CarrierGateways maps carrier names to SMS email gateway domains.

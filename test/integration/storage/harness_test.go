@@ -1,16 +1,4 @@
-// Package storage_test provides cross-backend contract tests for every domain
-// storage interface in go-signal. The suite verifies that memory, qrdb, and
-// postgres implementations satisfy identical behavioral contracts so semantic
-// drift between backends is caught before it reaches production.
-//
-// Run without postgres (memory + qrdb only):
-//
-//	go test ./test/integration/storage/...
-//
-// Run with all three backends (postgres must be running):
-//
-//	TEST_POSTGRES_URL='postgres://signal:signal@127.0.0.1:55432/signal?sslmode=disable' \
-//	  go test -count=1 -tags fido2 ./test/integration/storage/...
+// Package storage_test runs the same contract tests against the memory, qrdb and postgres stores; postgres needs TEST_POSTGRES_URL.
 package storage_test
 
 import (

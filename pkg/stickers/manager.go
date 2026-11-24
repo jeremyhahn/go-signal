@@ -25,10 +25,7 @@ const (
 	maxStickerCount = 201
 )
 
-// S3Config bundles the S3 credentials + bucket needed to sign sticker
-// pack upload forms. When unset, the manager falls back to the legacy
-// embedded-CDN URL form (no signed POST policy) so dev deployments keep
-// working without S3 credentials.
+// S3Config holds the S3 credentials and bucket for signed pack upload forms; unset uses the embedded-CDN form.
 type S3Config struct {
 	Region      string
 	Bucket      string
@@ -43,10 +40,7 @@ func (c S3Config) configured() bool {
 	return c.Region != "" && c.Bucket != "" && c.AccessKeyID != "" && !c.SecretAccessKey.IsDestroyed()
 }
 
-// StickersManager issues sticker-pack upload forms. When wired with S3
-// credentials it produces real signed POST policies clients can upload
-// directly to S3; otherwise it produces a legacy URL-only form pointing
-// at the embedded CDN.
+// StickersManager issues sticker-pack upload forms: signed S3 POST policies, or embedded-CDN URLs without S3.
 type StickersManager struct {
 	logger    *slog.Logger
 	store     PackStore
@@ -105,13 +99,7 @@ func (m *StickersManager) SetClock(now func() time.Time) {
 	}
 }
 
-// GetUploadForm returns a pack ID + per-sticker S3 POST form entries for
-// stickerCount stickers. Records the issuance in the PackStore against
-// accountUUID so the server can attribute uploads later. Mirrors Java's
-// StickerController.getStickersForm.
-//
-// stickerCount must be in [1, 201]. accountUUID must be non-empty; the
-// REST handler enforces authentication before calling.
+// GetUploadForm returns a pack ID and stickerCount (1 to 201) form entries and records the issuance for accountUUID.
 func (m *StickersManager) GetUploadForm(ctx context.Context, accountUUID string, stickerCount int) (*StickerPackFormUpload, error) {
 	if stickerCount < minStickerCount || stickerCount > maxStickerCount {
 		return nil, &InvalidStickerCountError{Count: stickerCount}
@@ -167,10 +155,7 @@ func (m *StickersManager) GetPack(ctx context.Context, packID string) (*PackMeta
 	return m.store.Get(ctx, packID)
 }
 
-// makeField builds either an S3-signed POST form entry (when S3 is
-// configured) or a fall-back URL-only entry (otherwise). id=-1 is the
-// magic value Java uses for the manifest slot; the JSON field is
-// serialized as-is so clients see the same number.
+// makeField builds a signed S3 entry or a URL-only entry; id -1 is the manifest slot.
 func (m *StickersManager) makeField(now time.Time, id int, objectKey string, maxBytes int64) (StickerFormField, error) {
 	if m.generator == nil || m.signer == nil {
 		// Embedded-CDN dev path — no S3 signature; client uploads to

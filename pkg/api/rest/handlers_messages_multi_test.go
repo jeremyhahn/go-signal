@@ -1,17 +1,6 @@
 package rest
 
-// Regression tests for security fixes on the multi-recipient message endpoint.
-//
-// HIGH-4: Nil pointer dereference on sealed-sender multi-recipient messages.
-//   Before the fix, handleSendMultiRecipientMessage would access acct.UUID
-//   (source UUID) even when the sender was unidentified (acct == nil), causing
-//   a nil pointer dereference panic. The fix conditionally clears sourceUUID
-//   when isUnidentifiedSender is true.
-//
-// MEDIUM-4: Missing UUID validation and spam check on multi-recipient endpoint.
-//   The endpoint now validates each recipient UUID with uuid.Parse before
-//   processing, returning 400 for malformed UUIDs. Authenticated senders are
-//   also passed through the spam checker; blocked senders receive 403.
+// Multi-recipient endpoint: sealed sender must not panic, recipient UUIDs are validated, authenticated senders are spam-checked.
 
 import (
 	"context"
@@ -25,14 +14,9 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/accounts"
 )
 
-// --------------------------------------------------------------------------
-// HIGH-4: Sealed-sender nil-pointer regression
-// --------------------------------------------------------------------------
+// Sealed sender.
 
-// TestMultiRecipient_SealedSender_NoPanic verifies that sending a
-// multi-recipient message as an unidentified (sealed) sender does not panic.
-// Before the HIGH-4 fix, the handler dereferenced acct.UUID unconditionally,
-// causing a nil pointer dereference when acct was nil.
+// TestMultiRecipient_SealedSender_NoPanic sends a multi-recipient message as a sealed sender.
 func TestMultiRecipient_SealedSender_NoPanic(t *testing.T) {
 	s, destAcct := newTestServerWithAccount(t)
 
@@ -65,11 +49,7 @@ func TestMultiRecipient_SealedSender_NoPanic(t *testing.T) {
 	}
 }
 
-// TestMultiRecipient_AuthenticatedSender_SourceUUIDPresent verifies that when
-// an authenticated sender sends a multi-recipient message, the SourceUUID in
-// the envelope reflects the sender's identity. This also confirms that the
-// HIGH-4 fix (nil guard on acct) does not accidentally clear the source UUID
-// for authenticated senders.
+// TestMultiRecipient_AuthenticatedSender_SourceUUIDPresent checks the envelope carries an authenticated sender's UUID.
 func TestMultiRecipient_AuthenticatedSender_SourceUUIDPresent(t *testing.T) {
 	s, destAcct := newTestServerWithAccount(t)
 
@@ -105,8 +85,7 @@ func TestMultiRecipient_AuthenticatedSender_SourceUUIDPresent(t *testing.T) {
 	if len(stored) == 0 {
 		t.Fatal("expected at least one stored envelope")
 	}
-	// For authenticated senders, SourceUUID is set to the sender's UUID.
-	// (The HIGH-4 fix clears it only when isUnidentifiedSender is true.)
+	// Authenticated senders keep their SourceUUID.
 	for _, env := range stored {
 		if env.SourceUUID != testAccountUUID {
 			t.Errorf("envelope SourceUUID = %q, want %q for authenticated sender", env.SourceUUID, testAccountUUID)
@@ -114,9 +93,7 @@ func TestMultiRecipient_AuthenticatedSender_SourceUUIDPresent(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
-// MEDIUM-4: Recipient UUID validation
-// --------------------------------------------------------------------------
+// Recipient UUID validation.
 
 // TestMultiRecipient_InvalidRecipientUUID verifies that a malformed recipient
 // UUID is rejected with 400 Bad Request before any storage operations are
@@ -165,14 +142,9 @@ func TestMultiRecipient_InvalidRecipientUUID(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
-// MEDIUM-4: Spam check on multi-recipient endpoint
-// --------------------------------------------------------------------------
+// Spam check.
 
-// TestMultiRecipient_SpamBlocked verifies that when the spam checker returns
-// SpamCheckBlock, the endpoint returns 403 Forbidden and no messages are
-// stored. This tests the MEDIUM-4 fix that added spam checking to the multi-
-// recipient handler for authenticated senders.
+// TestMultiRecipient_SpamBlocked expects 403 and nothing stored when the spam checker blocks.
 func TestMultiRecipient_SpamBlocked(t *testing.T) {
 	// blockingChecker is already declared in handlers_messages_test.go.
 	s := newTestServerWithSpamChecker(t, &blockingChecker{})

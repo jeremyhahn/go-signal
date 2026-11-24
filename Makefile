@@ -36,98 +36,26 @@ GOFMT         := gofmt
 GOLINT        := golangci-lint
 TOOLS_BIN     := bin/tools
 GOSEC_TOOL    := $(TOOLS_BIN)/gosec
-# A caller-supplied GOSEC (command line or environment) is run as-is and the
-# tools/gosec build is skipped; the default is the binary that build produces.
+# A caller-supplied GOSEC is run as-is and the tools/gosec build is skipped.
 GOSEC         ?= $(GOSEC_TOOL)
 GOVULNCHECK   := govulncheck
 ACTIONLINT    := actionlint
 TRIVY         := trivy
 
-# The scanners are pinned for the same reason golangci-lint is: unpinned, they
-# decide whether the security gate is red based on what upstream released that
-# morning. A new rule turns the gate red on a diff that touched nothing, and —
-# worse, because nothing announces it — a rule that stops firing silently
-# narrows the gate.
-#
-# Baseline: both versions verified green over the FULL build-tagged tree
-# (446 files, 0 gosec issues; govulncheck 0 affecting vulnerabilities) as of
-# 2026-08-22. Bumping either is a normal reviewed change with a visible diff,
-# which is the point — it stops being something that happens to everyone at
-# once.
-#
-# Pinning the govulncheck BINARY does not freeze its findings, and must not:
-# the vulnerability database is fetched at run time, so a newly published CVE
-# against a dependency we do call still turns this gate red. That variability
-# is the gate working.
-#
-# There is deliberately no local version check for gosec. A gosec built by
-# `go install ...@vX.Y.Z` reports `Version: dev` — the real version is injected
-# by ldflags in the release build only — so the binary cannot be asked what it
-# is, and a check would warn on every correctly-pinned machine until people
-# learned to ignore it. Ask the BINARY instead:
-# `go version -m $$(command -v gosec)` prints the module version. That is worth
-# doing on any machine with a shared GOBIN, because `make gosec` resolves gosec
-# from PATH and will happily run whatever is first.
-#
-# The gosec pin matches the ci-runner image, which is why ci.yml no longer installs
-# it on Gitea (devops.md §9 wants the reason at the pin, and "it is the version
-# the runner actually has" is the strongest one available).
-#
-# This pin was v2.28.0 until #68. The divergence was deliberate, not drift:
-# v2.29.0 adds G703 and reported two findings on
-# pkg/api/rest/handlers_static.go that v2.28.0 did not — measured on main at
-# 64dfd95, same tree, both tag sets, v2.28.0 rc=0 / v2.29.0 rc=2 — and they
-# were real, not a new rule misfiring on old code. A symlink inside the static
-# resources directory was served on an unauthenticated route. #68 fixed that;
-# re-measured on main at d041cc45, both versions now report 0 issues on both
-# tag sets, so the bump lands green rather than reddening the trunk.
-#
-# The ordering is the point and is worth keeping: the deliberate bump surfaced
-# a live defect, where drifting to the same version would have surfaced it as a
-# mystery red on whichever innocent PR ran next.
-#
-# v2.29.0 built against x/tools v0.51.0 (#93, Go 1.27.2 adoption): v2.29.0 is
-# built against x/tools v0.49.0, which cannot read Go 1.27.2 export data
-# ("export data version 5 is greater than maximum supported version 4"), so
-# every package fails to load. The pin above stays v2.29.0 so it keeps matching
-# the ci-runner image's baked binary, but `make gosec` does not run that binary:
-# it builds tools/gosec, a tool module requiring gosec v2.29.0 and x/tools
-# v0.51.0, into $(TOOLS_BIN) and runs the result, failing closed if the build
-# fails. Drop the tool module once a gosec release ships x/tools >= v0.51.0.
-#
-# golangci-lint's pin lives HERE now, not in ci.yml, for the same reason the
-# scanners' do: it was stated in three places (ci.yml, .devcontainer/Dockerfile,
-# and the ci-runner image) and the Dockerfile had drifted to an abandoned
-# v2.7.2 while CI ran v2.12.2 — two linters disagreeing, and the undocumented
-# one is the one that gets believed when it happens to be quieter (#71).
-#
-# v2.13.2 (#86): the ci-runner image now bakes v2.13.2, so the v2.12.2 pin
-# failed the lint job's version check on every run. v2.13.2 lints this module
-# clean under both tag sets (0 issues, measured 2026-10-05); the v2.13.0
-# nilness panic on sentry-go that held the pin at v2.12.2 does not reproduce.
-#
-# v2.14.0 (#88): the owner's 2026-10-07 ruling is that every analysis tool
-# tracks its upstream latest, and the ci-runner image moves in step.
+# Scanner and linter pins; bump each by a reviewed change. govulncheck still fetches its database at run time.
+# `make gosec` builds tools/gosec (gosec with x/tools new enough for this Go release) and runs that; check a PATH gosec with `go version -m`.
 GOLANGCI_LINT_VERSION := v2.14.0
 
 GOSEC_VERSION       := v2.29.0
 
-# Matches the ci-runner image exactly, so ci.yml no longer installs it.
+# Matches the ci-runner image.
 GOVULNCHECK_VERSION := v1.8.0
 
 # actionlint's pin is the software-factory worker image's, the latest release
-# (devops.md §9). CI installs exactly this when the runner does not already
-# carry it, and checks the binary that runs against it either way (#92).
+# CI installs exactly this when the runner lacks it and checks the binary either way.
 ACTIONLINT_VERSION  := v1.7.12
 
-# gosec exclusions (documented):
-#   G103: unsafe calls (test reflect/unsafe access for unexported fields)
-#   G104: unhandled errors (false positive on hash.Write)
-#   G115: integer overflow conversions (protocol-spec bounded IDs)
-#   G304: file path via variable (config paths constructed internally)
-#   G118: cancel-func ownership transferred to caller (Go idiom: helpers
-#         that build a (ctx, cancel) pair return both; the caller defers
-#         cancel — gosec doesn't track interprocedural ownership)
+# gosec exclusions: G103 test unsafe access, G104 hash.Write, G115 protocol-bounded IDs, G304 internal config paths, G118 cancel returned to the caller.
 GOSEC_EXCLUDE := G103,G104,G115,G304,G118
 
 # Coverage
@@ -204,20 +132,12 @@ ifeq ($(WITH_FTS),1)
 endif
 BUILD_TAGS_FLAG := $(if $(strip $(BUILD_TAGS)),-tags "$(strip $(BUILD_TAGS))")
 
-# gosec wants a COMMA-separated tag list, unlike the go tool and
-# golangci-lint. A space-separated one is not rejected — it is read as a single
-# tag nobody declared, so it matches nothing and the run looks normal.
-# Measured: the space form scanned the same 414 files as an untagged run while
-# the comma form scanned 445.
+# gosec needs a comma-separated tag list; a space-separated one silently matches nothing.
 comma      := ,
 space      := $(subst ,, )
 GOSEC_TAGS := $(subst $(space),$(comma),$(strip $(BUILD_TAGS)))
 
-# The one place the default tag set is defined. CI jobs that cannot call a make
-# target directly (the FIPS job builds and tests ./... under GOFIPS140, which no
-# build target covers) read the set from here instead of restating it, so the
-# flags cannot drift out of sync with the feature switches above. A job that
-# omitted them built without codec_json and failed on every dao-backed package.
+# The default tag set, defined once; CI jobs that cannot call a make target read it from here.
 print-build-tags: ## Print the default build tag set (for CI and tooling)
 	@echo '$(strip $(BUILD_TAGS))'
 
@@ -346,19 +266,7 @@ coverage-desktop: ## Coverage report for desktop packages
 	$(GO) test -tags $(BUILD_TAGS_DESKTOP) -coverprofile=$(COVER_DIR)/desktop.out ./pkg/desktop/...
 	$(GO) tool cover -func=$(COVER_DIR)/desktop.out
 
-# protoc and its plugins are pinned because an unpinned generator does not
-# fail — it rewrites EVERY generated file. protoc stamps its own version into
-# each header, so a mismatched local protoc turns `make proto` into a 34-file
-# diff with the one real change buried in it. Measured on PR #29, where staging
-# the package after a regeneration swept 39 unrelated files into a commit about
-# something else, and the workaround was to invoke protoc for a single .proto
-# by hand — which the Makefile should not require anyone to know.
-#
-# The two spellings of the protoc version are not a typo. `protoc --version`
-# prints "libprotoc 25.1" while the code it generates stamps "v4.25.1":
-# protobuf renumbered its releases after 3.20 and the generator kept the 4.x
-# form. PROTOC_VERSION is the string the binary reports, because that is what
-# the check below can compare.
+# protoc and plugins are pinned: a different protoc rewrites every generated header. PROTOC_VERSION is what `protoc --version` prints.
 PROTOC_VERSION             := 25.1
 PROTOC_GEN_GO_VERSION      := v1.36.12
 PROTOC_GEN_GO_GRPC_VERSION := 1.6.1
@@ -426,12 +334,7 @@ GOPATH_BIN := $(shell go env GOPATH)/bin
 
 .PHONY: test integration-test test-tls
 
-# Test TLS material: a throwaway CA and the server certificate it issued, for
-# the integration stack (Dockerfile.dev serves it; the devcontainer and
-# signal-cli images trust the CA through compose's `tls` build context). None of
-# it is committed. It is generated here, ECDSA P-256 and short-lived, and
-# regenerated when missing or within TEST_TLS_MIN_SECONDS of expiry, so a stale
-# checkout never hands the images a certificate that has run out.
+# Test TLS material (throwaway CA and server certificate), generated here and regenerated when missing or near expiry; never committed.
 TEST_TLS_DIR         := test/tls
 TEST_TLS_MIN_SECONDS := 86400
 
@@ -445,19 +348,11 @@ test-tls: ## Generate the test CA and server certificate under test/tls (not com
 		bash $(TEST_TLS_DIR)/generate-certs.sh $(TEST_TLS_DIR); \
 	fi
 
-# ./sdk/... is in scope deliberately. It was omitted until 2026-08-14, which
-# meant the client SDK — a shipped surface — was never exercised by `make test`
-# at all, and three of its permission-bit fault-injection tests sat undetected
-# because nothing ran them. A suite that measures less than it appears to is
-# the same defect class as a gate that passes vacuously.
+# ./sdk/... is part of the unit suite.
 test: ## Run unit tests with coverage
 	@echo "==> Running unit tests (tags: $(or $(strip $(BUILD_TAGS)),none))..."
 	@mkdir -p $(COVER_DIR)
-# pipefail, or the tee at the end of the pipeline decides the exit status and
-# this target can never fail — see the note on integration-test below. The Unit
-# Tests CI job calls this, so without it that gate was passing by construction
-# rather than on the suite's merits. (Checked: run 312's log carries zero
-# failures, so nothing was actually being hidden — the hole was latent.)
+# pipefail, so the tee does not decide the exit status.
 	bash -o pipefail -c '$(GOTEST) $(BUILD_TAGS_FLAG) -coverprofile=$(COVER_DIR)/coverage.out \
 		-covermode=atomic \
 		./pkg/... ./cmd/... ./sdk/... ./test/build/... 2>&1 | tee $(BUILD_DIR)/test.log'
@@ -479,12 +374,7 @@ else
 	@echo "==> Starting devcontainer infrastructure..."
 	@mkdir -p $(BUILD_DIR)
 	docker compose -f .devcontainer/docker-compose.yml build signal-server signal-cli integration
-# `set -o pipefail` is what makes this target able to fail at all. A make recipe
-# runs under /bin/sh, where a pipeline exits with the status of its LAST command
-# — tee, which always succeeds — so `docker compose run` could report "dependency
-# failed to start: container devcontainer-signal-server-1 exited (1)" and this
-# target still returned 0. It did exactly that until 2026-08-14. bash is invoked
-# explicitly because /bin/sh is dash here and has no pipefail.
+# bash with pipefail: under /bin/sh the tee would decide the exit status.
 	bash -o pipefail -c 'docker compose -f .devcontainer/docker-compose.yml run --rm integration 2>&1 | tee $(BUILD_DIR)/integration-test.log'
 	@echo "==> Integration tests complete."
 endif
@@ -575,13 +465,7 @@ test-store:
 test-storage:
 	$(GOTEST) $(PKG_STORAGE)
 
-# test-storage-postgres runs the postgres-backed store tests against a live
-# Postgres instance pointed at by TEST_POSTGRES_URL. Tests skip silently when
-# the env var is unset, so this target is safe to chain into `make test`
-# without pulling Postgres into the unit-test path.
-#
-# In the project devcontainer:
-#   TEST_POSTGRES_URL=postgres://signal:signal@postgres:5432/signal?sslmode=disable
+# Postgres store tests against TEST_POSTGRES_URL (in the devcontainer: postgres://signal:signal@postgres:5432/signal?sslmode=disable); they skip when it is unset.
 test-storage-postgres:
 	$(GOTEST) -tags fido2 ./pkg/storage/postgres/...
 
@@ -617,12 +501,7 @@ test-securemem:
 # Coverage
 # ==============================================================================
 
-# Packages excluded from coverage reporting. Three categories, none of which
-# carry hand-written business logic that unit tests should measure:
-#   - generated protobuf packages (genproto/*, *pb, proto) — no logic to test
-#   - main/entry-point binaries (cmd/*) — exercised via integration tests
-#   - integration-only stores (storage/postgres) — its tests require a live DB,
-#     so it is measured by `make integration-test`, not the unit coverage gate
+# Excluded from coverage: generated protobuf packages, cmd/* entry points, and storage/postgres (measured by integration-test).
 COVERAGE_EXCLUDE_PATTERN := /test/|/cmd/|/genproto/|/internal/frontend|/securestorage/storagepb|/websocket/proto|/storage/postgres|/wsproto
 
 # All testable packages (excluding test directories)
@@ -657,28 +536,7 @@ coverage: ## Generate unit test coverage report with minimum gate
 
 .PHONY: coverage-gate
 
-# coverage-gate enforces COVER_MIN against an existing profile. It is a
-# separate target so the gate can be exercised against a crafted profile
-# without re-running the whole suite — the reason this is worth doing is that
-# the gate used to fail OPEN: `bc` given an empty percentage emitted a syntax
-# error, `|| echo 0` substituted 0, and `[ 0 -eq 1 ]` passed. A run that could
-# not measure coverage at all reported success.
-#
-# awk replaces bc: it needs no external dependency and cannot be handed an
-# empty left operand, because both operands are validated before any
-# comparison happens.
-#
-# Both, not just the measured one. COVER_MIN is command-line overridable, and
-# awk's numeric coercion turns anything unparseable into 0 — which passes
-# everything, the same fail-open from the other side. "90junk" would silently
-# mean 90.
-#
-# Validation is an anchored grammar, not a character set. A character-class
-# check accepts a lone "." — every character is legal — which coerces to 0 and
-# waves every run through. Requiring at least one digit either side of the
-# optional point is what closes that.
-#
-# COVERAGE_PROFILE is overridable so a test can point the gate at a fixture.
+# Enforces COVER_MIN against COVERAGE_PROFILE; both numbers are validated by an anchored grammar so an unparseable value fails instead of passing.
 COVERAGE_PROFILE ?= $(COVER_DIR)/coverage.out
 
 coverage-gate: ## Enforce COVER_MIN against COVERAGE_PROFILE (fails closed)
@@ -769,27 +627,11 @@ fmt: ## Check gofmt formatting
 vet: ## Run go vet, under the repo's build tags and again with the integration tag
 	@echo "==> Running go vet (tags: $(or $(strip $(BUILD_TAGS)),none))..."
 	$(GOVET) $(BUILD_TAGS_FLAG) ./...
-# Build-tagged files are invisible to the pass above, so "vet clean" could be
-# true and incomplete at the same time: a file behind the `integration` tag
-# once failed to compile while this target reported success. Vetting the tagged
-# tree as well is what closes that hole, and it is the same masked-measurement
-# class as a grep pointed at too narrow a path.
+# Vet the build-tagged tree too, or tagged files are never checked.
 	@echo "==> Running go vet (tags: integration $(strip $(BUILD_TAGS)))..."
 	$(GOVET) -tags "integration $(strip $(BUILD_TAGS))" ./...
 
-# Both gates below take the build tags for the same reason `vet` does. Without
-# them the loader cannot see a file behind //go:build, so eight packages —
-# every pkg/desktop/... package and the whole of pkg/fido2, the WebAuthn
-# implementation — were analysed by neither. Nothing said so: a run over ./...
-# skips them and reports success, and only a run aimed AT one of them says
-# "no go files to analyze".
-#
-# lint runs TWO passes, for the same reason `vet` does. The integration tree —
-# every file under test/integration — sits behind the `integration` tag and so
-# was invisible to the first pass as well. When it was first linted it produced
-# 33 findings, including a HIGH-severity gosec G402 in a file the security gate
-# had never opened either.
-#
+# Both gates take the build tags, and lint runs a second pass with the integration tag.
 # actionlint runs last (devops.md §4, the `make lint` row), so workflow syntax,
 # expressions and runner labels fail here before CI parses them.
 lint: ## Run golangci-lint (repo tags, then the integration tag), then actionlint
@@ -799,11 +641,7 @@ lint: ## Run golangci-lint (repo tags, then the integration tag), then actionlin
 	$(GOLINT) run --timeout 5m --build-tags "integration $(strip $(BUILD_TAGS))" ./...
 	@$(MAKE) --no-print-directory actionlint
 
-# Every workflow under .github/workflows/, with .github/actionlint.yaml when the
-# repo carries one (actionlint finds it itself; every runs-on here is
-# ubuntu-latest, a label it already knows). shellcheck, when on PATH, checks
-# the run: scripts too. A missing actionlint fails the target: a lint gate that
-# skips its own tool passes vacuously.
+# Lints every workflow (with shellcheck on run: scripts when on PATH); a missing actionlint fails the target.
 actionlint: ## Lint the GitHub Actions workflows
 	@command -v $(ACTIONLINT) >/dev/null 2>&1 || { \
 		echo "==> actionlint not installed: go install github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)" >&2; \
@@ -812,28 +650,11 @@ actionlint: ## Lint the GitHub Actions workflows
 	@echo "==> Running actionlint..."
 	$(ACTIONLINT)
 
-# GOSEC_FMT and GOSEC_OUT exist so CI can reuse this exact invocation while
-# still producing SARIF. CI used to restate the flags in YAML, and that is how
-# the scan CI actually runs came to be missing the build tags while `make
-# gosec` had them — the tag set, the exclude list and the target drifted apart
-# with nothing to notice. One command, one definition, is the fix.
-#
-# -stdout keeps findings readable in the job log when writing to a file: the
-# SARIF upload only runs on github.com, so without it a Gitea failure exits 1
-# with the findings buried where nobody can see them (ci-template v1.1).
+# GOSEC_FMT and GOSEC_OUT let CI reuse this invocation for SARIF; -stdout keeps findings in the job log.
 GOSEC_FMT ?= text
 GOSEC_OUT ?=
 
-# Two passes, like `vet` and `lint`. The second is smaller than it looks:
-# gosec skips _test.go files, so the integration tag adds only the handful of
-# non-test helpers in that tree. One of them, test/integration/api/testutil.go,
-# held a HIGH-severity G402 that an untagged gosec never saw — it opens ZERO
-# files under ./test/... — which is precisely why the pass has to exist rather
-# than be assumed unnecessary.
-#
-# The SARIF options go to the FIRST pass only. gosec writes its report by
-# truncating the file, so a second pass would overwrite the first one's
-# findings and the upload would carry half the scan while reporting success.
+# Two passes, the second with the integration tag; SARIF options go to the first pass only, since gosec truncates its report file.
 gosec-tool: ## Build gosec from the tools/gosec module (x/tools that reads Go 1.27 export data)
 ifeq ($(origin GOSEC),file)
 	@echo "==> Building gosec from tools/gosec..."
@@ -857,12 +678,7 @@ modverify: ## Verify module integrity against go.sum
 	@echo "==> Verifying module integrity..."
 	$(GO) mod verify
 
-# Filesystem CVE/secret scan, gated on CRITICAL/HIGH. test/ is the integration
-# and performance harness; build/, bin/ and data/ are gitignored local
-# artifacts. None of them ship.
-#
-# A missing trivy fails the target. It used to print "skipping" and exit 0,
-# so `make security` passed on any machine without the scanner (#92).
+# Filesystem CVE and secret scan, gated on CRITICAL/HIGH; test/, build/, bin/ and data/ do not ship. A missing trivy fails the target.
 TRIVY_INSTALL_HINT := install trivy: https://trivy.dev/latest/getting-started/installation/
 
 trivy: ## Run trivy filesystem scan (CRITICAL/HIGH gate)
@@ -874,34 +690,7 @@ trivy: ## Run trivy filesystem scan (CRITICAL/HIGH gate)
 	$(TRIVY) fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 \
 		--skip-dirs test,build,bin,data .
 
-# Image scan of the six deploy/ service images — the artifacts
-# deploy/docker-compose.yml and deploy/k8s reference.
-#
-# NOT a prerequisite of `security`, and deliberately so: no Dockerfile in this
-# repository builds today, for two independent pre-existing reasons.
-#
-#   Dockerfile, Dockerfile.dev, Dockerfile.service
-#     still `COPY --from=go-libsignal|go-xkms|go-qrdb|go-quicraft`, build
-#     contexts only .devcontainer/docker-compose.yml supplies, so a plain
-#     `docker build .` fails at the first COPY. Residue of the pre-2026-08
-#     local-replace layout; go.mod itself carries no local-path replaces.
-#     Removing the COPY lines would break the devcontainer compose path, so
-#     the fix belongs with whoever owns that topology.
-#
-#   deploy/Dockerfile.*
-#     build stage is golang:<stable>-alpine with no git, and the first-party
-#     requires resolve from Gitea, so `go mod download` dies with
-#     'exec: "git": executable file not found in $PATH' before it even gets to
-#     needing GOPRIVATE and the insteadOf rewrite the host provides
-#     (conventions/dependency-resolution.md).
-#
-# Chaining a security gate onto a build that fails for an unrelated reason
-# would give this repo a gate nobody can pass. Chain this in — and add the
-# matching CI job — once the Dockerfiles build.
-#
-# --ignore-unfixed: the runtime is gcr.io/distroless/static-debian12, whose
-# package set is upstream's. A CVE with no released fix cannot be actioned by
-# rebuilding; one that HAS a fix means the base is stale and is a real finding.
+# Image scan of the deploy/ service images; not a prerequisite of `security` until the Dockerfiles build. --ignore-unfixed: unfixed base CVEs cannot be actioned.
 DEPLOY_SERVICES := signald cdsi svr2 key-transparency registration-service storage-service
 
 trivy-image: ## Build and scan the deploy/ service images (see Makefile note)
@@ -945,10 +734,7 @@ docker-run-dev:
 	@echo "==> Running development Docker container..."
 	docker run --rm -p 8081:8081 -p 8443:8443 $(DOCKER_IMAGE):$(DOCKER_TAG)-dev
 
-# docker-build-services builds a Docker image for each auxiliary service
-# using the shared parameterized Dockerfile.service (ARG SERVICE selects
-# which ./cmd/<service> entry point to compile). Images run as non-root
-# and ship no secrets or config.
+# docker-build-services builds one non-root image per auxiliary service from Dockerfile.service.
 docker-build-services:
 	@echo "==> Building auxiliary service Docker images..."
 	docker build -f Dockerfile.service --build-arg SERVICE=cdsi              -t $(DOCKER_IMAGE)-cdsi:$(DOCKER_TAG) .
@@ -1007,27 +793,14 @@ test-e2e: ## Run Playwright E2E tests against the Vite dev server
 	cd frontend && npx playwright test 2>&1 | tee ../$(BUILD_DIR)/e2e-test.log
 	@echo "==> E2E tests complete."
 
-# ==============================================================================
-# Documentation
-# ==============================================================================
-#
-# Documentation is a first-class deliverable. Some files are hand-written
-# (ADRs, architecture/*.md, protocol/*.md) and some are generated from source
-# (api/rest.md, api/grpc.md, configuration/reference.md, storage/schema-*.md).
-# `make docs` regenerates generated files. `make docs-check` fails if they're
-# stale. See docs/README.md for the documentation tree layout.
+# Documentation: `make docs` regenerates generated docs; `make docs-check` fails when they are stale (layout in docs/README.md).
 
 .PHONY: docs docs-check docs-rest docs-grpc docs-config docs-storage docs-workers
 
 docs: docs-rest docs-grpc docs-config docs-storage docs-workers
 	@echo "==> Documentation generation complete."
 
-# Placeholder targets — each becomes a real generator as its source data lands:
-#   docs-rest:    Phase 2 — emit api/rest.md from route registry in pkg/api/rest/.
-#   docs-grpc:    Phase 1 — protoc-gen-doc on pkg/api/grpc/proto/*.proto → api/grpc.md.
-#   docs-config:  Phase 1 — reflect over pkg/config structs → configuration/reference.md.
-#   docs-storage: Phase 1 — dump table/keyspace registries → storage/schema-*.md.
-#   docs-workers: Phase 1 — dump worker catalog → workers/catalog.md.
+# Placeholder targets until their generators exist: docs-rest, docs-grpc, docs-config, docs-storage, docs-workers.
 docs-rest:
 	@echo "==> [docs-rest] placeholder; enabled in Phase 2."
 
@@ -1052,17 +825,10 @@ docs-check: docs
 	fi
 	@echo "==> Documentation is current."
 
-# Builds never resolve through a workspace: modules come from Gitea tags
-# (dependency-resolution.md §2). Immunizes against stray go.work files.
+# Builds never resolve through a workspace: modules come from tags.
 export GOWORK=off
 
-# ---- dependency-resolution.md targets (2026-08-13 cutover) ----
-# deps-latest runs before compiling in a consumer repo. release-alpha is the
-# handbook template v2 (mk/release-alpha.mk + mk/release-common.mk, copied
-# verbatim): `make release-alpha VERSION=vX.Y.Z-alpha`. This repo has no
-# nested modules, so LOCKSTEP_MODULES stays empty.
-# deps-latest picks the highest tag INCLUDING -alpha prereleases — bare
-# 'go get @latest' ignores prereleases and would downgrade to legacy v0.0.0.
+# deps-latest runs before compiling; release-alpha: `make release-alpha VERSION=vX.Y.Z-alpha`. deps-latest includes -alpha prereleases, which `go get @latest` ignores.
 
 .PHONY: deps-latest
 

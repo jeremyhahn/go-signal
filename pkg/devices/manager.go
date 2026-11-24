@@ -59,10 +59,7 @@ func (m *DevicesManager) CreateProvisioningCode(ctx context.Context, accountUUID
 	return &ProvisioningCode{VerificationCode: code}, nil
 }
 
-// LinkDeviceForAccount links a device only when the provisioning code was
-// issued for accountUUID. It prevents a confused-deputy where an authenticated
-// caller links a device onto an account other than their own by presenting a
-// provisioning code that belongs to a different account.
+// LinkDeviceForAccount links a device only when the provisioning code was issued for accountUUID.
 func (m *DevicesManager) LinkDeviceForAccount(ctx context.Context, accountUUID, code string, req *LinkDeviceRequest) (*LinkDeviceResponse, error) {
 	session, err := m.store.GetSession(ctx, code)
 	if err != nil {
@@ -176,10 +173,7 @@ func (m *DevicesManager) SetCapabilities(ctx context.Context, accountUUID string
 	return nil
 }
 
-// storeDevicePreKeys stores the signed and PQ last-resort pre-keys for a newly
-// linked device in BOTH the ACI and PNI identity namespaces. Persisting only
-// the ACI signed key (as before) left newly linked devices unable to establish
-// PNI-namespace or post-quantum sessions.
+// storeDevicePreKeys stores a new device's signed and PQ last-resort pre-keys in both the ACI and PNI namespaces.
 func (m *DevicesManager) storeDevicePreKeys(ctx context.Context, acct *accounts.Account, deviceID uint64, req *LinkDeviceRequest) error {
 	// --- ACI namespace ---
 	aciSigned, err := decodeSignedPreKeyForStore(&req.AciSignedPreKey)

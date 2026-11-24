@@ -95,12 +95,7 @@ func runStart(cmd *cobra.Command, _ []string) error {
 	}
 }
 
-// buildSessionStore selects the verification.VerificationSessionStore
-// implementation based on cfg.Backend. "qrdb" wires a qrdb-backed store
-// behind an in-process FakeKVStore (same pattern used by signald for
-// the qrdb backend before a live qrdb transport is provisioned).
-// "postgres" opens a Postgres pool and runs migrations. Any other value
-// defaults to MemoryVerificationSessionStore.
+// buildSessionStore selects the verification session store by cfg.Backend: qrdb, postgres, or memory by default.
 func buildSessionStore(ctx context.Context, cfg config.StorageConfig, logger *slog.Logger) (verification.VerificationSessionStore, error) {
 	switch cfg.Backend {
 	case "qrdb":
@@ -132,8 +127,7 @@ func buildSessionStore(ctx context.Context, cfg config.StorageConfig, logger *sl
 	}
 }
 
-// buildTransport constructs the verification transport per the YAML config
-// via the shared factory (stub for development, twilio for production).
+// buildTransport builds the verification transport from config (stub for development, twilio for production).
 func buildTransport(vc config.VerificationConfig, logger *slog.Logger) (verification.VerificationTransport, error) {
 	return factory.Build(vc, logger)
 }

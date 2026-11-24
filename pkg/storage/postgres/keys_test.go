@@ -640,8 +640,7 @@ func TestPreKeys_StoreECPreKeys_InsideTx(t *testing.T) {
 	}
 }
 
-// TestPreKeys_TakeEC_Concurrent verifies that two concurrent TakeEC calls
-// consume distinct keys (the atomic DELETE…RETURNING prevents duplication).
+// TestPreKeys_TakeEC_Concurrent checks concurrent TakeEC calls get distinct keys.
 func TestPreKeys_TakeEC_Concurrent_ConsumesDistinctKeys(t *testing.T) {
 	s, c := newPreKeyStore(t)
 	ctx := context.Background()

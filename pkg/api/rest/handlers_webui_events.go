@@ -24,10 +24,7 @@ type WebUIEventHub struct {
 	// issue overlapping writes on the same connection (coder/websocket
 	// forbids concurrent writes to one Conn).
 	broadcastMu sync.Mutex
-	// allowedOrigins lists Origin patterns permitted to open the event
-	// WebSocket. When empty the coder/websocket default applies, which
-	// requires the Origin host to match the request Host (same-origin) —
-	// InsecureSkipVerify is never set, so cross-site hijacking is rejected.
+	// allowedOrigins lists permitted Origin patterns; empty means same-origin only.
 	allowedOrigins []string
 }
 
@@ -78,9 +75,7 @@ func (h *WebUIEventHub) HandleWebSocket(w http.ResponseWriter, r *http.Request) 
 		h.mu.Unlock()
 	}()
 
-	// Keep the connection alive by reading (and discarding) client messages.
-	// The web UI doesn't send meaningful messages upstream — all operations
-	// go through the REST API.
+	// Read and discard client messages to keep the connection alive.
 	ctx := conn.CloseRead(r.Context())
 	<-ctx.Done()
 }

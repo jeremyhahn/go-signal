@@ -12,10 +12,7 @@ func (e *SpamBlockedError) Error() string {
 	return "spam blocked: " + e.Reason
 }
 
-// SpamChallengeRequiredError is returned when a SpamChecker requires the
-// sender to complete a challenge before the message can be delivered.
-// ChallengeType identifies the required challenge mechanism (e.g. "captcha"
-// or "push").
+// SpamChallengeRequiredError requires the sender to complete a challenge (ChallengeType "captcha" or "push").
 type SpamChallengeRequiredError struct {
 	ChallengeType string
 }

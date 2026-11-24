@@ -836,9 +836,7 @@ func TestHandleReserveUsernameHash_ConflictPath(t *testing.T) {
 // errUsernameService — injectable error mock for service.UsernameService
 // --------------------------------------------------------------------------
 
-// errUsernameService is a minimal service.UsernameService implementation
-// that returns configurable errors from individual methods so that the
-// REST handler error-handling branches can be covered by tests.
+// errUsernameService returns configurable errors to cover the handlers' error branches.
 type errUsernameService struct {
 	deleteHashErr  error
 	deleteLinkErr  error

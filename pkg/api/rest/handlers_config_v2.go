@@ -10,13 +10,7 @@ import (
 	"time"
 )
 
-// handleGetRemoteConfig processes GET /v2/config and returns the
-// per-account dynamic configuration as a name→value map. Requires
-// authentication. The ETag header is derived from the rendered
-// configuration so clients can short-circuit unchanged responses via
-// If-None-Match.
-//
-// Mirrors Java RemoteConfigController.getAll.
+// handleGetRemoteConfig handles GET /v2/config, returning the account's dynamic config with an ETag for If-None-Match.
 func (s *Server) handleGetRemoteConfig(w http.ResponseWriter, r *http.Request) {
 	acct := accountFromContext(r.Context())
 	if acct == nil {
@@ -43,10 +37,7 @@ func (s *Server) handleGetRemoteConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, RemoteConfigResponse{Config: rendered})
 }
 
-// remoteConfigETag computes a stable hash of the rendered config map.
-// Encoding is sorted JSON so the hash is invariant under map-iteration
-// order — Go's ranged iteration is non-deterministic and would
-// otherwise change the ETag between calls with identical content.
+// remoteConfigETag hashes the config as sorted JSON, independent of map order.
 func remoteConfigETag(rendered map[string]string) string {
 	keys := make([]string, 0, len(rendered))
 	for k := range rendered {

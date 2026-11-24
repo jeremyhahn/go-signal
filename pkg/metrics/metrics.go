@@ -1,14 +1,4 @@
-// Package metrics holds the Prometheus instrumentation every Phase 4
-// binary exposes on its /metrics endpoint. Metric names follow the
-// Java Signal-Server Micrometer naming where applicable so operator
-// dashboards (Grafana boards, runbook queries) stay portable.
-//
-// One Registry per binary is constructed at start-up; the binaries
-// register the per-subsystem metrics they actually use. The
-// HTTPMiddleware wrapper instruments any net/http.Handler chain so
-// per-route latency + status-code distribution land in
-// http_server_request_duration_seconds + http_server_requests_total
-// out of the box.
+// Package metrics holds the Prometheus instrumentation each binary serves on /metrics, named after Signal-Server's where they overlap.
 package metrics
 
 import (
@@ -21,20 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// Registry bundles a Prometheus registry plus the standard
-// instrumentation every Signal-server binary needs.
-//
-// The exported metrics:
-//
-//   - HTTPRequestsTotal: counter over (method, route, status_code).
-//   - HTTPRequestDuration: histogram (seconds) over (method, route).
-//   - GRPCRequestsTotal: counter over (service, method, code).
-//   - GRPCRequestDuration: histogram (seconds) over (service, method).
-//   - InflightRequests: gauge over the request lifecycle.
-//
-// All histograms use the Prometheus default RPC-oriented buckets
-// (5ms → 10s) matching Java Micrometer's default ServerWebSocket
-// timer config.
+// Registry is a Prometheus registry with HTTP and gRPC request counters and latency histograms (default buckets) and an in-flight gauge.
 type Registry struct {
 	Reg                 *prometheus.Registry
 	HTTPRequestsTotal   *prometheus.CounterVec
@@ -117,10 +94,7 @@ func (r *Registry) Handler() http.Handler {
 	})
 }
 
-// HTTPMiddleware wraps next with request-counter + histogram
-// instrumentation. route is the static route label (Java's
-// "uri" tag) — pass the registered pattern, NOT the request path,
-// to keep cardinality bounded.
+// HTTPMiddleware instruments next; route must be the registered pattern, not the request path, to bound cardinality.
 func (r *Registry) HTTPMiddleware(route string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		r.InflightRequests.Inc()

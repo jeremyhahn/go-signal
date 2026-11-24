@@ -19,7 +19,7 @@ func randHash(t *testing.T) []byte {
 	if err != nil {
 		t.Fatalf("randHash: %v", err)
 	}
-	// newToken returns 32 hex chars; use the raw bytes so we have proper BYTEA.
+	// Use the raw token bytes for BYTEA.
 	return []byte(tok)
 }
 

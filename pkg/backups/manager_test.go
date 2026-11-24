@@ -750,12 +750,7 @@ func TestManager_RecalculateQuota_RejectsMissingDirs(t *testing.T) {
 	}
 }
 
-// --- requireLevel / requireCredentialType rejection paths -------------------
-//
-// Every paid-tier method must refuse a free-tier user, and every credential-
-// type-bound method must refuse the wrong type. These tests exercise the
-// guard branches at the top of each manager method in one place so the
-// individual happy-path tests don't have to.
+// Paid-tier methods refuse free-tier users and type-bound methods refuse the wrong credential type.
 
 func TestManager_TTLRefresh_NilUserRejected(t *testing.T) {
 	f := newManagerFixture(t, backups.BackupLevelFree)

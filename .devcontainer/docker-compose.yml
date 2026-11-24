@@ -1,13 +1,4 @@
-# Development and integration stack.
-#
-# Every `ports:` entry names the CONTAINER port only, so docker assigns the host
-# port dynamically. A fixed host binding cannot work on a shared CI runner:
-# compose reaches the HOST daemon through the mounted socket, so a second job —
-# or anything else already listening — collides with "failed to bind host port
-# 0.0.0.0:8081: address already in use". That is what failed run 338. Nothing
-# depends on the fixed numbers: every service addresses the others by compose
-# service name over the compose network, and `docker compose port <service>
-# <port>` reports the assigned host port when a developer wants one.
+# Development and integration stack. Ports name the container port only, so docker assigns host ports; use `docker compose port` to find one.
 
 services:
   devcontainer:
@@ -38,22 +29,9 @@ services:
   signal-server:
     build:
       context: ..
-      # Dockerfile.dev, not the top-level Dockerfile. The latter is the
-      # production image and is deliberately fail-closed: it ships no config,
-      # no secrets and no TLS material, only config.yml.example, so it exits 1
-      # with "open /etc/signal-server/config.yml: no such file or directory"
-      # the moment compose starts it — which is correct behaviour for a
-      # production image and useless for a test stack. Dockerfile.dev exists for
-      # exactly this: it bakes the in-memory test config, the stub verification
-      # transport and the test certs `make test-tls` generates, and listens on
-      # 8081, which is the port this service publishes and health-checks.
+      # Dockerfile.dev bakes the test config, stub transport and test certs; the production Dockerfile ships no config and exits without one.
       dockerfile: Dockerfile.dev
-      # Credentials for the internal Gitea host, so the image's `go mod
-      # download` can resolve first-party modules. A BuildKit secret, not a
-      # build arg: an arg is recoverable from image metadata with
-      # `docker history`. Where GOMODAUTH_ENV is unset the secret resolves to
-      # /dev/null, the Dockerfile's mount finds nothing to source, and the
-      # build falls back to the public proxy.
+      # Module credentials as a BuildKit secret, not a build arg; unset GOMODAUTH_ENV resolves to /dev/null and the build uses the public proxy.
       secrets:
         - gomodauth
     # Dynamic host port — see the header.
@@ -86,10 +64,7 @@ services:
     build:
       context: ..
       dockerfile: .devcontainer/Dockerfile
-      # Source baked in, NOT mounted. compose reaches the host daemon through
-      # the mounted socket in CI, so a bind mount of the checkout resolves
-      # against the HOST filesystem, finds nothing, and silently mounts an
-      # empty directory — see the note in .devcontainer/Dockerfile.
+      # Source baked in, not mounted: a CI bind mount resolves on the host daemon and mounts an empty directory.
       target: integration
       additional_contexts:
         tls: ../test/tls
@@ -115,13 +90,7 @@ services:
       SIGNAL_CLI_DATA: /var/lib/signal-cli
       REDIS_URL: redis://redis:6379
       POSTGRES_URL: postgres://signal:signal@postgres:5432/signal?sslmode=disable
-      # This container compiles the suite itself against a bind-mounted
-      # /workspace, so it needs Gitea module resolution at RUN time, not just
-      # at build time. Inherited from the caller's environment — the Actions
-      # runner injects all four (dependency-resolution.md §6). GIT_CONFIG_COUNT
-      # defaults to 0 rather than empty: git rejects an empty count outright,
-      # while 0 means "no rewrites configured", which is the correct behaviour
-      # on a machine without Gitea credentials.
+      # Module credentials at run time, from the caller's environment; GIT_CONFIG_COUNT defaults to 0 because git rejects an empty count.
       GOPRIVATE: ${GOPRIVATE:-}
       GIT_CONFIG_COUNT: ${GIT_CONFIG_COUNT:-0}
       GIT_CONFIG_KEY_0: ${GIT_CONFIG_KEY_0:-}

@@ -7,24 +7,7 @@ import (
 	"testing"
 )
 
-// TestGenerator_CredentialNeverStagedInAGoString guards the property this
-// package cannot express any other way.
-//
-// Generate and Validate handle a complete bearer password. Building or reading
-// one through a Go string leaves the credential in memory that cannot be
-// wiped and that the runtime may copy, so destroying the SecureString does not
-// remove it. The fix was to assemble, parse and compare in byte buffers.
-//
-// There is no runtime-observable difference between the two implementations —
-// same wire bytes, same errors, same timings — and the credential is far too
-// small for an allocation bound to separate them from noise the way
-// TestClone_DoesNotStagePlaintextOnTheGoHeap can at 1 MiB. So this asserts on
-// the source, which is the only instrument that actually discriminates. It is
-// a narrow, deterministic check: the two call shapes that reintroduce the
-// defect, in the one file that must not contain them.
-//
-// Reintroducing `Password.Plaintext()` or `hex.EncodeToString` in
-// generator.go makes this fail.
+// TestGenerator_CredentialNeverStagedInAGoString checks generator.go never calls Password.Plaintext() or hex.EncodeToString on the credential.
 func TestGenerator_CredentialNeverStagedInAGoString(t *testing.T) {
 	src, err := os.ReadFile("generator.go")
 	if err != nil {

@@ -24,10 +24,7 @@ type Registry struct {
 	createCallLink  RateLimiter
 }
 
-// NewRegistry creates a Registry using the supplied Config.  For each
-// BucketConfig with a zero BucketSize or RefillRate, the corresponding
-// DefaultConfig value is substituted so that callers can supply a partial
-// Config and still get sane defaults.
+// NewRegistry creates a Registry from cfg, filling zero BucketSize or RefillRate from DefaultConfig.
 func NewRegistry(cfg Config) *Registry {
 	def := DefaultConfig()
 	return &Registry{

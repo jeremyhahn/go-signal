@@ -32,13 +32,7 @@ func captureDestroy(t *testing.T) **Config {
 	return &captured
 }
 
-// TestLoad_ParseFailureDestroysAlreadyDecodedSecrets covers the leak on the
-// decode path. yaml.v3 populates field by field and reports type errors only
-// at the end, so a shared secret written above a malformed field is already
-// sealed in protected memory by the time Unmarshal fails. Load returns nil, so
-// the caller never gets a handle to wipe it.
-//
-// Removing the guarded cleanup from Load makes this fail.
+// TestLoad_ParseFailureDestroysAlreadyDecodedSecrets checks a decode failure wipes secrets sealed before it.
 func TestLoad_ParseFailureDestroysAlreadyDecodedSecrets(t *testing.T) {
 	captured := captureDestroy(t)
 

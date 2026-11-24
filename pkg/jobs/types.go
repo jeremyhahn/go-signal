@@ -1,26 +1,5 @@
-// Package jobs implements the scheduled-jobs subsystem ported from
-// Java Signal-Server's ProcessScheduledJobsServiceCommand. The
-// subsystem lets producers (request handlers, other workers)
-// schedule typed work to fire at a future point in time, and a
-// continuous worker drains due jobs and dispatches them to per-type
-// handlers.
-//
-// The persistence interface is intentionally narrow so memory,
-// qrdb, and postgres backends share identical semantics:
-//
-//   - Enqueue commits a Job atomically.
-//   - ClaimDue returns at most `limit` jobs whose fire_at is at or
-//     before `now`, marks them as in-flight (status=running) under
-//     a per-claim lease so a second worker doesn't double-execute,
-//     and returns a slice the caller iterates.
-//   - MarkDone removes a successfully executed job.
-//   - MarkFailed bumps the attempts counter, reschedules fire_at,
-//     and either re-queues (Status=pending) or marks the job as
-//     dead (Status=failed) when MaxAttempts is exceeded.
-//
-// Idempotency: handlers must be safe to re-run because a crash
-// between MarkDone/MarkFailed and the next ClaimDue tick can replay
-// a job. Mirrors Java's at-least-once contract.
+// Package jobs schedules typed work for a future time and dispatches due jobs to per-type handlers.
+// Stores: Enqueue commits atomically, ClaimDue leases up to limit due jobs, MarkDone removes, MarkFailed re-queues or marks dead. Handlers must be idempotent (at-least-once).
 package jobs
 
 import (
@@ -36,10 +15,7 @@ const (
 	// StatusPending means the job is queued and waiting for its
 	// fire_at moment.
 	StatusPending Status = iota + 1
-	// StatusRunning means a worker has claimed the job and is
-	// executing it. ClaimDue → handler dispatch sets this state;
-	// MarkDone removes the row; MarkFailed rolls back to Pending
-	// (with a new fire_at) or Dead.
+	// StatusRunning means a worker has claimed the job; MarkDone removes it, MarkFailed returns it to Pending or Dead.
 	StatusRunning
 	// StatusFailed means the job exceeded its retry budget. Rows
 	// stay in this state for operator inspection; they are not
@@ -88,53 +64,19 @@ type Store interface {
 	// supply explicit values get them honored.
 	Enqueue(ctx context.Context, job *Job) error
 
-	// ClaimDue returns up to limit pending jobs whose FireAt is at
-	// or before now AND whose Type appears in `types` (empty
-	// `types` means "every type"). Each returned job is atomically
-	// transitioned to Running so a concurrent worker does not
-	// double-claim. The caller MUST follow up with either MarkDone
-	// or MarkFailed for every returned job.
-	//
-	// The Type filter exists so two Manager instances backed by
-	// the same Store can stay in their lanes — the APN worker's
-	// Manager only ever sees JobTypeAPNPushSend rows, and the
-	// general worker's Manager sees everything else.
+	// ClaimDue atomically moves up to limit due Pending jobs of the given types (all when empty) to Running; every returned job needs MarkDone or MarkFailed.
 	ClaimDue(ctx context.Context, now time.Time, limit int, types ...string) ([]*Job, error)
 
 	// MarkDone removes the job by ID. Idempotent.
 	MarkDone(ctx context.Context, id string) error
 
-	// MarkFailed records a handler failure. When the job's Attempts
-	// (after this call) is still below maxAttempts, the row is
-	// re-queued (Status=Pending) with a fresh FireAt = now +
-	// attempts*backoff. Otherwise the row is left in Status=Failed
-	// for operator inspection.
+	// MarkFailed re-queues the job at now + attempts*backoff below maxAttempts, else leaves it Failed.
 	MarkFailed(ctx context.Context, id string, now time.Time, backoff time.Duration, maxAttempts int) error
 
-	// ResetToPending transitions a Running job back to Pending
-	// without bumping Attempts. Used when the dispatcher learns
-	// (via context cancellation) that the handler did not run to
-	// completion AND it was not the handler's fault. fireAt
-	// controls when the job becomes eligible for ClaimDue again —
-	// callers usually pass `time.Now()` so the next tick re-claims.
-	// Missing or non-Running rows return without error
-	// (idempotent — the recovery path may race with MarkDone).
+	// ResetToPending returns a Running job to Pending at fireAt without counting an attempt; missing or non-Running rows are a no-op.
 	ResetToPending(ctx context.Context, id string, fireAt time.Time) error
 
-	// RecoverStale re-queues every job whose Status is Running and
-	// whose claim happened before `olderThan` (typically `now -
-	// max plausible handler runtime`; 5 minutes is a safe default).
-	// Returns the number of rows transitioned back to Pending.
-	// Designed to be called at the head of every RunOnce so that
-	// jobs stranded by a process crash always recover, regardless
-	// of what the previous worker died doing.
-	//
-	// Implementations track claim time as a side effect of
-	// ClaimDue. The contract is at-least-once delivery: a job
-	// recovered by this method may run more than once if the
-	// original handler had already finished but the bookkeeping
-	// commit never landed. Handlers are required to be idempotent
-	// (see package docs).
+	// RecoverStale re-queues jobs claimed before olderThan and returns how many; call it at the head of every RunOnce.
 	RecoverStale(ctx context.Context, olderThan time.Time) (int, error)
 
 	// Get returns the job by ID. Useful for tests and admin tools;

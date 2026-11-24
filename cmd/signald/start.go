@@ -83,9 +83,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/workers"
 )
 
-// nilableBackupService returns a typed-nil service.BackupService when
-// svc is nil so REST's nil-check (s.backups == nil) works as intended.
-// Avoids Go's interface-holding-typed-nil pitfall.
+// nilableBackupService returns an untyped nil for a nil svc so REST's nil check works.
 func nilableBackupService(svc *backups.Service) service.BackupService {
 	if svc == nil {
 		return nil
@@ -106,16 +104,7 @@ func stringSetToMap(in []string) map[string]struct{} {
 	return out
 }
 
-// buildCaptchaChecker builds a captcha.Checker from the YAML config. The
-// Checker is the multi-provider dispatcher used by PATCH /v1/verification/
-// session and POST /v1/registration. Returns (nil, nil) when the deployment
-// names no provider at all; the REST layer treats a nil Checker as "captcha
-// disabled" and rejects captcha submissions with 503.
-//
-// Provider "test" registers the TestVerifier, which accepts any token
-// carrying captcha.TestTokenPrefix. It needs no secret key, and it can never
-// reach a production deployment: validateProduction refuses to boot unless
-// the provider is hcaptcha or recaptcha.
+// buildCaptchaChecker builds the captcha dispatcher from config, or (nil, nil) when no provider is named; production accepts only hcaptcha or recaptcha.
 func buildCaptchaChecker(cfg config.CaptchaConfig) (*captcha.Checker, error) {
 	if cfg.Provider == "test" {
 		return &captcha.Checker{Providers: map[string]captcha.CaptchaVerifier{
@@ -146,18 +135,14 @@ func buildCaptchaChecker(cfg config.CaptchaConfig) (*captcha.Checker, error) {
 		}
 		return &captcha.Checker{Providers: map[string]captcha.CaptchaVerifier{"recaptcha": v}}, nil
 	case "":
-		// No provider named — let the REST layer surface 503 for any
-		// captcha submission instead of silently accepting unverified traffic.
+		// No provider: the REST layer answers 503 to any captcha submission.
 		return nil, nil
 	default:
 		return nil, &UnknownBackendError{Backend: "captcha/" + cfg.Provider}
 	}
 }
 
-// siteKeysByActionFromConfig converts the YAML-friendly string-keyed map
-// into the captcha.Action-keyed map expected by the verifier configs.
-// Unknown action names are silently dropped — the YAML is human-edited and
-// typos shouldn't take the server down.
+// siteKeysByActionFromConfig converts the string-keyed config map to captcha.Action keys, dropping unknown names.
 func siteKeysByActionFromConfig(in map[string][]string) map[captcha.Action][]string {
 	if len(in) == 0 {
 		return nil
@@ -174,12 +159,7 @@ func siteKeysByActionFromConfig(in map[string][]string) map[captcha.Action][]str
 	return out
 }
 
-// buildPushManager assembles a push.PushManager from the YAML config. The
-// APNs leg activates when team/key/bundle IDs and a signing key are all
-// present; the FCM leg activates when service-account credentials are
-// supplied. Either or both may be absent — missing legs fall through to
-// NoOpProvider so the message-delivery code path can keep calling Send
-// uniformly.
+// buildPushManager assembles APNs and FCM legs from config; a missing leg falls back to NoOpProvider.
 func buildPushManager(cfg config.PushConfig, logger *slog.Logger) (*push.PushManager, error) {
 	mgrCfg := push.PushManagerConfig{Logger: logger}
 	if cfg.APN.TeamID != "" && cfg.APN.KeyID != "" && cfg.APN.BundleID != "" && cfg.APN.PrivateKey != nil {
@@ -210,11 +190,7 @@ func buildPushManager(cfg config.PushConfig, logger *slog.Logger) (*push.PushMan
 	return push.NewPushManager(mgrCfg), nil
 }
 
-// schedulePush wakes a device whose primary message-fetch channel is push
-// (i.e. !FetchesMessages and has APNs or FCM token registered). Best-effort
-// — failures are logged and never surfaced to the caller. Unregistered
-// responses trigger token cleanup via accountsMgr.Update so future sends
-// don't keep firing the same stale notification.
+// schedulePush wakes a push-only device, best-effort; an unregistered response clears the stale token.
 func schedulePush(logger *slog.Logger, accountsMgr *accounts.AccountsManager, pushMgr *push.PushManager, accountUUID string, deviceID uint64) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -271,10 +247,7 @@ func schedulePush(logger *slog.Logger, accountsMgr *accounts.AccountsManager, pu
 	}
 }
 
-// clearStaleDeviceToken zeroes the device's APNs or FCM token after the
-// upstream provider reported the registration as invalid. Re-reads the
-// account inside the helper so concurrent updates (e.g. a parallel
-// re-registration that wrote a fresh token) are not clobbered.
+// clearStaleDeviceToken zeroes a device's push token the provider reported invalid, re-reading the account to avoid clobbering a fresh token.
 func clearStaleDeviceToken(ctx context.Context, accountsMgr *accounts.AccountsManager, accountUUID string, deviceID uint64, devType push.DeviceType) error {
 	acct, err := accountsMgr.Get(ctx, accountUUID)
 	if err != nil {
@@ -335,12 +308,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
 
-	// Every owner of long-lived key material registers its wipe as a defer
-	// the moment it is created, so a startup that aborts part-way — a store
-	// that will not open, a worker that will not start — still leaves no
-	// secret resident. Destroy is idempotent on all of them, so the ordered
-	// shutdown block at the end of runStart stays the normal-path owner of
-	// wipe-after-draining and these defers are the backstop.
+	// Each owner of long-lived key material defers its wipe on creation, as a backstop to the ordered shutdown below.
 	defer cfg.Destroy()
 
 	httpAddr := cfg.Server.HTTPListen
@@ -368,12 +336,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return &StartupError{Stage: "signing key protection", Cause: err}
 		}
-		// This one is not drawn from cfg, so cfg.Destroy() does not reach it:
-		// the other two branches alias a config field and are wiped with the
-		// config, while this key is owned by runStart alone and would
-		// otherwise stay resident for the life of the process. Registered
-		// here rather than at the use sites because the key is read again at
-		// certificate-manager construction and at zkgroup setup below.
+		// This key is not from cfg, so cfg.Destroy does not wipe it; runStart owns it.
 		defer ephemeral.Destroy()
 		signingKey = ephemeral
 	}
@@ -388,18 +351,9 @@ func runStart(cmd *cobra.Command, args []string) error {
 		recoveryPasswordStore recoverypassword.Store
 		backupStore           backups.Store
 		redeemedReceiptsStore backups.RedeemedReceiptsStore
-		// pgClientForSurveys is non-nil when the deployment uses the
-		// postgres backend; the call-quality survey publisher reuses
-		// the same pool to persist into call_quality_surveys. Java's
-		// CallQualitySurveyManager has the same special case (Postgres
-		// only for that one table).
+		// With the postgres backend the call-quality survey publisher reuses this pool.
 		pgClientForSurveys *pgstorage.Client
-		// remoteConfigStore receives the same backend treatment as
-		// the rest of the storage layer. Memory mode keeps the
-		// in-memory store (state is ephemeral by design); the file
-		// and qrdb backends use a KV-backed implementation so live
-		// admin edits survive restarts; postgres uses the dedicated
-		// remote_config table.
+		// Remote config store: in-memory for memory mode, KV-backed for file and qrdb, the remote_config table for postgres.
 		remoteConfigStore remoteconfig.Store
 		// jobsStore is the persistence for the scheduled-jobs
 		// subsystem. Same backend selection as the other domain
@@ -456,10 +410,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 			pgClient.Close()
 			return &StartupError{Stage: "postgres migrate", Cause: err}
 		}
-		// pgClient is intentionally not Close()d on the happy path — its
-		// lifetime matches the process. Shutdown handlers below close other
-		// long-lived clients and pgClient should be added there as graceful
-		// shutdown plumbing lands in Phase 5.
+		// pgClient lives for the process and is not closed on the normal path.
 		accountStore = pgstorage.NewAccountStore(pgClient.Pool())
 		keyStore = pgstorage.NewPreKeyStore(pgClient.Pool())
 		messageStore = pgstorage.NewMessageStore(pgClient.Pool())
@@ -476,12 +427,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		pgClientForSurveys = pgClient
 
 	case "qrdb":
-		// qrdb is the primary production backend (see ADR-0001).
-		// For now signald uses an in-process FakeKVStore with the qrdb
-		// domain store layer; a real qrdb transport factory lands in a
-		// follow-up wire-up phase once deployment shape is decided.
-		// The qrdb *Store types here are identical to those used in
-		// production against a live qrdb cluster.
+		// qrdb domain stores over an in-process FakeKVStore until a qrdb transport is wired (ADR-0001).
 		slog.InfoContext(ctx, "using qrdb storage backend (in-process fake transport)")
 		qrdbKV := qrdbstorage.NewFakeKVStore()
 		accountStore = qrdbstorage.NewAccountStore(qrdbKV)
@@ -514,10 +460,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		manifestStore = memory.NewMemoryManifestStore()
 	}
 
-	// Initialise the shared cache client. Redis in production, memory
-	// for single-node deployments and tests. This client is injected
-	// into services that need cross-request state (rate limits, MRM
-	// shared payloads, pub/sub) as they land in Phase 2+.
+	// Shared cache client: Redis in production, memory for single-node deployments and tests.
 	var cacheClient cache.Client
 	switch cfg.Cache.Backend {
 	case "redis":
@@ -544,12 +487,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	// Health probes + Prometheus /metrics on a dedicated admin port.
-	// signald is the binary kubelet probes from the operator side, so
-	// /readyz binds the only ops-critical backend signald CAN'T
-	// route around: the cache backend (Redis or in-memory). Downstream
-	// gRPC checks for registration-service + key-transparency are
-	// added inline once those clients exist later in this function.
+	// Health probes and /metrics on the admin port; /readyz checks the cache backend, the one dependency signald cannot route around.
 	probes := health.New()
 	metricsReg := metrics.NewRegistry("signald")
 	probes.Add("cache", checks.Ping("cache", cacheClient))
@@ -559,10 +497,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	// Create service managers. The directory event bus is wired
-	// here so every Create/Update/Delete on the accounts manager
-	// fans out to subscribed gRPC streams (cdsi consumes them via
-	// DirectoryService.Subscribe).
+	// Every accounts Create/Update/Delete fans out on the directory event bus to DirectoryService.Subscribe streams.
 	accountsMgr := accounts.NewAccountsManager(accountStore, 6)
 	directoryBus := accounts.NewDirectoryEventBus()
 	accountsMgr.SetDirectoryEventBus(directoryBus)
@@ -575,12 +510,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		Logger:  logger,
 	})
 
-	// Dynamic-configuration manager. The store was selected above in
-	// the storage-backend switch (file/qrdb backends use a KV-backed
-	// store, postgres uses the dedicated table, memory mode keeps
-	// the ephemeral in-process store). Defaults from the YAML are
-	// upserted on each boot so newly-added flags appear in the live
-	// catalog without an admin write.
+	// Dynamic-configuration manager; config defaults are upserted on each boot so new flags appear in the catalog.
 	if remoteConfigStore == nil {
 		remoteConfigStore = remoteconfig.NewMemoryStore()
 	}
@@ -605,10 +535,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 	defer remoteConfigMgr.Stop()
 
-	// Scheduled-jobs managers. The general-purpose jobsMgr drains
-	// every non-APN job type; apnJobsMgr is a parallel Manager
-	// sharing the same Store but with only the APN handler
-	// registered so the APN sender's batch throttle is independent.
+	// jobsMgr drains every non-APN job; apnJobsMgr shares the store with only the APN handler, so its throttle is independent.
 	jobsMgr := jobs.NewManager(jobsStore, logger)
 	apnJobsMgr := jobs.NewManager(jobsStore, logger)
 	// Create an independent copy of the signing key so that certificates
@@ -654,10 +581,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		slog.WarnContext(ctx, "no zkConfig.serverSecret configured; group credentials will use HMAC-SHA256 fallback")
 	}
 
-	// Derive an Ed25519 signing key for delivery certificates from the signing
-	// key material. In production, a dedicated Ed25519 key should be configured;
-	// here we derive one deterministically from the signing key via SHA-256 so
-	// that certificates survive restarts when the signing key is stable.
+	// Ed25519 delivery-certificate key derived from the signing key via SHA-256, stable across restarts.
 	{
 		keyBytes := signingKey.Bytes()
 		if len(keyBytes) > 0 {
@@ -731,10 +655,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	})
 	directoryMgr := directory.NewDirectoryManager(logger)
 	defer directoryMgr.Destroy()
-	// A shared secret that cannot be placed in protected memory aborts startup
-	// rather than falling through to the legacy random-UUID stub: a deployment
-	// that configured CDSI must not come up silently issuing credentials cdsi
-	// will reject.
+	// A CDSI secret that cannot be placed in protected memory aborts startup.
 	if err := directoryMgr.SetSharedSecret(cfg.CDSI.SharedSecret); err != nil {
 		return &StartupError{Stage: "CDSI shared secret protection", Cause: err}
 	}
@@ -743,13 +664,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	if err := secureStorageMgr.SetSharedSecret(cfg.StorageService.SharedSecret); err != nil {
 		return &StartupError{Stage: "storage-service shared secret protection", Cause: err}
 	}
-	// Enable the in-process storage-service (contact/settings sync) in
-	// monolithic deployments — i.e. when no external storage-service is wired
-	// via RemoteURL. The wire protocol is validated against the canonical
-	// Signal client (libsignal-service-java StorageService.proto +
-	// PushServiceSocket paths/methods). When an external storage-service is
-	// configured, clients are pointed at it instead and signald's /storage
-	// endpoints stay on the 204 stub to avoid divergent state.
+	// In-process storage service when no external one is configured; otherwise /storage stays on the 204 stub.
 	if cfg.StorageService.RemoteURL == "" {
 		secureStorageMgr.SetManifestStore(manifestStore)
 		slog.InfoContext(ctx, "in-process storage-service enabled (monolithic mode)")
@@ -782,41 +697,19 @@ func runStart(cmd *cobra.Command, args []string) error {
 	}
 	provisioningStore := memory.NewMemoryProvisioningStore()
 	devicesMgr := devices.NewDevicesManager(provisioningStore, accountsMgr, keysMgr, logger)
-	// mrmCache holds shared multi-recipient-message payloads in the cluster
-	// cache so the SSv2 ciphertext for a multi-recipient send is stored once
-	// and per-recipient envelopes reference it. Java parity: see
-	// MessagesCache MRM operations.
+	// mrmCache stores each multi-recipient payload once in the cluster cache; envelopes reference it.
 	mrmCache := messages.NewMRMCache(cacheClient, logger)
 	// Plumb the MRM cache into MessagesManager so reads can rehydrate
 	// envelopes that carry SharedMrmKey before delivery.
 	messagesMgr.SetMRMCache(mrmCache)
 
-	// wsSessions is wired with the cache backend so that messages persisted on
-	// any instance in the cluster wake up the WebSocket on whichever instance
-	// currently holds it. The flusher reads from the durable MessageStore on
-	// notify, mirroring Java Signal-Server's MessagesCache wake-up semantics.
+	// wsSessions uses the cache so a message stored on any instance wakes the WebSocket wherever it is held.
 	wsSessions := signalws.NewSessionManagerWithCache(logger, cacheClient,
 		func(ctx context.Context, uuid string, deviceID uint64) ([]*messages.Envelope, error) {
 			return messagesMgr.GetMessagesForDevice(ctx, uuid, deviceID)
 		})
 
-	// Initialize verification subsystem.
-	//
-	// As of Phase 4.1 the lower half (session lifecycle + transport
-	// dispatch + per-session rate limits) lives in
-	// pkg/registration/core.Service and is the same engine the
-	// standalone cmd/registration-service binary runs. signald gets at
-	// it through an extservice/registration.Client interface:
-	//
-	//   - When cfg.Verification.RemoteAddr is set, signald opens a
-	//     gRPC channel to the remote registration-service. This is the
-	//     production "deployed separately" topology.
-	//   - Otherwise signald embeds *core.Service directly behind an
-	//     in-process Client — the monolithic single-binary topology.
-	//
-	// The chat-server-side captcha gate (requestedInformation:["captcha"])
-	// is carried by sessionshim.Shim, which wraps the Client and is
-	// what the REST handlers see.
+	// Verification: a gRPC client to a remote registration-service when RemoteAddr is set, else core.Service in-process; sessionshim.Shim adds the captcha gate.
 	var (
 		coreService *core.Service
 		regShimCfg  sessionshim.Config
@@ -855,11 +748,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	regShimCfg.CaptchaStore = sessionshim.NewMemoryCaptchaStore()
 	regShimCfg.CaptchaChecker = captchaChecker
 	verificationMgr := sessionshim.NewShim(regShimCfg)
-	// When signald embeds the verification stack in-process, the
-	// core.Service owns the per-session cleanup goroutine. The Shim's
-	// Close path doesn't touch it (the in-process Client follows the
-	// caller-owns-the-Service convention) so we drain it here on
-	// graceful shutdown.
+	// In-process verification: drain core.Service's cleanup goroutine on shutdown.
 	if coreService != nil {
 		defer coreService.Shutdown()
 	}
@@ -921,12 +810,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Initialize survey publisher. Java Signal-Server persists call-quality
-	// surveys to Postgres (it's the only table that lives in Postgres in an
-	// otherwise DynamoDB deployment). We mirror that policy: when the
-	// storage backend is postgres, write surveys to the same instance;
-	// otherwise log them for development. Explicit configuration via
-	// cfg.CallQualitySurvey.Backend takes precedence.
+	// Survey publisher: postgres when the storage backend is postgres, else log; cfg.CallQualitySurvey.Backend overrides.
 	var surveyPub calling.SurveyPublisher
 	switch cfg.CallQualitySurvey.Backend {
 	case "postgres":
@@ -957,25 +841,13 @@ func runStart(cmd *cobra.Command, args []string) error {
 	})
 	defer callingMgr.Destroy()
 
-	// Build the push manager from configured APNs + FCM credentials. When a
-	// provider's secrets are absent (typical for dev), the manager falls back
-	// to NoOpProvider — the call site below treats that as "push disabled" and
-	// only the WebSocket fast-path / cross-instance notify runs.
+	// Push manager from APNs and FCM credentials; without them it is NoOpProvider and only WebSocket delivery runs.
 	pushMgr, err := buildPushManager(cfg.Push, logger)
 	if err != nil {
 		return &StartupError{Stage: "push manager init", Cause: err}
 	}
 
-	// Wire the APN scheduled-job handler now that pushMgr exists.
-	// Job payloads are JSON-encoded push.PushNotification structs;
-	// the handler unmarshals and dispatches via pushMgr.Send. Errors
-	// are returned to the jobs.Manager which applies the linear
-	// backoff retry policy.
-	//
-	// Size bound: legitimate PushNotification payloads round-trip to
-	// ~512 bytes. The 16KiB cap is generous enough for any current
-	// or planned wire field but small enough that a malicious or
-	// corrupted producer can't OOM the unmarshaler.
+	// APN job handler: decode a JSON PushNotification (capped at 16 KiB) and send; errors go back to jobs.Manager for retry.
 	const maxAPNPayloadSize = 16 * 1024
 	apnJobsMgr.Register(workers.JobTypeAPNPushSend, func(ctx context.Context, job *jobs.Job) error {
 		if len(job.Payload) > maxAPNPayloadSize {
@@ -989,13 +861,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return err
 	})
 
-	// Wire real-time WebSocket delivery + push fan-out into the messages
-	// manager. Order matches Java's PushNotificationManager:
-	//   1. Local DeliverMessage  — same-instance live session.
-	//   2. wsSessions.NotifyMessageAvailable — cross-instance wakeup.
-	//   3. APNs/FCM push          — device has push token AND !FetchesMessages.
-	// All three run on the insert thread but the push leg is dispatched to a
-	// goroutine so the durable-store insert does not block on network.
+	// Delivery order: local session, cross-instance wakeup, then push on a goroutine so the insert does not block.
 	messagesMgr.SetDeliveryCallback(func(uuid string, deviceID uint64, envelope *messages.Envelope) {
 		if wsSessions.DeliverMessage(uuid, deviceID, envelope) {
 			return
@@ -1014,11 +880,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		go schedulePush(logger, accountsMgr, pushMgr, uuid, deviceID)
 	})
 
-	// Build the spam checker. The rate-limit checker uses the messages rate
-	// limit from config (BucketSize as threshold); a composite wraps it so
-	// additional checkers can be added without changing the call site.
-	// rateLimitCheckerStop is retained so the checker's cleanup goroutine can
-	// be stopped during graceful shutdown, preventing a goroutine leak.
+	// Spam checker: a composite around the messages rate limit; rateLimitCheckerStop stops its cleanup goroutine on shutdown.
 	var spamChecker spam.SpamChecker
 	var rateLimitCheckerStop func()
 	if msgLimit := cfg.Limits.Messages; msgLimit.BucketSize > 0 {
@@ -1049,11 +911,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// length of 2 (matches Java Signal-Server defaults).
 	loopDetector := messages.NewDeliveryLoopDetector(5*time.Minute, 2)
 
-	// Build the backups stack when enabled. Requires both the storage
-	// adapters (set above by the storage switch) and zkgroup secrets
-	// configured for credential issuance + receipt verification. When
-	// prerequisites are missing the subsystem stays nil and the
-	// /v1/archives/* endpoints + gRPC services return Unimplemented.
+	// Backups stack, when enabled and zkgroup secrets are configured; otherwise its endpoints return Unimplemented.
 	var backupSvc *backups.Service
 	if cfg.Backups.Enabled {
 		switch {
@@ -1175,17 +1033,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		slog.WarnContext(ctx, "no attachment storage configured — uploads will be discarded")
 	}
 
-	// External TUS upload form generator. Java parity:
-	// TusAttachmentGenerator emits an HMAC-signed Authorization header so
-	// the external TUS server can validate that Signal authorized the
-	// upload. When tusUri / tusSharedSecret are unset the v4 attachment
-	// endpoint falls back to the embedded /cdn3 route (dev mode).
-	//
-	// The check is IsAbsent, not IsDestroyed: the latter also reports true
-	// for a configured secret whose enclave will not open, which would
-	// silently select the embedded dev CDN on a deployment that does have a
-	// TUS secret installed. An unset secret is a deployment choice; an
-	// unopenable one is a failure, and NewGenerator below reports it.
+	// External TUS upload form generator; unset tusUri or secret falls back to the embedded /cdn3 route. IsAbsent, not IsDestroyed: an unopenable secret is an error.
 	var tusGenerator *external.Generator
 	defer func() { tusGenerator.Destroy() }()
 	if cfg.Attachments.TusURI != "" && !cfg.Attachments.TusSharedSecret.IsAbsent() {
@@ -1204,15 +1052,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// enabled in the config.
 	initFIDO2(srv, cfgPath, logger)
 
-	// Assemble the SignalService aggregate — the single injection point
-	// consumed by the gRPC services layer. Every manager already created
-	// above flows into it; Phase 2+ implementations of gRPC RPCs read
-	// from svc and never dig through global state.
-	// ServiceConfig exposes only the managers wired through to the
-	// service layer. Other managers (Stickers, Directory, SecureStorage,
-	// SVR, KeyTransparency, Verification) are consumed by REST handlers
-	// directly today; they move into the service aggregate as their
-	// gRPC surface is fleshed out in Phase 2+.
+	// SignalService aggregate: the single injection point for the gRPC services layer.
 	svc := service.NewSignalService(service.ServiceConfig{
 		Accounts:     accountsMgr,
 		Keys:         keysMgr,
@@ -1227,10 +1067,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		Logger:       logger,
 	})
 
-	// Start the gRPC listener alongside REST. The gRPC server hosts
-	// every service defined in pkg/api/grpc/proto; in Phase 1 most
-	// methods return codes.Unimplemented but they're reachable and
-	// exercise the auth + anonymous interceptor split.
+	// gRPC listener beside REST, hosting every service in pkg/api/grpc/proto.
 	var grpcServer *grpcapi.Server
 	if cfg.Server.GRPCListen != "" {
 		grpcAddr := cfg.Server.GRPCListen
@@ -1246,11 +1083,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		}()
 	}
 
-	// Boot the worker scheduler. Continuous workers (message persister,
-	// scheduled-jobs) run until signald stops; cron workers fire on
-	// their schedules; on-demand workers wait for `signald workers run
-	// <name>`. Leader election via the cache is enabled when cache is
-	// shared across replicas (i.e. redis backend).
+	// Worker scheduler: continuous, cron and on-demand workers; leader election via a shared (redis) cache.
 	workerScheduler := workers.NewScheduler(workers.Config{
 		Logger: logger,
 		Leaser: workers.NewCacheLeaser(cacheClient, ""),
@@ -1288,11 +1121,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 		slog.InfoContext(ctx, "context canceled")
 	}
 
-	// Graceful shutdown with ordered teardown:
-	// 1. Close all WebSocket sessions first (prevents new message delivery)
-	// 2. Shutdown HTTP server (drains in-flight requests)
-	// 3. Stop background goroutines (loop detector, rate limiters)
-	// 4. Wipe sensitive key material
+	// Ordered shutdown: WebSocket sessions, HTTP server, background goroutines, then key material.
 	slog.InfoContext(ctx, "shutting down Signal server")
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer shutdownCancel()
@@ -1333,12 +1162,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	return serverErr
 }
 
-// cfgToLimitsConfig converts the YAML-loaded config.LimitsConfig into the
-// limits.Config expected by limits.NewRegistry. Fields with a zero BucketSize
-// or LeakRatePerMin are left as zero so that NewRegistry's mergeConfig falls
-// back to Signal-Server production defaults for those categories.
-//
-// LeakRatePerMin is converted to a per-second RefillRate by dividing by 60.
+// cfgToLimitsConfig converts config.LimitsConfig to limits.Config; zero fields take the defaults and LeakRatePerMin becomes a per-second RefillRate.
 func cfgToLimitsConfig(c config.LimitsConfig) limits.Config {
 	toBucket := func(r config.RateLimitConfig) limits.BucketConfig {
 		if r.BucketSize == 0 || r.LeakRatePerMin == 0 {
@@ -1369,10 +1193,7 @@ func cfgToLimitsConfig(c config.LimitsConfig) limits.Config {
 	}
 }
 
-// directoryAccountSource adapts an accounts.AccountStore to the
-// dirsvc.AccountSource interface consumed by signald's gRPC
-// DirectoryService. Phase 4.3 wires this so cmd/cdsi can stream the
-// directory snapshot at startup.
+// directoryAccountSource adapts an accounts.AccountStore to dirsvc.AccountSource for the DirectoryService snapshot.
 type directoryAccountSource struct {
 	store accounts.AccountStore
 }
@@ -1383,10 +1204,7 @@ func (d *directoryAccountSource) ListAll(ctx context.Context, fn func(dirsvc.Dir
 	})
 }
 
-// accountToDirectoryEntry converts an accounts.Account into the
-// directory wire shape (E164/ACI/PNI/AccessKey). Shared between the
-// snapshot path (ListAll) and the live-event adapter so both encode
-// accounts identically.
+// accountToDirectoryEntry converts an account to the directory wire shape, shared by the snapshot and live-event paths.
 func accountToDirectoryEntry(a *accounts.Account) dirsvc.DirectoryEntry {
 	entry := dirsvc.DirectoryEntry{}
 	if a == nil {
@@ -1407,17 +1225,11 @@ func accountToDirectoryEntry(a *accounts.Account) dirsvc.DirectoryEntry {
 			copy(entry.PNI[:], b)
 		}
 	}
-	// Profile access keys aren't carried on Account directly in
-	// Phase 1; the field stays zero until the profile-key
-	// integration in Phase 4.3 follow-on. cdsi treats zero bytes as
-	// "no access key configured".
+	// Profile access keys are not on Account; cdsi treats zero bytes as no access key.
 	return entry
 }
 
-// directoryEventSource adapts an accounts.DirectoryEventBus to the
-// dirsvc.EventSource interface. signald constructs one and threads
-// it through grpcapi.New so DirectoryService.Subscribe is wired to
-// live account mutations.
+// directoryEventSource adapts an accounts.DirectoryEventBus to dirsvc.EventSource for DirectoryService.Subscribe.
 type directoryEventSource struct {
 	bus *accounts.DirectoryEventBus
 }
@@ -1430,11 +1242,7 @@ func (s *directoryEventSource) Subscribe(ctx context.Context, buffer int) (dirsv
 	return &directoryEventSubscription{sub: sub}, asOf
 }
 
-// directoryEventSubscription wraps an accounts.Subscription and
-// translates accounts.DirectoryEvent → dirsvc.ChangeEvent on the
-// fly. A goroutine reads from the inner Events channel, converts,
-// and forwards to the outer channel; this lets the conversion stay
-// out of the gRPC handler hot path.
+// directoryEventSubscription converts accounts.DirectoryEvent to dirsvc.ChangeEvent on its own goroutine, off the handler path.
 type directoryEventSubscription struct {
 	sub *accounts.Subscription
 	ch  chan dirsvc.ChangeEvent
@@ -1473,12 +1281,7 @@ func accountsEventToChangeEvent(e accounts.DirectoryEvent) dirsvc.ChangeEvent {
 	return out
 }
 
-// registrationServiceDialOptions returns the grpc.DialOption set used to
-// open the channel from signald to a remote registration-service. With
-// cfg.RemoteInsecure=true (development / docker-compose) we use a
-// plaintext channel; otherwise we require system root CAs over TLS. mTLS
-// is wired here in a single place so the production deployment topology
-// can extend it without touching the wider start-up flow.
+// registrationServiceDialOptions returns plaintext dial options when cfg.RemoteInsecure is set, else TLS with system roots.
 func registrationServiceDialOptions(cfg config.VerificationConfig) []grpc.DialOption {
 	if cfg.RemoteInsecure {
 		return []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
@@ -1487,9 +1290,7 @@ func registrationServiceDialOptions(cfg config.VerificationConfig) []grpc.DialOp
 	return []grpc.DialOption{grpc.WithTransportCredentials(creds)}
 }
 
-// splitListen splits a resolved host:port listen address into the host and
-// numeric port the REST server takes. An empty address (no REST listener
-// configured) yields host "" and port 0, which binds an ephemeral port.
+// splitListen splits a host:port listen address; an empty address yields host "" and port 0 (ephemeral).
 func splitListen(addr string) (string, int, error) {
 	if addr == "" {
 		return "", 0, nil

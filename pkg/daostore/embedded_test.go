@@ -504,14 +504,7 @@ func TestNewEmbeddedKVStore_Success(t *testing.T) {
 	t.Cleanup(func() { _ = store.(*engineKVStoreAdapter).Close() })
 }
 
-// TestEmbeddedKVStore_CloseReleasesTheDirectory pins the reason Close exists.
-//
-// PebbleDB holds an exclusive lock on its directory for as long as it is open,
-// and nothing in the chain could release it: kvstore.KVStore does not declare
-// Close, and the adapter is the only thing holding the storage handle. So a
-// caller that shut down correctly still left the database open (#55). Reopening
-// the same directory is the observable proof, and it fails with "lock held by
-// current process" if Close stops closing.
+// TestEmbeddedKVStore_CloseReleasesTheDirectory checks the directory can be reopened after Close.
 func TestEmbeddedKVStore_CloseReleasesTheDirectory(t *testing.T) {
 	dir := t.TempDir()
 

@@ -848,15 +848,7 @@ func TestSetProfile_AvatarUploadPersistsTheSignedKey(t *testing.T) {
 	}
 }
 
-// The UNCHANGED case: {avatar:true, sameAvatar:true} at the version that
-// already holds the avatar keeps it. Both flags are required — Java's
-// CreateProfileRequest.getAvatarChange reads `avatar` first, so sameAvatar
-// alone is CLEAR, not UNCHANGED (TestSetProfile_SameAvatarWithoutAvatarClears).
-//
-// The version is the one being written, matching
-// ProfileController.setProfile's profilesManager.get(uuid, request.version()).
-// A Signal profile version is a function of the profile key, so a client that
-// only edits its name reuses it and lands here.
+// {avatar:true, sameAvatar:true} at the version holding the avatar keeps it.
 func TestSetProfile_SameAvatarKeepsThisVersionsKey(t *testing.T) {
 	s, _ := newTestServerWithAvatarCDN(t)
 
@@ -882,10 +874,7 @@ func TestSetProfile_SameAvatarKeepsThisVersionsKey(t *testing.T) {
 	}
 }
 
-// {avatar:false, sameAvatar:true} is CLEAR, not UNCHANGED. Java decides on
-// `avatar` before it ever looks at sameAvatar, so a client that asks for no
-// avatar gets none whatever else it sends. Resolving sameAvatar first instead
-// keeps the avatar of a request that asked to drop it.
+// {avatar:false, sameAvatar:true} clears the avatar: avatar is decided first.
 func TestSetProfile_SameAvatarWithoutAvatarClears(t *testing.T) {
 	s, _ := newTestServerWithAvatarCDN(t)
 
@@ -905,10 +894,7 @@ func TestSetProfile_SameAvatarWithoutAvatarClears(t *testing.T) {
 	}
 }
 
-// UNCHANGED resolves against the version being written, so a version that
-// carries no avatar yet has nothing to keep — even when another version does.
-// A profile version changes only when the profile key rotates, and an avatar
-// encrypted under the old key is not one the new version can serve.
+// sameAvatar resolves against the version being written, which may have no avatar.
 func TestSetProfile_SameAvatarAtANewVersionKeepsNothing(t *testing.T) {
 	s, _ := newTestServerWithAvatarCDN(t)
 
@@ -958,14 +944,7 @@ func TestSetProfile_SameAvatarIgnoresAKeyOutsideTheProfilesPrefix(t *testing.T) 
 	}
 }
 
-// gatedProfileService holds a request inside ProfileService.Get so a test can
-// stop it between the sameAvatar read and the write that follows — the
-// read-modify-write window. It delegates to the real service, so both requests
-// run production code end to end; only the scheduling is forced.
-//
-// The gate is armed explicitly rather than firing on the first Get: the test's
-// own assertions and the GET handler call Get too, and a gate that triggers on
-// whichever call happens to arrive first would close on the wrong one.
+// gatedProfileService pauses an armed ProfileService.Get between the sameAvatar read and the write.
 type gatedProfileService struct {
 	service.ProfileService
 	armed   atomic.Bool
@@ -996,15 +975,7 @@ func (g *gatedProfileService) hold() {
 	}
 }
 
-// A sameAvatar request paused between its read and its write must still write
-// its OWN version's key. Reading the latest version instead made it adopt
-// whatever version happened to be latest at the instant it read — so a
-// concurrent upload at another version would be copied onto this one.
-//
-// What this does NOT establish: the two requests remain a read-modify-write
-// with no compare-and-swap, so which of them ends up as the account's latest
-// marker is still decided by write order. Closing that needs an atomic
-// primitive pkg/store.KVClient does not have; it is tracked separately.
+// A paused sameAvatar request still writes its own version's avatar key.
 func TestSetProfile_ConcurrentSameAvatarKeepsItsOwnVersionsKey(t *testing.T) {
 	s, _ := newTestServerWithAvatarCDN(t)
 
@@ -1124,10 +1095,7 @@ func TestBuildAvatarUploadAttributes_KeysAreUnique(t *testing.T) {
 	}
 }
 
-// failingGetStore wraps a real store and makes Get fail with an error that is
-// NOT "not found" — a database outage, a cancelled context, an unreadable row.
-// Set still works, so a handler that ignored the read error would visibly
-// persist the wrong thing.
+// failingGetStore fails Get with an error other than not found; Set still works.
 type failingGetStore struct {
 	profiles.ProfileStore
 	err error
@@ -1137,15 +1105,7 @@ func (f *failingGetStore) Get(context.Context, string, string) (*profiles.Profil
 	return nil, f.err
 }
 
-// TestSetProfile_SameAvatarFailsClosedWhenThePreviousReadFails is the
-// regression test for a fail-open in the sameAvatar path: every read error
-// was collapsed into an empty avatar key, which the handler then persisted
-// while returning 200. A request that explicitly asked to KEEP its avatar
-// would delete it during a transient backend failure, and report success for
-// doing so.
-//
-// Reverting previousAvatarKey to swallow the error makes this fail: the
-// response becomes 200 and the stored avatar becomes "".
+// TestSetProfile_SameAvatarFailsClosedWhenThePreviousReadFails checks a failed read is an error, not an empty avatar key stored with 200.
 func TestSetProfile_SameAvatarFailsClosedWhenThePreviousReadFails(t *testing.T) {
 	s, _ := newTestServerWithAvatarCDN(t)
 

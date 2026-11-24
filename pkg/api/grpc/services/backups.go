@@ -27,12 +27,7 @@ func failedPrecondition() *errorspb.FailedPrecondition {
 	return &errorspb.FailedPrecondition{}
 }
 
-// authenticateFromSignedPresentation deserializes the SignedPresentation
-// field on a request, calls the BackupService authenticator, and returns
-// the [*backups.AuthenticatedUser]. On verification failure returns
-// (nil, true) so the caller can emit the failed_authentication outcome in
-// its oneof response; on any other error returns (nil, false) and a
-// gRPC error status the caller should propagate.
+// authenticateFromSignedPresentation verifies the request's SignedPresentation; it returns (nil, true) on verification failure and (nil, false) with a gRPC status otherwise.
 func (s *BackupsAnonymousService) authenticateFromSignedPresentation(
 	ctx context.Context,
 	sp *backupspb.SignedPresentation,

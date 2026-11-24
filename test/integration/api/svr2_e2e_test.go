@@ -180,14 +180,7 @@ func readBin(ctx context.Context, c *websocket.Conn) ([]byte, error) {
 	return b, err
 }
 
-// TestSVR2E2E_FullBackupCreateAndRestoreFlow drives the entire flow:
-//
-//  1. Open a WebSocket with HMAC Basic auth.
-//  2. Read attestation evidence, verify it via VerifySoftwareEvidence.
-//  3. Run Noise NKhfs handshake.
-//  4. Send a Create request, read Response4.OK.
-//  5. Send a Query request, confirm version/tries_remaining match.
-//  6. Open a fresh WebSocket, send Restore1, confirm tries_remaining decremented.
+// TestSVR2E2E_FullBackupCreateAndRestoreFlow: auth, attestation, Noise handshake, Create, Query, then Restore1 on a new socket decrements tries_remaining.
 func TestSVR2E2E_FullBackupCreateAndRestoreFlow(t *testing.T) {
 	const sharedSecret = "phase-4-2-test-secret"
 	wsURL, _, _, att := startSVR2InProcess(t, sharedSecret)

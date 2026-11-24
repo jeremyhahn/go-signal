@@ -10,17 +10,7 @@ import (
 	"github.com/jeremyhahn/go-signal/pkg/config/secrets"
 )
 
-// TestRunStart_AbortedStartupWipesTheConfigSecrets is the lifecycle guarantee
-// for the standalone storage-service daemon. Its shared secret is
-// enclave-backed as of this change, so every return path — validation failure
-// as much as graceful shutdown — has to wipe it. Without the deferred Destroy
-// the secrets stayed reachable through the package-global cfg, which matters
-// whenever the command is driven in-process rather than followed immediately
-// by process exit.
-//
-// The only abort reachable before a listener opens is the missing shared
-// secret, so the assertion is on the config's other protected material: an
-// absent StorageService.SharedSecret must not leave those resident.
+// TestRunStart_AbortedStartupWipesTheConfigSecrets checks a missing shared secret aborts startup with the config's other secrets wiped.
 func TestRunStart_AbortedStartupWipesTheConfigSecrets(t *testing.T) {
 	saved := cfg
 	t.Cleanup(func() { cfg = saved })

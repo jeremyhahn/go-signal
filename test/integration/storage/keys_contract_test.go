@@ -86,11 +86,7 @@ func runPreKeyStoreContract(t *testing.T, factory func(t *testing.T) keys.PreKey
 	})
 
 	t.Run("TakeEC_Empty_NilOrError", func(t *testing.T) {
-		// DIVERGENCE: memory returns an error on an empty queue; qrdb returns
-		// (nil, nil). The interface doc does not specify the empty-queue
-		// contract. Both behaviours are captured here: the test passes if the
-		// result is either (nil, non-nil) or (nil, nil). A caller should check
-		// both the returned key and the error before using the key.
+		// Memory errors on an empty queue and qrdb returns (nil, nil); both are accepted.
 		s := factory(t)
 		ctx := context.Background()
 		uid := uuid.NewString()
@@ -121,8 +117,7 @@ func runPreKeyStoreContract(t *testing.T, factory func(t *testing.T) keys.PreKey
 	})
 
 	t.Run("TakeKEM_Empty_NilOrError", func(t *testing.T) {
-		// DIVERGENCE: memory returns an error on an empty queue; qrdb returns
-		// (nil, nil). See TakeEC_Empty_NilOrError for discussion.
+		// Memory errors on an empty queue and qrdb returns (nil, nil).
 		s := factory(t)
 		ctx := context.Background()
 		uid := uuid.NewString()
@@ -289,12 +284,7 @@ func TestPreKeyStoreContract_QRDB(t *testing.T) {
 	})
 }
 
-// TestPreKeyStoreContract_Postgres runs the pre-key contract against a live
-// Postgres instance. Skips if TEST_POSTGRES_URL is unset.
-//
-// Pre-key tables FK-cascade from accounts(aci). The factory wraps the real
-// store with seededPreKeyStore so the contract test (which doesn't seed
-// accounts — memory and qrdb don't require it) passes against postgres.
+// TestPreKeyStoreContract_Postgres runs the pre-key contract on Postgres, seeding the account rows the FK needs; skips without TEST_POSTGRES_URL.
 func TestPreKeyStoreContract_Postgres(t *testing.T) {
 	c := postgresClient(t)
 	runPreKeyStoreContract(t, func(t *testing.T) keys.PreKeyStore {
@@ -309,9 +299,7 @@ func TestPreKeyStoreContract_Postgres(t *testing.T) {
 	})
 }
 
-// seededPreKeyStore ensures the parent accounts row exists before any Store
-// call delegates to the real store. Take/Get/Delete don't need seeding (the
-// FK only fires on INSERT).
+// seededPreKeyStore inserts the parent account row before each Store call.
 type seededPreKeyStore struct {
 	inner keys.PreKeyStore
 	pool  *pgxpool.Pool

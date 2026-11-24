@@ -515,20 +515,7 @@ func TestHandleSendMessage_DefaultNoOpChecker_Succeeds(t *testing.T) {
 	}
 }
 
-// TestHandleSendMessage_EnvelopeCarriesTheListTimestamp is the regression test
-// for #34.
-//
-// The wire carries the send time once, on the message LIST. The envelope's
-// client_timestamp must be that value, because libsignal cross-checks it
-// against the timestamp sealed inside the content and rejects a mismatch with
-// InvalidMessageStructureException. Sourcing it from a per-message field —
-// which no client populates, and which Java's IncomingMessage record does not
-// even define — delivered every envelope with timestamp 0, so no real client
-// could accept a message.
-//
-// The request below deliberately still sends a per-message "timestamp" that
-// differs from the list one: a client may send anything there, and the
-// envelope must take the list value regardless.
+// TestHandleSendMessage_EnvelopeCarriesTheListTimestamp: the envelope takes the list timestamp even when a per-message one differs.
 func TestHandleSendMessage_EnvelopeCarriesTheListTimestamp(t *testing.T) {
 	s, _ := newTestServerWithAccount(t)
 

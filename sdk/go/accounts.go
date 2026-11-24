@@ -365,11 +365,7 @@ func generateSignedPreKey(id *identity.KeyPair, keyID uint64) (*signedPreKeyJSON
 	}, nil
 }
 
-// generateDummyPQPreKey creates a PQ last-resort pre-key using an EC key pair.
-// Full ML-KEM (Kyber) key generation is available via go-libsignal's
-// keyhelper.GenerateKyberPreKey. The EC fallback is used when the server
-// validates the signature format but the Kyber KEM is not required
-// for standalone testing.
+// generateDummyPQPreKey makes a last-resort pre-key from an EC key pair for servers that check only the signature format.
 func generateDummyPQPreKey(id *identity.KeyPair) *signedPreKeyJSON {
 	kp, _ := ecc.GenerateKeyPair()
 	pubBytes := kp.PublicKey().Serialize()
